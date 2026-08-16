@@ -296,8 +296,7 @@ mod tests {
                 let bytes = code.as_bytes();
                 let needle = b"fork";
                 let mut index = 0;
-                while let Some(relative) = code[index..]
-                    .as_bytes()
+                while let Some(relative) = bytes[index..]
                     .windows(needle.len())
                     .position(|window| window == needle)
                 {
