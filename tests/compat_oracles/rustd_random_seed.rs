@@ -29,6 +29,17 @@ fn plain(binary: &str, arguments: &[&OsStr]) -> Output {
         .expect("execute systemd-random-seed")
 }
 
+fn assert_success(output: &Output, context: &str) {
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{context}: status={:?} stdout={:?} stderr={:?}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn assert_same(host: &Output, candidate: &Output, context: &str) {
     assert_eq!(
         candidate.status.code(),
@@ -105,6 +116,7 @@ fn deterministic_save_enforces_size_mode_and_creditable_xattr() {
     let seed = temporary.path().join("state/random-seed");
     let random = temporary.path().join("urandom");
     let machine_id = temporary.path().join("machine-id");
+    fs::create_dir_all(seed.parent().unwrap()).expect("create seed directory");
     fs::write(&random, vec![0x55; 128]).expect("seed random fixture");
     fs::write(&machine_id, MACHINE_ID).expect("seed machine ID");
     let entropy = (0_u8..32).fold(String::new(), |mut output, byte| {
@@ -118,7 +130,7 @@ fn deterministic_save_enforces_size_mode_and_creditable_xattr() {
         &machine_id,
         &[("RUSTD_GETRANDOM_HEX", &entropy)],
     );
-    assert_eq!(output.status.code(), Some(0));
+    assert_success(&output, "deterministic save");
     assert!(output.stdout.is_empty() && output.stderr.is_empty());
     assert_eq!(
         fs::read(&seed).expect("read saved seed"),
@@ -155,7 +167,7 @@ fn load_consumes_xattr_mixes_machine_id_and_hashes_old_and_new_seed() {
             ("RUSTD_RANDOM_CREDIT_LOG", credit.to_str().unwrap()),
         ],
     );
-    assert_eq!(output.status.code(), Some(0));
+    assert_success(&output, "load consume xattr");
     assert_eq!(
         fs::metadata(&seed).unwrap().permissions().mode() & 0o777,
         0o600
@@ -201,7 +213,7 @@ fn load_first_boot_suppresses_credit_and_fallback_random_is_not_creditable() {
             ("RUSTD_GETRANDOM_EAGAIN_ONCE", "1"),
         ],
     );
-    assert_eq!(output.status.code(), Some(0));
+    assert_success(&output, "load first boot");
     assert!(!credit.exists());
     assert_eq!(get_xattr(&seed), Some(b"1".to_vec()));
 }
@@ -253,7 +265,12 @@ fn isolated_live_load_matches_v261_size_mode_xattr_and_entropy_injection() {
         .env("SYSTEMD_RANDOM_SEED_CREDIT", "no")
         .output()
         .expect("execute isolated candidate random-seed");
-    assert_eq!(candidate.status.code(), Some(0));
+    assert_eq!(
+        candidate.status.code(),
+        Some(0),
+        "candidate stderr: {:?}",
+        String::from_utf8_lossy(&candidate.stderr)
+    );
 
     for seed in [&host_seed, &candidate_seed] {
         let metadata = fs::metadata(seed).expect("stat resulting seed");

@@ -108,6 +108,17 @@ static int random_id128(uint8_t buf[16]) {
     return 0;
 }
 
+/*
+ * identity_or_random: prefer a persistent identity file, then fall back to
+ * /dev/urandom. Containers and package check() environments often have no
+ * /etc/machine-id yet; a journal file still needs a stable 128-bit id.
+ */
+static int identity_or_random(const char *path, uint8_t out[16]) {
+    if (read_id128_file(path, out) == 0)
+        return 0;
+    return random_id128(out);
+}
+
 /* ── compressed DATA payload helpers ────────────────────────────────────── */
 
 #define JOURNAL_COMPRESSED_XZ   1u
@@ -1189,7 +1200,8 @@ int rustd_journal_file_open(const char *path) {
             return -EBUSY;
         }
         uint8_t machine[16];
-        if (read_id128_file("/etc/machine-id", machine) < 0 ||
+        int machine_r = read_id128_file("/etc/machine-id", machine);
+        if (machine_r == 0 &&
             memcmp(machine, existing.machine_id, sizeof(machine)) != 0) {
             close(fd);
             return -ESTALE;
@@ -1210,8 +1222,8 @@ int rustd_journal_file_open(const char *path) {
     header.header_size = htole64(sizeof(header));
 
     if (random_id128(header.file_id) < 0 ||
-        read_id128_file("/etc/machine-id", header.machine_id) < 0 ||
-        read_id128_file("/proc/sys/kernel/random/boot_id", header.tail_entry_boot_id) < 0) {
+        identity_or_random("/etc/machine-id", header.machine_id) < 0 ||
+        identity_or_random("/proc/sys/kernel/random/boot_id", header.tail_entry_boot_id) < 0) {
         close(fd);
         unlink(path);
         return -EIO;
@@ -1290,10 +1302,8 @@ int rustd_journal_file_append(int fd, const SdJournalField *fields, size_t n_fie
         actual_seqnum = previous_seqnum + 1;
     uint64_t monotonic = monotonic_usec();
     uint8_t boot_id[16];
-    if (read_id128_file("/proc/sys/kernel/random/boot_id", boot_id) < 0) {
-        free(refs);
-        return -EIO;
-    }
+    if (read_id128_file("/proc/sys/kernel/random/boot_id", boot_id) < 0)
+        memcpy(boot_id, header.tail_entry_boot_id, sizeof(boot_id));
 
     if (n_fields > (UINT64_MAX - sizeof(EntryObject)) / sizeof(EntryItem)) {
         free(refs);

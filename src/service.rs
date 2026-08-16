@@ -10,6 +10,7 @@
 //!   `service_enter_reload()`, `service_sigchld_event()` (v261)
 
 use std::ffi::{CStr, CString};
+use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::AsRawFd;
@@ -123,41 +124,14 @@ impl UnitRecord {
 impl UnitRecord {
     /// Assign a fresh ID to the next service invocation.
     ///
-    /// Linux's blocking `getrandom(2)` is the same entropy source used for
-    /// systemd's ID128 generation. Retrying `EINTR` preserves the all-or-error
-    /// start contract without exposing a partially initialized ID.
+    /// Prefer non-blocking `getrandom(2)`, then `/dev/urandom`.
+    ///
+    /// PID 1 must not stall the first service start on an uninitialized CRNG
+    /// (QEMU TCG without virtio-rng is the usual case). Invocation IDs still
+    /// come from the kernel random pool; they just cannot block boot.
     pub(crate) fn assign_invocation_id(&mut self) -> std::io::Result<()> {
         let mut invocation_id = [0u8; 16];
-        let mut written = 0;
-        while written < invocation_id.len() {
-            let result = unsafe {
-                libc::getrandom(
-                    invocation_id[written..].as_mut_ptr().cast(),
-                    invocation_id.len() - written,
-                    0,
-                )
-            };
-            if result < 0 {
-                let error = std::io::Error::last_os_error();
-                if error.kind() == std::io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(error);
-            }
-            let read = usize::try_from(result).map_err(|_| {
-                std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "getrandom returned an invalid byte count",
-                )
-            })?;
-            if read == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "getrandom returned no invocation ID bytes",
-                ));
-            }
-            written += read;
-        }
+        fill_invocation_id_bytes(&mut invocation_id)?;
         // `rustd_id128_randomize()` produces UUIDv4-shaped IDs. Preserve the
         // random payload while setting the RFC 4122 version and variant bits
         // so values are interchangeable with the host's InvocationID.
@@ -166,6 +140,47 @@ impl UnitRecord {
         self.invocation_id = Some(invocation_id);
         Ok(())
     }
+}
+
+fn fill_invocation_id_bytes(buffer: &mut [u8]) -> std::io::Result<()> {
+    let mut written = 0;
+    while written < buffer.len() {
+        let result = unsafe {
+            libc::getrandom(
+                buffer[written..].as_mut_ptr().cast(),
+                buffer.len() - written,
+                libc::GRND_NONBLOCK,
+            )
+        };
+        if result < 0 {
+            let error = std::io::Error::last_os_error();
+            if error.kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            if error.raw_os_error() == Some(libc::EAGAIN) {
+                return fill_from_urandom(&mut buffer[written..]);
+            }
+            return Err(error);
+        }
+        let read = usize::try_from(result).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "getrandom returned an invalid byte count",
+            )
+        })?;
+        if read == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "getrandom returned no invocation ID bytes",
+            ));
+        }
+        written += read;
+    }
+    Ok(())
+}
+
+fn fill_from_urandom(buffer: &mut [u8]) -> std::io::Result<()> {
+    std::fs::File::open("/dev/urandom")?.read_exact(buffer)
 }
 
 /// Bind a managed unit to the environment state of its owning manager.

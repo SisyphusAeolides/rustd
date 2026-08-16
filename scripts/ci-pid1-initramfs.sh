@@ -96,6 +96,7 @@ printf '0123456789abcdef0123456789abcdef\n' >"$INITROOT/etc/machine-id"
 cat >"$INITROOT/etc/rustd/system/basic.target" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Basic Target
+DefaultDependencies=no
 Wants=rustd-journald.service
 After=rustd-journald.service
 EOF
@@ -103,6 +104,7 @@ EOF
 cat >"$INITROOT/etc/rustd/system/default.target" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Default Target
+DefaultDependencies=no
 Requires=basic.target
 Wants=rustd-ci-cert.service
 After=basic.target
@@ -111,11 +113,13 @@ EOF
 cat >"$INITROOT/etc/rustd/system/rescue.target" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Rescue Target
+DefaultDependencies=no
 EOF
 
 cat >"$INITROOT/etc/rustd/system/emergency.target" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Emergency Target
+DefaultDependencies=no
 EOF
 
 cat >"$INITROOT/etc/rustd/system/rustd-journald.service" <<'EOF'
@@ -162,6 +166,7 @@ chmod 0755 "$INITROOT/usr/lib/rustd/ci-cert.sh"
 cat >"$INITROOT/etc/rustd/system/rustd-ci-cert.service" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Probe
+DefaultDependencies=no
 After=basic.target rustd-journald.service
 
 [Service]
@@ -187,6 +192,7 @@ mkdir -p /run/rustd
 mount -t cgroup2 none /sys/fs/cgroup
 
 echo 'RUSTD_PID1_BOOT_BEGIN' >/dev/ttyS0
+exec >/dev/ttyS0 2>&1
 exec /usr/lib/rustd/rustd
 EOF
 chmod 0755 "$INITROOT/init"
@@ -208,10 +214,12 @@ timeout --signal=TERM --kill-after=5s 90s \
     -smp 2 \
     -kernel "$KERNEL" \
     -initrd "$INITRAMFS" \
-    -append 'console=ttyS0 panic=-1 rustd.unit=default.target rustd.log_target=console' \
+    -append 'console=ttyS0 panic=-1 random.trust_cpu=on rustd.unit=default.target rustd.log_target=console' \
     -display none \
     -serial stdio \
     -monitor none \
+    -object rng-random,filename=/dev/urandom,id=rng0 \
+    -device virtio-rng-pci,rng=rng0 \
     -no-reboot \
     >"$SERIAL_LOG" 2>&1
 qemu_status=$?

@@ -236,6 +236,7 @@ fn run(action: Action) -> Result<(), Vec<u8>> {
         }
         Action::Save => {
             let file = OpenOptions::new()
+                .read(true)
                 .write(true)
                 .create(true)
                 .mode(0o600)
@@ -446,13 +447,21 @@ fn save_seed_file(
     synchronous: bool,
     old_seed: Option<&[u8]>,
 ) -> Result<(), Vec<u8>> {
-    let ownership_failed = unsafe { libc::fchmod(seed.as_raw_fd(), 0o600) } < 0
-        || unsafe { libc::fchown(seed.as_raw_fd(), 0, 0) } < 0;
-    if ownership_failed {
+    let chmod_failed = unsafe { libc::fchmod(seed.as_raw_fd(), 0o600) } < 0;
+    if chmod_failed {
         return Err(error_message(
-            b"Failed to adjust seed file ownership and access mode: ",
+            b"Failed to adjust seed file access mode: ",
             &io::Error::last_os_error(),
         ));
+    }
+    if unsafe { libc::fchown(seed.as_raw_fd(), 0, 0) } < 0 {
+        let error = io::Error::last_os_error();
+        if !matches!(error.raw_os_error(), Some(libc::EPERM | libc::EINVAL)) {
+            return Err(error_message(
+                b"Failed to adjust seed file ownership: ",
+                &error,
+            ));
+        }
     }
     let (mut bytes, getrandom_worked) = random_bytes(random, size, synchronous)?;
     if let Some(old) = old_seed {
