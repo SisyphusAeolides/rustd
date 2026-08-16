@@ -99,14 +99,36 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // A real system PID 1 cannot safely supervise services without a usable
-    // cgroup hierarchy. Manager::new() remains tolerant for user managers and
-    // test harnesses, while the production boot path fails at the boundary
-    // where process supervision is known to be unavailable.
+    // A production manager cannot promise process isolation without a
+    // delegated cgroup v2 hierarchy. Test harnesses remain filesystem-backed,
+    // while every bare-metal or container entry point fails at this boundary
+    // instead of silently weakening supervision.
     if !user_mode && std::process::id() == 1 {
+        let profile = if running_in_container() {
+            "rootful container"
+        } else {
+            "bare-metal"
+        };
         rustd::cgroup::CgroupManager::for_scope(ManagerScope::System)
-            .setup_root()
-            .map_err(|error| anyhow::anyhow!("rustd: cgroup hierarchy setup failed: {error}"))?;
+            .setup_delegated_root()
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "rustd: {profile} profile requires delegated cgroup v2 cpu, io, memory, and pids controllers: {error}"
+                )
+            })?;
+    } else if user_mode && running_in_container() {
+        if std::env::var_os("RUSTD_CGROUP_ROOT").is_none() {
+            anyhow::bail!(
+                "rustd: rootless container profile requires RUSTD_CGROUP_ROOT to name a delegated cgroup v2 hierarchy"
+            );
+        }
+        rustd::cgroup::CgroupManager::for_scope(ManagerScope::User)
+            .setup_delegated_root()
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "rustd: rootless container profile requires delegated cgroup v2 cpu, io, memory, and pids controllers: {error}"
+                )
+            })?;
     }
 
     // 4. Start the manager and install the supervisor watchdog, if one was
@@ -147,6 +169,10 @@ fn bus_introspection_path(args: &[String]) -> Option<Result<&str, &'static str>>
         }
     }
     None
+}
+
+fn running_in_container() -> bool {
+    std::env::var_os("container").is_some() || std::path::Path::new("/run/rustd/container").exists()
 }
 
 /// Backend used for machine-wide transitions after the manager loop exits.

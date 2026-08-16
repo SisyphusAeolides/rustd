@@ -9,8 +9,8 @@
 //!   `cgroup_apply_unified_limit()` (v261)
 
 use std::collections::HashSet;
-use std::fs::{self, File};
-use std::io::{Read, Seek, SeekFrom};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
@@ -76,6 +76,64 @@ impl CgroupManager {
             self.root.join("cgroup.subtree_control"),
             "+cpu +io +memory +pids\n",
         );
+        Ok(())
+    }
+
+    /// Validate and initialize a delegated cgroup v2 hierarchy.
+    ///
+    /// This is the production boundary used by PID 1. Unlike [`Self::setup_root`],
+    /// it never treats missing controllers or rejected delegation writes as
+    /// best-effort behavior.
+    ///
+    /// # Errors
+    /// Returns an error when the hierarchy is not cgroup v2, required
+    /// controllers are unavailable, or the manager cannot enable them.
+    pub fn setup_delegated_root(&self) -> anyhow::Result<()> {
+        let controllers_path = self.root.join("cgroup.controllers");
+        let available = fs::read_to_string(&controllers_path).map_err(|error| {
+            anyhow::anyhow!(
+                "{} is not a usable cgroup v2 delegation: {error}",
+                self.root.display()
+            )
+        })?;
+        let available: HashSet<&str> = available.split_ascii_whitespace().collect();
+        let missing: Vec<&str> = ["cpu", "io", "memory", "pids"]
+            .into_iter()
+            .filter(|controller| !available.contains(controller))
+            .collect();
+        if !missing.is_empty() {
+            anyhow::bail!(
+                "{} is missing required cgroup v2 controllers: {}",
+                self.root.display(),
+                missing.join(", ")
+            );
+        }
+        if !self.root.join("cgroup.procs").is_file() {
+            anyhow::bail!(
+                "{} does not expose cgroup.procs for delegation",
+                self.root.display()
+            );
+        }
+
+        let subtree_path = self.root.join("cgroup.subtree_control");
+        let mut subtree = OpenOptions::new()
+            .write(true)
+            .open(&subtree_path)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{} is not writable by the RustD manager: {error}",
+                    subtree_path.display()
+                )
+            })?;
+        subtree
+            .write_all(b"+cpu +io +memory +pids\n")
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to enable required controllers in {}: {error}",
+                    subtree_path.display()
+                )
+            })?;
+        fs::create_dir_all(self.root.join(&self.slice))?;
         Ok(())
     }
 
@@ -868,6 +926,44 @@ mod tests {
         let manager = CgroupManager::with_root(temporary.path());
         manager.setup_root().unwrap();
         assert!(temporary.path().join("system.slice").is_dir());
+    }
+
+    #[test]
+    fn delegated_root_requires_and_enables_all_isolation_controllers() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::write(
+            temporary.path().join("cgroup.controllers"),
+            "cpu io memory pids\n",
+        )
+        .unwrap();
+        fs::write(temporary.path().join("cgroup.procs"), "").unwrap();
+        fs::write(temporary.path().join("cgroup.subtree_control"), "").unwrap();
+        let manager = CgroupManager::with_root(temporary.path());
+
+        manager.setup_delegated_root().unwrap();
+
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("cgroup.subtree_control")).unwrap(),
+            "+cpu +io +memory +pids\n"
+        );
+        assert!(temporary.path().join("system.slice").is_dir());
+    }
+
+    #[test]
+    fn delegated_root_rejects_missing_required_controllers() {
+        let temporary = tempfile::tempdir().unwrap();
+        fs::write(
+            temporary.path().join("cgroup.controllers"),
+            "cpu memory pids\n",
+        )
+        .unwrap();
+        fs::write(temporary.path().join("cgroup.procs"), "").unwrap();
+        fs::write(temporary.path().join("cgroup.subtree_control"), "").unwrap();
+        let manager = CgroupManager::with_root(temporary.path());
+
+        let error = manager.setup_delegated_root().unwrap_err().to_string();
+
+        assert!(error.contains("missing required cgroup v2 controllers: io"));
     }
 
     #[test]
