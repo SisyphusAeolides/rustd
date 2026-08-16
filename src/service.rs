@@ -12,6 +12,7 @@
 use std::ffi::{CStr, CString};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
@@ -22,6 +23,9 @@ use crate::dbus::manager_iface::{
 use crate::dynamic_user::DynamicUser;
 use crate::event::child::ChildExit;
 use crate::ffi::spawn::{rustd_spawn, SdSpawnParams, SdSpawnRlimit, SdSpawnSandbox};
+use crate::journal::stdout::{
+    connect_service_stream, wants_journal_stdio, DEFAULT_STDOUT_PATH,
+};
 use crate::kill_context::{signal_primary, KillOperation, KillPolicy};
 use crate::restart::should_restart_result;
 use crate::sandbox::SecurityContext;
@@ -312,6 +316,7 @@ pub(crate) fn activate_with_notify_in_cgroup(
 
     for command in &section.exec_condition {
         let outcome = run_command(
+            &unit_name,
             &section,
             command,
             &[],
@@ -336,6 +341,7 @@ pub(crate) fn activate_with_notify_in_cgroup(
 
     run_command_list(
         "ExecStartPre",
+        &unit_name,
         &section,
         &section.exec_start_pre,
         &[],
@@ -355,6 +361,7 @@ pub(crate) fn activate_with_notify_in_cgroup(
     if section.service_type == ServiceType::Oneshot {
         for command in &section.exec_start {
             let outcome = run_command(
+                &unit_name,
                 &section,
                 command,
                 listen_fds,
@@ -376,6 +383,7 @@ pub(crate) fn activate_with_notify_in_cgroup(
 
         run_command_list(
             "ExecStartPost",
+            &unit_name,
             &section,
             &section.exec_start_post,
             listen_fds,
@@ -400,6 +408,7 @@ pub(crate) fn activate_with_notify_in_cgroup(
 
     let command = &section.exec_start[0];
     let child = match spawn_command(
+        &unit_name,
         &section,
         command,
         listen_fds,
@@ -485,6 +494,7 @@ pub(crate) fn deactivate_with_notify_in_cgroup(
 
     if let Err(error) = run_command_list(
         "ExecStop",
+        record.loaded.name(),
         &section,
         &section.exec_stop,
         &[],
@@ -547,6 +557,7 @@ pub(crate) fn reload_with_notify_in_cgroup(
     }
     run_command_list(
         "ExecReload",
+        record.loaded.name(),
         &section,
         &section.exec_reload,
         &[],
@@ -805,6 +816,7 @@ fn run_start_post(
     let environment = launch_environment(record);
     run_command_list(
         "ExecStartPost",
+        record.loaded.name(),
         section,
         &section.exec_start_post,
         listen_fds,
@@ -1202,6 +1214,7 @@ fn run_stop_post(
     let environment = launch_environment(record);
     if run_command_list(
         "ExecStopPost",
+        record.loaded.name(),
         section,
         &section.exec_stop_post,
         &[],
@@ -1219,6 +1232,7 @@ fn run_stop_post(
 #[allow(clippy::too_many_arguments)]
 fn run_command_list(
     phase: &str,
+    unit_name: &str,
     section: &ServiceSection,
     commands: &[ExecCommand],
     listen_fds: &[libc::c_int],
@@ -1229,6 +1243,7 @@ fn run_command_list(
 ) -> anyhow::Result<()> {
     for command in commands {
         let outcome = run_command(
+            unit_name,
             section,
             command,
             listen_fds,
@@ -1245,6 +1260,7 @@ fn run_command_list(
 }
 
 fn run_command(
+    unit_name: &str,
     section: &ServiceSection,
     command: &ExecCommand,
     listen_fds: &[libc::c_int],
@@ -1254,6 +1270,7 @@ fn run_command(
     environment: &[String],
 ) -> anyhow::Result<CommandOutcome> {
     let process = spawn_command(
+        unit_name,
         section,
         command,
         listen_fds,
@@ -1312,6 +1329,7 @@ fn compile_rlimits(section: &ServiceSection) -> Vec<SdSpawnRlimit> {
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 fn spawn_command(
+    unit_name: &str,
     section: &ServiceSection,
     command: &ExecCommand,
     listen_fds: &[libc::c_int],
@@ -1492,6 +1510,55 @@ fn spawn_command(
         }
     }
 
+    let identifier = if section.syslog_identifier.is_empty() {
+        unit_name.trim_end_matches(".service")
+    } else {
+        section.syslog_identifier.as_str()
+    };
+    let journal_path = std::env::var_os("RUSTD_JOURNAL_STDOUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_STDOUT_PATH));
+    let mut stdout_stream = None;
+    let mut stderr_stream = None;
+    let stdout_fd = if wants_journal_stdio(&section.standard_output) {
+        match connect_service_stream(&journal_path, identifier, unit_name, 6) {
+            Ok(stream) => {
+                let fd = stream.as_raw_fd();
+                stdout_stream = Some(stream);
+                fd
+            }
+            Err(error) => {
+                // Journal may be unavailable during early boot or unit tests;
+                // fall back to /dev/null rather than inheriting PID 1 stdio.
+                let _ = error;
+                -1
+            }
+        }
+    } else if section.standard_output.eq_ignore_ascii_case("null") {
+        -1
+    } else {
+        -1
+    };
+    let stderr_mode = if section.standard_error.is_empty()
+        || section.standard_error.eq_ignore_ascii_case("inherit")
+    {
+        section.standard_output.as_str()
+    } else {
+        section.standard_error.as_str()
+    };
+    let stderr_fd = if wants_journal_stdio(stderr_mode) {
+        match connect_service_stream(&journal_path, identifier, unit_name, 3) {
+            Ok(stream) => {
+                let fd = stream.as_raw_fd();
+                stderr_stream = Some(stream);
+                fd
+            }
+            Err(_) => -1,
+        }
+    } else {
+        -1
+    };
+
     let params = SdSpawnParams {
         path: path_string.as_ptr(),
         argv: argv.as_ptr(),
@@ -1521,8 +1588,8 @@ fn spawn_command(
             .map_or(std::ptr::null(), |value| value.as_ptr()),
         apparmor_profile_ignore,
         stdin_fd: -1,
-        stdout_fd: -1,
-        stderr_fd: -1,
+        stdout_fd,
+        stderr_fd,
         notify_fd,
         watchdog_usec: watchdog_usec(section, notify_fd),
         sandbox: if sandbox_enabled {
@@ -1554,6 +1621,8 @@ fn spawn_command(
 
     // Safety: all pointers in `params` remain valid for this call.
     let pid = unsafe { rustd_spawn(&params) };
+    drop(stdout_stream);
+    drop(stderr_stream);
     if idle_pipe[0] >= 0 {
         // Safety: the parent owns the read descriptor after `rustd_spawn` returns.
         unsafe { libc::close(idle_pipe[0]) };

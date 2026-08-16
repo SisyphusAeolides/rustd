@@ -26,9 +26,9 @@
 
 /* ── internal constants ─────────────────────────────────────────────────── */
 
-#define JOURNAL_DIR          "/run/systemd/journal"
-#define JOURNAL_SOCKET_PATH  "/run/systemd/journal/socket"
-#define JOURNAL_STDOUT_PATH  "/run/systemd/journal/stdout"
+#define JOURNAL_DIR          "/run/rustd/journal"
+#define JOURNAL_SOCKET_PATH  "/run/rustd/journal/socket"
+#define JOURNAL_STDOUT_PATH  "/run/rustd/journal/stdout"
 
 /* ── internal helpers ───────────────────────────────────────────────────── */
 

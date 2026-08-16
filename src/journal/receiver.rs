@@ -100,6 +100,10 @@ impl IoHandler for JournalReceiver {
 }
 
 fn parse_datagram(data: &[u8]) -> Option<JournalEntry> {
+    parse_datagram_with_peer(data, None)
+}
+
+fn parse_datagram_with_peer(data: &[u8], peer: Option<(libc::pid_t, libc::uid_t, libc::gid_t)>) -> Option<JournalEntry> {
     let mut fields: HashMap<String, Vec<u8>> = HashMap::new();
     let mut pos = 0usize;
 
@@ -116,6 +120,11 @@ fn parse_datagram(data: &[u8]) -> Option<JournalEntry> {
         if let Some(eq) = line.iter().position(|&b| b == b'=') {
             let key = std::str::from_utf8(&line[..eq]).ok()?.to_ascii_uppercase();
             let val = line[eq + 1..].to_vec();
+            // Reserved journal metadata always starts with `_` and is only
+            // attached from trusted kernel/manager state below.
+            if key.starts_with('_') {
+                continue;
+            }
             fields.insert(key, val);
         } else {
             let key = std::str::from_utf8(line).ok()?.to_ascii_uppercase();
@@ -130,14 +139,22 @@ fn parse_datagram(data: &[u8]) -> Option<JournalEntry> {
             }
             let val = data[pos..pos + len].to_vec();
             pos += len + 1;
+            if key.starts_with('_') {
+                continue;
+            }
             fields.insert(key, val);
         }
     }
 
-    fields.remove("_BOOT_ID");
     if fields.is_empty() {
         return None;
     }
+    if let Some((pid, uid, gid)) = peer {
+        fields.insert("_PID".into(), pid.to_string().into_bytes());
+        fields.insert("_UID".into(), uid.to_string().into_bytes());
+        fields.insert("_GID".into(), gid.to_string().into_bytes());
+    }
+    fields.insert("_TRANSPORT".into(), b"journal".to_vec());
     Some(JournalEntry::new(fields))
 }
 
@@ -222,5 +239,28 @@ mod tests {
         } else {
             assert!(!entry.fields.contains_key("_BOOT_ID"));
         }
+    }
+
+    #[test]
+    fn sender_cannot_spoof_any_reserved_metadata() {
+        let data = make_text_datagram(&[
+            ("MESSAGE", "hello"),
+            ("_PID", "1"),
+            ("_UID", "0"),
+            ("_SYSTEMD_UNIT", "spoofed.service"),
+            ("_RUSTD_UNIT", "spoofed.service"),
+            ("_TRANSPORT", "driver"),
+        ]);
+        let entry = parse_datagram_with_peer(&data, Some((4242, 1000, 1000))).expect("parse");
+        assert_eq!(entry.pid_str(), "4242");
+        assert_eq!(
+            entry.fields.get("_UID").map(Vec::as_slice),
+            Some(b"1000".as_slice())
+        );
+        assert!(!entry.fields.contains_key("_SYSTEMD_UNIT"));
+        assert_eq!(
+            entry.fields.get("_TRANSPORT").map(Vec::as_slice),
+            Some(b"journal".as_slice())
+        );
     }
 }
