@@ -125,6 +125,8 @@ DefaultDependencies=no
 
 [Service]
 Type=simple
+StandardOutput=null
+StandardError=null
 ExecStart=/usr/lib/rustd/rustd-journald --runtime-directory /run/rustd/journal
 Restart=always
 RestartSec=1
@@ -164,6 +166,8 @@ After=basic.target rustd-journald.service
 
 [Service]
 Type=simple
+StandardOutput=null
+StandardError=null
 ExecStart=/usr/lib/rustd/ci-cert.sh
 Restart=no
 EOF

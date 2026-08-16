@@ -1327,6 +1327,10 @@ fn compile_rlimits(section: &ServiceSection) -> Vec<SdSpawnRlimit> {
     limits
 }
 
+fn is_journal_daemon(unit_name: &str) -> bool {
+    unit_name == "rustd-journald.service" || unit_name.ends_with("-journald.service")
+}
+
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::too_many_arguments)]
 fn spawn_command(
@@ -1521,7 +1525,8 @@ fn spawn_command(
         .unwrap_or_else(|| PathBuf::from(DEFAULT_STDOUT_PATH));
     let mut stdout_stream = None;
     let mut stderr_stream = None;
-    let stdout_fd = if wants_journal_stdio(&section.standard_output) {
+    let route_journal = !is_journal_daemon(unit_name);
+    let stdout_fd = if route_journal && wants_journal_stdio(&section.standard_output) {
         let stream = connect_service_stream_with_limits(
             &journal_path,
             identifier,
@@ -1549,7 +1554,7 @@ fn spawn_command(
     } else {
         section.standard_error.as_str()
     };
-    let stderr_fd = if wants_journal_stdio(stderr_mode) {
+    let stderr_fd = if route_journal && wants_journal_stdio(stderr_mode) {
         let stream = connect_service_stream_with_limits(
             &journal_path,
             identifier,
@@ -2010,6 +2015,29 @@ mod tests {
             "unexpected error: {error}"
         );
         assert_eq!(record.state, UnitState::Failed);
+    }
+
+    #[test]
+    fn journal_daemon_does_not_require_its_own_stdout_socket() {
+        let mut section = ServiceSection {
+            service_type: ServiceType::Simple,
+            standard_output: "journal".into(),
+            standard_error: "journal".into(),
+            ..Default::default()
+        };
+        section.exec_start.push(shell_command("true"));
+        let mut record = make_service_with_section("rustd-journald.service", section);
+        std::env::set_var(
+            "RUSTD_JOURNAL_STDOUT",
+            "/tmp/rustd-journal-stdout-definitely-missing",
+        );
+        let result = activate(&mut record, &[]);
+        std::env::remove_var("RUSTD_JOURNAL_STDOUT");
+        result.expect("journald must start before its own socket exists");
+        if let Some(pid) = record.active_pid {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+            unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
+        }
     }
 
     #[test]

@@ -6,6 +6,8 @@ Before=sysinit.target
 
 [Service]
 Type=simple
+StandardOutput=null
+StandardError=null
 ExecStart=/usr/lib/rustd/rustd-journald --runtime-directory /run/rustd/journal
 Restart=always
 RestartSec=0
