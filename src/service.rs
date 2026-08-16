@@ -1321,6 +1321,9 @@ fn spawn_command(
     cgroup_procs_path: Option<&Path>,
     environment: &[String],
 ) -> anyhow::Result<SpawnedProcess> {
+    #[cfg(test)]
+    crate::ffi::spawn::ensure_spawn_helper_for_tests();
+
     if command.argv.is_empty() || command.path.is_empty() {
         return Err(anyhow!("empty service command"));
     }

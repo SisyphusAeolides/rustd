@@ -8,18 +8,35 @@
 
 #include "capability.h"
 #include "spawn.h"
+#include "spawn_wire.h"
 
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+/* Linked with -Wl,--wrap=fork so the helper path can prove it never forks. */
+extern pid_t __real_fork(void);
+static int forbid_manager_fork;
+
+pid_t __wrap_fork(void) {
+    if (forbid_manager_fork) {
+        fputs("unexpected fork() on the configured helper spawn path\n", stderr);
+        abort();
+    }
+    return __real_fork();
+}
 
 static rustd_spawn_params spawn_params(const char * const *argv) {
     rustd_spawn_params p;
@@ -44,6 +61,23 @@ static void wait_pid(pid_t pid, int expected_exit) {
     assert(w == pid);
     assert(WIFEXITED(status));
     assert(WEXITSTATUS(status) == expected_exit);
+}
+
+static void configure_self_as_helper(void) {
+    char path[PATH_MAX];
+    ssize_t length = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    assert(length > 0);
+    path[length] = '\0';
+    assert(rustd_spawn_helper_configure(path) == 0);
+    assert(rustd_spawn_helper_configured() != 0);
+}
+
+static void test_spawn_requires_helper(void) {
+    const char *argv[] = { "/bin/true", NULL };
+    rustd_spawn_params p = spawn_params(argv);
+    assert(rustd_spawn_helper_configured() == 0);
+    assert(rustd_spawn(&p) == -ENOSYS);
+    printf("test_spawn_requires_helper: ok\n");
 }
 
 static void test_spawn_cgroup_self_attach(void) {
@@ -329,6 +363,62 @@ static void test_spawn_notify_environment(void) {
     printf("test_spawn_notify_environment: ok\n");
 }
 
+static void test_spawn_listen_fds(void) {
+    int sockets[2];
+    assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sockets) == 0);
+
+    const char *argv[] = {
+        "/bin/sh",
+        "-c",
+        "test \"$LISTEN_FDS\" = 1 "
+        "&& test \"$LISTEN_PID\" = \"$$\" "
+        "&& test -e /proc/$$/fd/3 "
+        "&& test ! -e /proc/$$/fd/4",
+        NULL,
+    };
+    rustd_spawn_params p = spawn_params(argv);
+    p.listen_fds = &sockets[0];
+    p.n_listen_fds = 1;
+
+    pid_t pid = rustd_spawn(&p);
+    assert(pid > 0);
+    close(sockets[0]);
+    close(sockets[1]);
+    wait_pid(pid, 0);
+    printf("test_spawn_listen_fds: ok\n");
+}
+
+static void test_spawn_rejects_oversized_listen_count(void) {
+    int dummy = 0;
+    const char *argv[] = { "/bin/true", NULL };
+    rustd_spawn_params p = spawn_params(argv);
+    p.listen_fds = &dummy;
+    p.n_listen_fds = RUSTD_SPAWN_MAX_LISTEN_FDS + 1;
+    assert(rustd_spawn(&p) == -E2BIG);
+    printf("test_spawn_rejects_oversized_listen_count: ok\n");
+}
+
+static void test_spawn_rejects_invalid_listen_vectors(void) {
+    const char *argv[] = { "/bin/true", NULL };
+    rustd_spawn_params p = spawn_params(argv);
+    p.n_listen_fds = -1;
+    assert(rustd_spawn(&p) == -EINVAL);
+
+    p.n_listen_fds = 1;
+    p.listen_fds = NULL;
+    assert(rustd_spawn(&p) == -EINVAL);
+    printf("test_spawn_rejects_invalid_listen_vectors: ok\n");
+}
+
+static void test_spawn_rejects_malformed_environment(void) {
+    const char *env[] = { "NOEQUALS", NULL };
+    const char *argv[] = { "/bin/true", NULL };
+    rustd_spawn_params p = spawn_params(argv);
+    p.envp = env;
+    assert(rustd_spawn(&p) == -EINVAL);
+    printf("test_spawn_rejects_malformed_environment: ok\n");
+}
+
 static void test_capability_names(void) {
     assert(rustd_capability_name_to_num("CAP_NET_ADMIN") == 12);
     assert(rustd_capability_name_to_num("cap_checkpoint_restore") == 40);
@@ -364,7 +454,95 @@ static void test_spawn_null_params(void) {
     printf("test_spawn_null_params: ok\n");
 }
 
+/*
+ * Prove the configured helper path never calls fork() in the manager.  The
+ * test binary wraps fork(2); any call from rustd_spawn() aborts.
+ */
+static void test_spawn_helper_path_uses_no_manager_fork(void) {
+    const char *argv[] = { "/bin/true", NULL };
+    rustd_spawn_params p = spawn_params(argv);
+    p.wait_for_exec = 1;
+
+    forbid_manager_fork = 1;
+    pid_t pid = rustd_spawn(&p);
+    forbid_manager_fork = 0;
+
+    assert(pid > 0);
+    assert(getpgid(pid) >= 0);
+    wait_pid(pid, 0);
+    printf("test_spawn_helper_path_uses_no_manager_fork: ok\n");
+}
+
+typedef struct {
+    pid_t pid;
+    int ok;
+} concurrent_result;
+
+static void *concurrent_spawn(void *arg) {
+    concurrent_result *result = arg;
+    const char *argv[] = { "/bin/true", NULL };
+    rustd_spawn_params p = spawn_params(argv);
+    p.wait_for_exec = 1;
+    result->pid = rustd_spawn(&p);
+    result->ok = result->pid > 0;
+    return NULL;
+}
+
+static void test_spawn_concurrent_helper_path(void) {
+    enum { N = 8 };
+    pthread_t threads[N];
+    concurrent_result results[N];
+    memset(results, 0, sizeof(results));
+
+    for (int i = 0; i < N; i++)
+        assert(pthread_create(&threads[i], NULL, concurrent_spawn, &results[i]) == 0);
+    for (int i = 0; i < N; i++)
+        assert(pthread_join(threads[i], NULL) == 0);
+
+    for (int i = 0; i < N; i++) {
+        assert(results[i].ok);
+        wait_pid(results[i].pid, 0);
+        for (int j = 0; j < i; j++)
+            assert(results[i].pid != results[j].pid);
+    }
+    printf("test_spawn_concurrent_helper_path: ok\n");
+}
+
+/*
+ * Production gate: 10,000 helper spawns under concurrent control-plane load.
+ * Waves of workers prove the manager never hangs, leaks zombies, or returns
+ * duplicate PIDs after the post-thread fork() path was removed.
+ */
+static void test_spawn_helper_stress_10000(void) {
+    enum { TOTAL = 10000, WAVE = 64 };
+    forbid_manager_fork = 1;
+    for (int completed = 0; completed < TOTAL; ) {
+        int batch = TOTAL - completed;
+        if (batch > WAVE)
+            batch = WAVE;
+        pthread_t threads[WAVE];
+        concurrent_result results[WAVE];
+        memset(results, 0, sizeof(results));
+        for (int i = 0; i < batch; i++)
+            assert(pthread_create(&threads[i], NULL, concurrent_spawn, &results[i]) == 0);
+        for (int i = 0; i < batch; i++)
+            assert(pthread_join(threads[i], NULL) == 0);
+        for (int i = 0; i < batch; i++) {
+            assert(results[i].ok);
+            wait_pid(results[i].pid, 0);
+            for (int j = 0; j < i; j++)
+                assert(results[i].pid != results[j].pid);
+        }
+        completed += batch;
+    }
+    forbid_manager_fork = 0;
+    printf("test_spawn_helper_stress_10000: ok\n");
+}
+
 int main(void) {
+    test_spawn_requires_helper();
+    configure_self_as_helper();
+
     test_spawn_cgroup_self_attach();
     test_mount_sandbox_namespace_requirements();
     test_spawn_separate_argv0();
@@ -383,10 +561,17 @@ int main(void) {
     test_spawn_cwd();
     test_spawn_env();
     test_spawn_notify_environment();
+    test_spawn_listen_fds();
+    test_spawn_rejects_oversized_listen_count();
+    test_spawn_rejects_invalid_listen_vectors();
+    test_spawn_rejects_malformed_environment();
     test_capability_names();
     test_spawn_rejects_unsupported_bounding_bit();
     test_spawn_rejects_unsupported_ambient_bit();
     test_spawn_null_params();
+    test_spawn_helper_path_uses_no_manager_fork();
+    test_spawn_concurrent_helper_path();
+    test_spawn_helper_stress_10000();
     printf("test_spawn: all assertions passed\n");
     return 0;
 }

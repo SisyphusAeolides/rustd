@@ -91,14 +91,36 @@ typedef struct {
     int                 idle_write_fd;    /* writer held by the manager        */
 } rustd_spawn_params;
 
+/* Return non-zero when the sandbox requires CLONE_NEWNS before mount changes. */
+int rustd_spawn_sandbox_needs_mount_namespace(const rustd_spawn_sandbox *sandbox);
+
 /*
- * rustd_spawn: fork and exec a child process with the given parameters.
+ * rustd_spawn_helper_configure: install the executable rustd_spawn() launches
+ * to perform child setup.  `executable_path` must be an absolute path to a
+ * RustD image; that image applies the request from its ELF constructor when it
+ * is started in helper mode and never reaches its own main().
+ *
+ * The manager must call this before it creates any thread, because rustd_spawn
+ * refuses to run (-ENOSYS) until a helper is configured and because the stored
+ * path is only safe to publish while the process is still single-threaded.
+ *
+ * Returns 0 on success, or a negative errno on failure.
+ */
+int rustd_spawn_helper_configure(const char *executable_path);
+
+/* Return non-zero once a helper image has been installed. */
+int rustd_spawn_helper_configured(void);
+
+/*
+ * rustd_spawn: start a child process with the given parameters.
+ *
+ * The manager does not fork: it posix_spawn()s the configured helper image,
+ * which applies the parameters in a fresh single-threaded process and then
+ * execs the requested executable in place.  The returned PID is therefore the
+ * final service PID and a direct child of the caller.
  *
  * Returns the child PID on success, or a negative errno on failure.
  * With wait_for_exec set, child setup and exec errors are reported through
  * the return value. Otherwise those failures are reported by child exit status.
  */
-/* Return non-zero when the sandbox requires CLONE_NEWNS before mount changes. */
-int rustd_spawn_sandbox_needs_mount_namespace(const rustd_spawn_sandbox *sandbox);
-
 pid_t rustd_spawn(const rustd_spawn_params *p);

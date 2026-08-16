@@ -131,6 +131,10 @@ fn main() -> anyhow::Result<()> {
             })?;
     }
 
+    // Install the spawn helper before Manager::new starts IPC / D-Bus threads.
+    // After this point rustd_spawn never forks the manager process.
+    rustd::ffi::spawn::configure_spawn_helper_from_self()?;
+
     // 4. Start the manager and install the supervisor watchdog, if one was
     // passed through the sd-daemon environment.
     let mut manager = Manager::new(config)?;

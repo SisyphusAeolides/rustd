@@ -6,11 +6,20 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
+
+static void configure_self_as_helper(void) {
+    char path[PATH_MAX];
+    ssize_t length = readlink("/proc/self/exe", path, sizeof(path) - 1);
+    assert(length > 0);
+    path[length] = '\0';
+    assert(rustd_spawn_helper_configure(path) == 0);
+}
 
 static rustd_spawn_params spawn_params(const char *const *argv) {
     rustd_spawn_params params;
@@ -56,6 +65,8 @@ static int apparmor_enabled(void) {
 }
 
 int main(void) {
+    configure_self_as_helper();
+
     const char *argv[] = { "/bin/true", NULL };
 
     rustd_spawn_params ignored = spawn_params(argv);

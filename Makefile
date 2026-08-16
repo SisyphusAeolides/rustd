@@ -3,6 +3,8 @@ CC ?= cc
 undefine FC
 FC ?= gfortran
 CFLAGS ?= -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3
+# -iquote keeps local headers from shadowing the system <spawn.h>.
+CPPFLAGS ?= -iquote ffi
 FFLAGS ?= -O2 -g -std=f2018 -Wall -Wextra -Werror -fimplicit-none
 PREFIX ?= /usr
 RUSTLIBEXECDIR ?= $(PREFIX)/lib/rustd
@@ -28,29 +30,31 @@ build:
 check-native:
 	mkdir -p build
 	$(FC) $(FFLAGS) -Jbuild -c ffi/sched.f90 -o build/sched.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/native.c -o build/native.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/notify.c -o build/notify.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/interface.c -o build/interface.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/cgroup.c -o build/cgroup.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/signal.c -o build/signal.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/journal.c -o build/journal.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/event.c -o build/event.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/spawn.c -o build/spawn.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/sandbox.c -o build/sandbox.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/socket_activation.c -o build/socket_activation.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/kexec.c -o build/kexec.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/mute_console.c -o build/mute_console.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/seccomp.c -o build/seccomp.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/capability.c -o build/capability.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/test_native.c -o build/test_native.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/test_event.c -o build/test_event.o
-	$(CC) $(CFLAGS) -Iffi -c ffi/test_spawn.c -o build/test_spawn.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/native.c -o build/native.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/notify.c -o build/notify.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/interface.c -o build/interface.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/cgroup.c -o build/cgroup.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/signal.c -o build/signal.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/journal.c -o build/journal.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/event.c -o build/event.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/spawn.c -o build/spawn.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/spawn_helper.c -o build/spawn_helper.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/sandbox.c -o build/sandbox.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/socket_activation.c -o build/socket_activation.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/kexec.c -o build/kexec.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/mute_console.c -o build/mute_console.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/seccomp.c -o build/seccomp.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/capability.c -o build/capability.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/test_native.c -o build/test_native.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/test_event.c -o build/test_event.o
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/test_spawn.c -o build/test_spawn.o
 	$(FC) build/test_native.o build/native.o build/notify.o build/interface.o build/cgroup.o build/signal.o build/journal.o build/event.o build/sched.o build/sandbox.o build/socket_activation.o build/kexec.o build/mute_console.o build/seccomp.o build/capability.o -o build/test_native -ldl
 	./build/test_native
 	$(CC) build/test_event.o build/event.o -o build/test_event -lrt
 	./build/test_event
-	$(CC) build/test_spawn.o build/spawn.o build/sandbox.o build/socket_activation.o build/seccomp.o build/capability.o -o build/test_spawn -ldl
+	$(CC) build/test_spawn.o build/spawn.o build/spawn_helper.o build/sandbox.o build/socket_activation.o build/seccomp.o build/capability.o -o build/test_spawn -ldl -lpthread -Wl,--wrap=fork
 	./build/test_spawn
+	python3 scripts/check-spawn-no-fork.py
 
 check-rust:
 	cargo fmt --all -- --check

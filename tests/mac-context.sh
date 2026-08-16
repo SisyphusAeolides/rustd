@@ -9,9 +9,10 @@ trap cleanup EXIT HUP INT TERM
 
 compiler=${CC:-cc}
 "$compiler" -std=c17 -O2 -Wall -Wextra -Werror -Wpedantic \
-    -I"$root/ffi" \
+    -iquote "$root/ffi" \
     "$root/tests/test-mac-context.c" \
     "$root/ffi/spawn.c" \
+    "$root/ffi/spawn_helper.c" \
     "$root/ffi/sandbox.c" \
     "$root/ffi/socket_activation.c" \
     "$root/ffi/seccomp.c" \

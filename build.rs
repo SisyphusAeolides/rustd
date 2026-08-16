@@ -33,7 +33,9 @@ fn compile_c(cc: &OsString, source: &str, output: &Path) {
             OsString::from("-Wall"),
             OsString::from("-Wextra"),
             OsString::from("-Werror"),
-            OsString::from("-Iffi"),
+            // -iquote rather than -I: ffi/spawn.h must not shadow <spawn.h>.
+            OsString::from("-iquote"),
+            OsString::from("ffi"),
             OsString::from(source),
             OsString::from("-o"),
             output.as_os_str().to_owned(),
@@ -55,6 +57,9 @@ fn main() {
     println!("cargo:rerun-if-changed=ffi/event.h");
     println!("cargo:rerun-if-changed=ffi/spawn.c");
     println!("cargo:rerun-if-changed=ffi/spawn.h");
+    println!("cargo:rerun-if-changed=ffi/spawn_helper.c");
+    println!("cargo:rerun-if-changed=ffi/spawn_helper.h");
+    println!("cargo:rerun-if-changed=ffi/spawn_wire.h");
     println!("cargo:rerun-if-changed=ffi/sandbox.c");
     println!("cargo:rerun-if-changed=ffi/sandbox.h");
     println!("cargo:rerun-if-changed=ffi/socket_activation.c");
@@ -85,6 +90,7 @@ fn main() {
     let journal_obj = object(&out_dir, "rustd_journal");
     let event_obj = object(&out_dir, "rustd_event");
     let spawn_obj = object(&out_dir, "rustd_spawn");
+    let spawn_helper_obj = object(&out_dir, "rustd_spawn_helper");
     let sandbox_obj = object(&out_dir, "rustd_sandbox");
     let socket_activation_obj = object(&out_dir, "rustd_socket_activation");
     let kexec_obj = object(&out_dir, "rustd_kexec");
@@ -100,6 +106,7 @@ fn main() {
     compile_c(&cc, "ffi/journal.c", &journal_obj);
     compile_c(&cc, "ffi/event.c", &event_obj);
     compile_c(&cc, "ffi/spawn.c", &spawn_obj);
+    compile_c(&cc, "ffi/spawn_helper.c", &spawn_helper_obj);
     compile_c(&cc, "ffi/sandbox.c", &sandbox_obj);
     compile_c(&cc, "ffi/socket_activation.c", &socket_activation_obj);
     compile_c(&cc, "ffi/kexec.c", &kexec_obj);
@@ -116,6 +123,7 @@ fn main() {
         journal_obj,
         event_obj,
         spawn_obj,
+        spawn_helper_obj,
         sandbox_obj,
         socket_activation_obj,
         kexec_obj,

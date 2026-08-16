@@ -1,345 +1,69 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #define _GNU_SOURCE
 /*
- * spawn.c — fork/execve with uid/gid/cwd/fd setup.
+ * spawn.c — manager side of process spawning.
+ *
+ * PID 1 runs IPC and D-Bus threads, so it must never fork(): the child would
+ * inherit locks held by threads that do not exist in it, and every allocation,
+ * setenv(3) or NSS-adjacent call between fork and exec would be undefined.
+ *
+ * Instead the manager serialises the request into a sealed memfd and
+ * posix_spawn()s a fresh RustD image in helper mode with an explicit
+ * descriptor mapping.  posix_spawn() only runs async-signal-safe glibc code in
+ * the new process, and the helper — a brand new single-threaded image — is the
+ * process that applies cgroup, namespace, MAC, rlimit, credential, capability,
+ * seccomp and environment setup before exec'ing the service.  The helper never
+ * forks either, so the PID returned here is the final service PID and remains
+ * a direct child of the manager.
  *
  * Upstream reference: src/core/execute.c exec_child() (v261)
  */
 
-#include "capability.h"
 #include "sandbox.h"
 #include "seccomp.h"
 #include "spawn.h"
+#include "spawn_helper.h"
+#include "spawn_wire.h"
 
 #include <errno.h>
 #include <fcntl.h>
-#include <grp.h>
 #include <limits.h>
-#include <poll.h>
 #include <signal.h>
-#include <stdio.h>
+#include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/prctl.h>
-#include <sys/stat.h>
-#include <time.h>
-#include <sys/resource.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define MAX_FD_SCAN 1024
-#define RUSTD_LISTEN_FDS_START 3
+extern char **environ;
 
-static int security_module_present(const char *const *paths) {
-    for (size_t i = 0; paths[i]; i++) {
-        struct stat st;
-        if (stat(paths[i], &st) == 0)
-            return 1;
-        if (errno != ENOENT && errno != ENOTDIR)
-            return -errno;
-    }
-    return 0;
-}
+/*
+ * Helper image used for every spawn.  It is installed by the production entry
+ * point before the manager creates its first thread and is only read
+ * afterwards, so no lock is needed on the spawn path.
+ */
+static char helper_executable[PATH_MAX];
+static int helper_executable_ready;
 
-static int write_process_attribute(
-        const char *const *paths,
-        const void *payload,
-        size_t payload_len) {
-    int last_missing = ENOENT;
+int rustd_spawn_helper_configure(const char *executable_path) {
+    if (!executable_path || executable_path[0] != '/')
+        return -EINVAL;
 
-    for (size_t i = 0; paths[i]; i++) {
-        int fd = open(paths[i], O_WRONLY | O_CLOEXEC);
-        if (fd < 0) {
-            if (errno == ENOENT || errno == ENOTDIR) {
-                last_missing = errno;
-                continue;
-            }
-            return -errno;
-        }
-
-        const unsigned char *cursor = payload;
-        size_t remaining = payload_len;
-        while (remaining > 0) {
-            ssize_t n = write(fd, cursor, remaining);
-            if (n < 0) {
-                if (errno == EINTR)
-                    continue;
-                int error = errno;
-                close(fd);
-                return -error;
-            }
-            if (n == 0) {
-                close(fd);
-                return -EIO;
-            }
-            cursor += (size_t)n;
-            remaining -= (size_t)n;
-        }
-
-        if (close(fd) < 0)
-            return -errno;
-        return 0;
-    }
-
-    return -last_missing;
-}
-
-static int apply_selinux_exec_context(const char *context) {
-    if (!context || context[0] == '\0')
-        return 0;
-
-    static const char *const enabled_paths[] = {
-        "/sys/fs/selinux/enforce",
-        "/sys/fs/selinux",
-        NULL,
-    };
-    int enabled = security_module_present(enabled_paths);
-    if (enabled <= 0)
-        return enabled;
-
-    static const char *const attr_paths[] = {
-        "/proc/thread-self/attr/selinux/exec",
-        "/proc/self/attr/selinux/exec",
-        "/proc/thread-self/attr/exec",
-        "/proc/self/attr/exec",
-        NULL,
-    };
-    return write_process_attribute(attr_paths, context, strlen(context) + 1);
-}
-
-static int apparmor_is_enabled(void) {
-    int fd = open("/sys/module/apparmor/parameters/enabled", O_RDONLY | O_CLOEXEC);
-    if (fd < 0)
-        return (errno == ENOENT || errno == ENOTDIR) ? 0 : -errno;
-
-    char value = '\0';
-    ssize_t n;
-    do {
-        n = read(fd, &value, 1);
-    } while (n < 0 && errno == EINTR);
-    int saved = errno;
-    close(fd);
-    if (n < 0)
-        return -saved;
-    return n == 1 && (value == 'Y' || value == 'y' || value == '1');
-}
-
-static int apply_apparmor_exec_profile(const char *profile) {
-    if (!profile || profile[0] == '\0')
-        return 0;
-
-    int enabled = apparmor_is_enabled();
-    if (enabled <= 0)
-        return enabled;
-
-    size_t profile_len = strlen(profile);
-    if (profile_len > SIZE_MAX - sizeof("exec "))
-        return -EOVERFLOW;
-    size_t payload_len = sizeof("exec ") - 1 + profile_len;
-    char *payload = malloc(payload_len);
-    if (!payload)
-        return -ENOMEM;
-    memcpy(payload, "exec ", sizeof("exec ") - 1);
-    memcpy(payload + sizeof("exec ") - 1, profile, profile_len);
-
-    static const char *const attr_paths[] = {
-        "/proc/thread-self/attr/apparmor/exec",
-        "/proc/self/attr/apparmor/exec",
-        "/proc/thread-self/attr/exec",
-        "/proc/self/attr/exec",
-        NULL,
-    };
-    int r = write_process_attribute(attr_paths, payload, payload_len);
-    free(payload);
-    return r;
-}
-
-static int apply_exec_mac_contexts(const rustd_spawn_params *p) {
-    int r = apply_selinux_exec_context(p->selinux_context);
-    if (r < 0 && !p->selinux_context_ignore)
-        return r;
-
-    r = apply_apparmor_exec_profile(p->apparmor_profile);
-    if (r < 0 && !p->apparmor_profile_ignore)
-        return r;
-    return 0;
-}
-
-static void close_fds_except(int fd_first, const int *keep, int keep_count) {
-    for (int fd = fd_first; fd < MAX_FD_SCAN; fd++) {
-        int skip = 0;
-        for (int k = 0; k < keep_count; k++) {
-            if (keep[k] == fd) {
-                skip = 1;
-                break;
-            }
-        }
-        if (!skip)
-            close(fd);
-    }
-}
-
-static int attach_self_to_cgroup(const char *path) {
-    if (!path || path[0] == '\0')
-        return 0;
-
-    int fd = open(path, O_WRONLY | O_CLOEXEC);
-    if (fd < 0)
+    size_t length = strnlen(executable_path, sizeof(helper_executable));
+    if (length >= sizeof(helper_executable))
+        return -ENAMETOOLONG;
+    if (access(executable_path, X_OK) < 0)
         return -errno;
 
-    static const char self[] = "0\n";
-    size_t offset = 0;
-    while (offset < sizeof(self) - 1) {
-        ssize_t written = write(fd, self + offset, sizeof(self) - 1 - offset);
-        if (written < 0) {
-            if (errno == EINTR)
-                continue;
-            int error = errno;
-            close(fd);
-            return -error;
-        }
-        offset += (size_t)written;
-    }
-
-    if (close(fd) < 0)
-        return -errno;
+    memcpy(helper_executable, executable_path, length + 1);
+    helper_executable_ready = 1;
     return 0;
 }
 
-static rlim_t decode_rlimit(uint64_t value) {
-    return value == UINT64_MAX ? RLIM_INFINITY : (rlim_t)value;
-}
-
-static int setrlimit_closest_local(int resource, const struct rlimit *requested) {
-    if (setrlimit(resource, requested) == 0)
-        return 0;
-    if (errno != EPERM)
-        return -errno;
-
-    struct rlimit highest;
-    if (getrlimit(resource, &highest) < 0)
-        return -errno;
-    if (highest.rlim_max == RLIM_INFINITY)
-        return -EPERM;
-
-    struct rlimit fixed = {
-        .rlim_cur = requested->rlim_cur < highest.rlim_max ? requested->rlim_cur : highest.rlim_max,
-        .rlim_max = requested->rlim_max < highest.rlim_max ? requested->rlim_max : highest.rlim_max,
-    };
-    if (fixed.rlim_cur == highest.rlim_cur && fixed.rlim_max == highest.rlim_max)
-        return 0;
-    if (setrlimit(resource, &fixed) < 0)
-        return -errno;
-    return 0;
-}
-
-static int apply_rlimits(const rustd_spawn_rlimit *limits, size_t n_limits) {
-    if (!limits || n_limits == 0)
-        return 0;
-    for (size_t i = 0; i < n_limits; i++) {
-        struct rlimit value = {
-            .rlim_cur = decode_rlimit(limits[i].soft),
-            .rlim_max = decode_rlimit(limits[i].hard),
-        };
-        if (value.rlim_cur > value.rlim_max)
-            return -EINVAL;
-        int r = setrlimit_closest_local(limits[i].resource, &value);
-        if (r < 0)
-            return r;
-    }
-    return 0;
-}
-
-static int apply_environment(const char * const *envp) {
-    if (!envp)
-        return 0;
-
-    for (size_t i = 0; envp[i]; i++) {
-        const char *separator = strchr(envp[i], '=');
-        if (!separator || separator == envp[i])
-            return -EINVAL;
-
-        size_t key_length = (size_t)(separator - envp[i]);
-        char *key = strndup(envp[i], key_length);
-        if (!key)
-            return -ENOMEM;
-        int result = setenv(key, separator + 1, 1);
-        free(key);
-        if (result < 0)
-            return -errno;
-    }
-    return 0;
-}
-
-static _Noreturn void child_fail(int error_fd, int error_number, int exit_status) {
-    if (error_fd >= 0) {
-        if (error_number <= 0)
-  error_number = EIO;
-        ssize_t written;
-        do {
-  written = write(error_fd, &error_number, sizeof(error_number));
-        } while (written < 0 && errno == EINTR);
-    }
-    _exit(exit_status);
-}
-
-static pid_t wait_for_exec_result(pid_t pid, int error_fd) {
-    int error_number = 0;
-    ssize_t length;
-    do {
-        length = read(error_fd, &error_number, sizeof(error_number));
-    } while (length < 0 && errno == EINTR);
-    int read_error = length < 0 ? errno : 0;
-    close(error_fd);
-
-    if (length == 0)
-        return pid;
-
-    int status;
-    if (length == (ssize_t)sizeof(error_number)) {
-        while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
-  ;
-        return error_number > 0 ? -error_number : -EIO;
-    }
-
-    kill(pid, SIGKILL);
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
-        ;
-    return read_error != 0 ? -read_error : -EIO;
-}
-
-
-static void wait_for_idle_gate(int fd) {
-    if (fd < 0)
-        return;
-
-    struct timespec start;
-    if (clock_gettime(CLOCK_MONOTONIC, &start) < 0) {
-        struct pollfd pfd = { .fd = fd, .events = POLLIN | POLLHUP | POLLERR };
-        while (poll(&pfd, 1, 5000) < 0 && errno == EINTR)
-            ;
-        close(fd);
-        return;
-    }
-
-    int remaining_ms = 5000;
-    for (;;) {
-        struct pollfd pfd = { .fd = fd, .events = POLLIN | POLLHUP | POLLERR };
-        int r = poll(&pfd, 1, remaining_ms);
-        if (r >= 0 || errno != EINTR)
-            break;
-
-        struct timespec now;
-        if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
-            break;
-        long long elapsed_ms = (long long)(now.tv_sec - start.tv_sec) * 1000LL
-                             + (long long)(now.tv_nsec - start.tv_nsec) / 1000000LL;
-        if (elapsed_ms >= 5000)
-            break;
-        remaining_ms = 5000 - (int)elapsed_ms;
-    }
-
-    close(fd);
+int rustd_spawn_helper_configured(void) {
+    return helper_executable_ready;
 }
 
 int rustd_spawn_sandbox_needs_mount_namespace(const rustd_spawn_sandbox *sandbox) {
@@ -358,355 +82,511 @@ int rustd_spawn_sandbox_needs_mount_namespace(const rustd_spawn_sandbox *sandbox
         || sandbox->restrict_suid_sgid;
 }
 
-pid_t rustd_spawn(const rustd_spawn_params *p) {
+static int bounded_length(const char *value, size_t *ret_length) {
+    size_t length = strnlen(value, RUSTD_SPAWN_MAX_STRING_BYTES + 1);
+    if (length > RUSTD_SPAWN_MAX_STRING_BYTES)
+        return -E2BIG;
+    *ret_length = length;
+    return 0;
+}
+
+static int count_vector(const char *const *vector, size_t limit, size_t *ret_count) {
+    size_t count = 0;
+    while (vector[count]) {
+        size_t ignored;
+        int r = bounded_length(vector[count], &ignored);
+        if (r < 0)
+            return r;
+        count++;
+        if (count > limit)
+            return -E2BIG;
+    }
+    *ret_count = count;
+    return 0;
+}
+
+/*
+ * Reject anything the helper would have to guess about.  Everything the child
+ * used to discover after fork() is decided here, while errors can still be
+ * reported to the caller directly.
+ */
+static int validate_params(const rustd_spawn_params *p, size_t *ret_argv, size_t *ret_env) {
     if (!p || !p->path || p->path[0] == '\0' || !p->argv || !p->argv[0])
         return -EINVAL;
 
-    int n_listen = (p->listen_fds && p->n_listen_fds > 0) ? p->n_listen_fds : 0;
-    int exec_pipe[2] = { -1, -1 };
-    if (p->wait_for_exec) {
-        if (pipe2(exec_pipe, O_CLOEXEC) < 0)
-  return -errno;
-        int minimum_error_fd = RUSTD_LISTEN_FDS_START + n_listen;
-        int moved = fcntl(exec_pipe[1], F_DUPFD_CLOEXEC, minimum_error_fd);
-        if (moved < 0) {
-  int error = errno;
-  close(exec_pipe[0]);
-  close(exec_pipe[1]);
-  return -error;
+    size_t ignored;
+    int r = bounded_length(p->path, &ignored);
+    if (r < 0)
+        return r;
+    r = count_vector(p->argv, RUSTD_SPAWN_MAX_ARGV, ret_argv);
+    if (r < 0)
+        return r;
+
+    *ret_env = 0;
+    if (p->envp) {
+        r = count_vector(p->envp, RUSTD_SPAWN_MAX_ENV, ret_env);
+        if (r < 0)
+            return r;
+        for (size_t i = 0; i < *ret_env; i++) {
+            const char *separator = strchr(p->envp[i], '=');
+            if (!separator || separator == p->envp[i])
+                return -EINVAL;
         }
-        close(exec_pipe[1]);
-        exec_pipe[1] = moved;
     }
 
-    int idle_gate_fd = -1;
-    if ((p->idle_read_fd >= 0) != (p->idle_write_fd >= 0)) {
-        if (exec_pipe[0] >= 0)
-  close(exec_pipe[0]);
-        if (exec_pipe[1] >= 0)
-  close(exec_pipe[1]);
+    if (p->cwd) {
+        r = bounded_length(p->cwd, &ignored);
+        if (r < 0)
+            return r;
+    }
+    if (p->cgroup_procs_path) {
+        r = bounded_length(p->cgroup_procs_path, &ignored);
+        if (r < 0)
+            return r;
+    }
+    if (p->selinux_context) {
+        r = bounded_length(p->selinux_context, &ignored);
+        if (r < 0)
+            return r;
+    }
+    if (p->apparmor_profile) {
+        r = bounded_length(p->apparmor_profile, &ignored);
+        if (r < 0)
+            return r;
+    }
+
+    if (p->n_rlimits > RUSTD_SPAWN_MAX_RLIMITS)
+        return -E2BIG;
+    if (p->n_rlimits > 0 && !p->rlimits)
+        return -EINVAL;
+
+    if (p->n_listen_fds < 0)
+        return -EINVAL;
+    if (p->n_listen_fds > RUSTD_SPAWN_MAX_LISTEN_FDS)
+        return -E2BIG;
+    if (p->n_listen_fds > 0 && !p->listen_fds)
+        return -EINVAL;
+    if (p->n_listen_fds > 0) {
+        for (int i = 0; i < p->n_listen_fds; i++) {
+            if (p->listen_fds[i] < 0)
+                return -EBADF;
+        }
+    }
+
+    if (p->stdin_fd < -1 || p->stdout_fd < -1 || p->stderr_fd < -1 || p->notify_fd < -1)
+        return -EBADF;
+
+    if ((p->idle_read_fd >= 0) != (p->idle_write_fd >= 0))
+        return -EINVAL;
+
+    if (p->sandbox) {
+        const rustd_spawn_sandbox *sandbox = p->sandbox;
+        if (sandbox->n_syscall_filter_rules > RUSTD_SPAWN_MAX_SECCOMP_RULES)
+            return -E2BIG;
+        if (sandbox->n_syscall_filter_rules > 0 && !sandbox->syscall_filter_rules)
+            return -EINVAL;
+    }
+
+    return 0;
+}
+
+static void write_string(rustd_spawn_writer *writer, const char *value) {
+    rustd_spawn_write_string(writer, value, strlen(value));
+}
+
+/*
+ * Serialise the request.  With writer->data == NULL this only measures, so the
+ * buffer is sized by exactly the code that fills it.
+ */
+static void write_request(
+        const rustd_spawn_params *p,
+        const char *notify_socket,
+        size_t n_argv,
+        size_t n_env,
+        size_t total_bytes,
+        rustd_spawn_writer *writer) {
+    const rustd_spawn_sandbox *sandbox = p->sandbox;
+    int n_listen = (p->listen_fds && p->n_listen_fds > 0) ? p->n_listen_fds : 0;
+
+    uint32_t flags = 0;
+    if (p->wait_for_exec)
+        flags |= RUSTD_SPAWN_FLAG_WAIT_FOR_EXEC;
+    if (p->envp)
+        flags |= RUSTD_SPAWN_FLAG_HAS_ENVIRONMENT;
+    if (sandbox)
+        flags |= RUSTD_SPAWN_FLAG_HAS_SANDBOX;
+    if (p->idle_read_fd >= 0)
+        flags |= RUSTD_SPAWN_FLAG_HAS_IDLE_GATE;
+    if (p->cwd && p->cwd[0] != '\0')
+        flags |= RUSTD_SPAWN_FLAG_HAS_CWD;
+    if (p->cgroup_procs_path && p->cgroup_procs_path[0] != '\0')
+        flags |= RUSTD_SPAWN_FLAG_HAS_CGROUP;
+    if (p->selinux_context)
+        flags |= RUSTD_SPAWN_FLAG_HAS_SELINUX;
+    if (p->apparmor_profile)
+        flags |= RUSTD_SPAWN_FLAG_HAS_APPARMOR;
+    if (p->selinux_context_ignore)
+        flags |= RUSTD_SPAWN_FLAG_SELINUX_IGNORE;
+    if (p->apparmor_profile_ignore)
+        flags |= RUSTD_SPAWN_FLAG_APPARMOR_IGNORE;
+    if (notify_socket)
+        flags |= RUSTD_SPAWN_FLAG_HAS_NOTIFY_SOCKET;
+
+    rustd_spawn_wire_header header;
+    memset(&header, 0, sizeof(header));
+    header.magic = RUSTD_SPAWN_WIRE_MAGIC;
+    header.version = RUSTD_SPAWN_WIRE_VERSION;
+    header.header_bytes = (uint32_t)sizeof(header);
+    header.total_bytes = (uint32_t)total_bytes;
+    header.flags = flags;
+    header.n_argv = (uint32_t)n_argv;
+    header.n_env = (uint32_t)n_env;
+    header.n_rlimits = (uint32_t)p->n_rlimits;
+    header.n_listen_fds = (uint32_t)n_listen;
+    header.uid = (uint32_t)p->uid;
+    header.gid = (uint32_t)p->gid;
+    header.cap_bounding_set = p->cap_bounding_set;
+    header.ambient_caps = p->ambient_caps;
+    header.watchdog_usec = p->watchdog_usec;
+
+    if (sandbox) {
+        header.n_seccomp_rules = (uint32_t)sandbox->n_syscall_filter_rules;
+        header.seccomp_default_action = sandbox->syscall_filter_default_action;
+        header.no_new_privs = (uint32_t)sandbox->no_new_privs;
+        header.private_tmp = (uint32_t)sandbox->private_tmp;
+        header.private_devices = (uint32_t)sandbox->private_devices;
+        header.private_network = (uint32_t)sandbox->private_network;
+        header.private_mounts = (uint32_t)sandbox->private_mounts;
+        header.protect_system = (uint32_t)sandbox->protect_system;
+        header.protect_home = (uint32_t)sandbox->protect_home;
+        header.protect_kernel_tunables = (uint32_t)sandbox->protect_kernel_tunables;
+        header.protect_kernel_modules = (uint32_t)sandbox->protect_kernel_modules;
+        header.protect_kernel_logs = (uint32_t)sandbox->protect_kernel_logs;
+        header.protect_clock = (uint32_t)sandbox->protect_clock;
+        header.protect_control_groups = (uint32_t)sandbox->protect_control_groups;
+        header.restrict_suid_sgid = (uint32_t)sandbox->restrict_suid_sgid;
+        header.restrict_realtime = (uint32_t)sandbox->restrict_realtime;
+        header.restrict_namespaces = (uint32_t)sandbox->restrict_namespaces;
+        header.memory_deny_write_execute = (uint32_t)sandbox->memory_deny_write_execute;
+        header.syscall_filter_enabled = (uint32_t)sandbox->syscall_filter_enabled;
+        header.restrict_native_syscalls = (uint32_t)sandbox->restrict_native_syscalls;
+    }
+
+    rustd_spawn_write_bytes(writer, &header, sizeof(header));
+
+    write_string(writer, p->path);
+    for (uint32_t i = 0; i < header.n_argv; i++)
+        write_string(writer, p->argv[i]);
+    for (uint32_t i = 0; i < header.n_env; i++)
+        write_string(writer, p->envp[i]);
+    if (flags & RUSTD_SPAWN_FLAG_HAS_CWD)
+        write_string(writer, p->cwd);
+    if (flags & RUSTD_SPAWN_FLAG_HAS_CGROUP)
+        write_string(writer, p->cgroup_procs_path);
+    if (flags & RUSTD_SPAWN_FLAG_HAS_SELINUX)
+        write_string(writer, p->selinux_context);
+    if (flags & RUSTD_SPAWN_FLAG_HAS_APPARMOR)
+        write_string(writer, p->apparmor_profile);
+    if (flags & RUSTD_SPAWN_FLAG_HAS_NOTIFY_SOCKET)
+        write_string(writer, notify_socket);
+
+    for (uint32_t i = 0; i < header.n_rlimits; i++) {
+        rustd_spawn_write_u32(writer, (uint32_t)p->rlimits[i].resource);
+        rustd_spawn_write_u64(writer, p->rlimits[i].soft);
+        rustd_spawn_write_u64(writer, p->rlimits[i].hard);
+    }
+
+    for (uint32_t i = 0; i < header.n_seccomp_rules; i++) {
+        rustd_spawn_write_u32(writer, (uint32_t)sandbox->syscall_filter_rules[i].nr);
+        rustd_spawn_write_u32(writer, sandbox->syscall_filter_rules[i].action);
+    }
+}
+
+/* Publish the request through a sealed memfd so the helper cannot be fed a
+ * growing or mutating buffer, and so nothing else can rewrite it in flight. */
+static int create_request_memfd(const unsigned char *data, size_t length) {
+    int fd = memfd_create("rustd-spawn-request", MFD_CLOEXEC | MFD_ALLOW_SEALING);
+    if (fd < 0)
+        return -errno;
+
+    size_t offset = 0;
+    while (offset < length) {
+        ssize_t written = write(fd, data + offset, length - offset);
+        if (written < 0) {
+            if (errno == EINTR)
+                continue;
+            int error = errno;
+            close(fd);
+            return -error;
+        }
+        if (written == 0) {
+            close(fd);
+            return -EIO;
+        }
+        offset += (size_t)written;
+    }
+
+    if (fcntl(fd, F_ADD_SEALS, F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE) < 0) {
+        int error = errno;
+        close(fd);
+        return -error;
+    }
+    return fd;
+}
+
+/*
+ * Descriptors handed to posix_spawn() must not collide with the descriptor
+ * numbers the child mapping writes to, otherwise a later dup2 action could
+ * overwrite an earlier action's source.  Sources are therefore lifted above
+ * the whole target range first, always with F_DUPFD_CLOEXEC so no window
+ * exists where a concurrently spawning thread could leak them.
+ */
+typedef struct {
+    int fds[RUSTD_SPAWN_MAX_LISTEN_FDS + 8];
+    int count;
+} rustd_spawn_fd_scratch;
+
+static int scratch_lift(rustd_spawn_fd_scratch *scratch, int fd, int minimum, int *ret_fd) {
+    if (fd >= minimum) {
+        *ret_fd = fd;
+        return 0;
+    }
+    if (scratch->count >= (int)(sizeof(scratch->fds) / sizeof(scratch->fds[0])))
+        return -EMFILE;
+
+    int moved = fcntl(fd, F_DUPFD_CLOEXEC, minimum);
+    if (moved < 0)
+        return -errno;
+    scratch->fds[scratch->count++] = moved;
+    *ret_fd = moved;
+    return 0;
+}
+
+static void scratch_release(rustd_spawn_fd_scratch *scratch) {
+    for (int i = 0; i < scratch->count; i++)
+        close(scratch->fds[i]);
+    scratch->count = 0;
+}
+
+static int add_mapping(
+        posix_spawn_file_actions_t *actions,
+        rustd_spawn_fd_scratch *scratch,
+        int source,
+        int target,
+        int minimum) {
+    int lifted = -1;
+    int r = scratch_lift(scratch, source, minimum, &lifted);
+    if (r < 0)
+        return r;
+    return -posix_spawn_file_actions_adddup2(actions, lifted, target);
+}
+
+static int spawn_helper_image(
+        const rustd_spawn_params *p,
+        int n_listen,
+        int request_fd,
+        int error_fd,
+        pid_t *ret_pid) {
+    posix_spawn_file_actions_t actions;
+    posix_spawnattr_t attributes;
+    rustd_spawn_fd_scratch scratch = { .count = 0 };
+    int minimum = RUSTD_SPAWN_LISTEN_FD_BASE + n_listen;
+
+    int r = posix_spawn_file_actions_init(&actions);
+    if (r != 0)
+        return -r;
+    r = posix_spawnattr_init(&attributes);
+    if (r != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+        return -r;
+    }
+
+    sigset_t all_signals;
+    sigset_t no_signals;
+    sigfillset(&all_signals);
+    sigemptyset(&no_signals);
+    r = -posix_spawnattr_setsigdefault(&attributes, &all_signals);
+    if (r == 0)
+        r = -posix_spawnattr_setsigmask(&attributes, &no_signals);
+    if (r == 0)
+        r = -posix_spawnattr_setflags(
+                &attributes,
+                POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
+
+    if (r == 0) {
+        if (p->stdin_fd < 0)
+            r = -posix_spawn_file_actions_addopen(
+                    &actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+        else
+            r = add_mapping(&actions, &scratch, p->stdin_fd, STDIN_FILENO, minimum);
+    }
+    if (r == 0 && p->stdout_fd >= 0)
+        r = add_mapping(&actions, &scratch, p->stdout_fd, STDOUT_FILENO, minimum);
+    if (r == 0 && p->stderr_fd >= 0)
+        r = add_mapping(&actions, &scratch, p->stderr_fd, STDERR_FILENO, minimum);
+    if (r == 0)
+        r = add_mapping(&actions, &scratch, request_fd, RUSTD_SPAWN_REQUEST_FD, minimum);
+    if (r == 0)
+        r = add_mapping(&actions, &scratch, error_fd, RUSTD_SPAWN_ERROR_FD, minimum);
+    if (r == 0 && p->idle_read_fd >= 0)
+        r = add_mapping(&actions, &scratch, p->idle_read_fd, RUSTD_SPAWN_IDLE_FD, minimum);
+    for (int i = 0; r == 0 && i < n_listen; i++)
+        r = add_mapping(
+                &actions,
+                &scratch,
+                p->listen_fds[i],
+                RUSTD_SPAWN_LISTEN_FD_BASE + i,
+                minimum);
+
+    if (r == 0) {
+        char *const helper_argv[] = {
+            helper_executable,
+            (char *)RUSTD_SPAWN_HELPER_ARGUMENT,
+            NULL,
+        };
+        pid_t pid = -1;
+        int error = posix_spawn(
+                &pid, helper_executable, &actions, &attributes, helper_argv, environ);
+        if (error != 0)
+            r = -error;
+        else
+            *ret_pid = pid;
+    }
+
+    scratch_release(&scratch);
+    posix_spawnattr_destroy(&attributes);
+    posix_spawn_file_actions_destroy(&actions);
+    return r;
+}
+
+static pid_t wait_for_exec_result(pid_t pid, int error_fd) {
+    int error_number = 0;
+    ssize_t length;
+    do {
+        length = read(error_fd, &error_number, sizeof(error_number));
+    } while (length < 0 && errno == EINTR);
+    int read_error = length < 0 ? errno : 0;
+    close(error_fd);
+
+    if (length == 0)
+        return pid;
+
+    int status;
+    if (length == (ssize_t)sizeof(error_number)) {
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+            ;
+        return error_number > 0 ? -error_number : -EIO;
+    }
+
+    kill(pid, SIGKILL);
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR)
+        ;
+    return read_error != 0 ? -read_error : -EIO;
+}
+
+pid_t rustd_spawn(const rustd_spawn_params *p) {
+    size_t n_argv = 0;
+    size_t n_env = 0;
+    int r = validate_params(p, &n_argv, &n_env);
+    if (r < 0)
+        return (pid_t)r;
+    if (!helper_executable_ready)
+        return -ENOSYS;
+
+    /* Resolved here so the helper never has to read the manager environment. */
+    const char *notify_socket = NULL;
+    if (p->notify_fd >= 0) {
+        notify_socket = getenv("RUSTD_NOTIFY_SOCKET");
+        if (!notify_socket || notify_socket[0] == '\0')
+            notify_socket = "@rustd/notify";
+    }
+
+    rustd_spawn_writer measure = { .data = NULL, .capacity = 0, .offset = 0, .failed = 0 };
+    write_request(p, notify_socket, n_argv, n_env, 0, &measure);
+    if (measure.failed)
+        return -EINVAL;
+    if (measure.offset > RUSTD_SPAWN_MAX_REQUEST_BYTES)
+        return -E2BIG;
+
+    size_t total_bytes = measure.offset;
+    unsigned char *buffer = malloc(total_bytes);
+    if (!buffer)
+        return -ENOMEM;
+
+    rustd_spawn_writer fill = {
+        .data = buffer,
+        .capacity = total_bytes,
+        .offset = 0,
+        .failed = 0,
+    };
+    write_request(p, notify_socket, n_argv, n_env, total_bytes, &fill);
+    if (fill.failed || fill.offset != total_bytes) {
+        free(buffer);
         return -EINVAL;
     }
-    if (p->idle_read_fd >= 0) {
-        int minimum_idle_fd = RUSTD_LISTEN_FDS_START + n_listen + (p->wait_for_exec ? 1 : 0);
-        idle_gate_fd = fcntl(p->idle_read_fd, F_DUPFD_CLOEXEC, minimum_idle_fd);
-        if (idle_gate_fd < 0) {
-  int error = errno;
-  if (exec_pipe[0] >= 0)
-      close(exec_pipe[0]);
-  if (exec_pipe[1] >= 0)
-      close(exec_pipe[1]);
-  return -error;
-        }
-    }
 
-    pid_t pid = fork();
-    if (pid < 0) {
+    int request_fd = create_request_memfd(buffer, total_bytes);
+    free(buffer);
+    if (request_fd < 0)
+        return (pid_t)request_fd;
+
+    /*
+     * A socket pair rather than a pipe: the helper reports setup failures with
+     * MSG_NOSIGNAL, so a caller that did not ask for the exec handshake can
+     * drop its end without ever signalling the child.
+     */
+    int error_socket[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, error_socket) < 0) {
         int error = errno;
-        if (exec_pipe[0] >= 0)
-  close(exec_pipe[0]);
-        if (exec_pipe[1] >= 0)
-  close(exec_pipe[1]);
-        if (idle_gate_fd >= 0)
-  close(idle_gate_fd);
+        close(request_fd);
         return -error;
     }
 
-    if (pid > 0) {
-        if (idle_gate_fd >= 0)
-  close(idle_gate_fd);
-        if (!p->wait_for_exec)
-  return pid;
-        close(exec_pipe[1]);
-        return wait_for_exec_result(pid, exec_pipe[0]);
+    int n_listen = (p->listen_fds && p->n_listen_fds > 0) ? p->n_listen_fds : 0;
+    pid_t pid = -1;
+    r = spawn_helper_image(p, n_listen, request_fd, error_socket[1], &pid);
+
+    close(request_fd);
+    close(error_socket[1]);
+    if (r < 0) {
+        close(error_socket[0]);
+        return (pid_t)r;
     }
 
-    int error_fd = -1;
-    if (p->wait_for_exec) {
-        close(exec_pipe[0]);
-        error_fd = exec_pipe[1];
+    if (!p->wait_for_exec) {
+        close(error_socket[0]);
+        return pid;
     }
+    return wait_for_exec_result(pid, error_socket[0]);
+}
 
-    if (idle_gate_fd >= 0) {
-        close(p->idle_read_fd);
-        close(p->idle_write_fd);
-    }
+/*
+ * Helper mode entry.  The manager execs this same image with a private
+ * argument; running from an ELF constructor keeps the mode out of every
+ * command-line surface and guarantees no manager state is touched before the
+ * request is applied.  rustd_spawn_helper_main() never returns.
+ *
+ * argv is recovered from /proc/self/cmdline rather than from a
+ * three-argument constructor so the entry stays portable under -Wpedantic.
+ */
+__attribute__((constructor)) static void rustd_spawn_helper_entry(void) {
+    int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
+    if (fd < 0)
+        return;
 
-    for (int sig = 1; sig < NSIG; sig++) {
-        struct sigaction sa;
-        memset(&sa, 0, sizeof(sa));
-        sa.sa_handler = SIG_DFL;
-        sigemptyset(&sa.sa_mask);
-        sigaction(sig, &sa, NULL);
-    }
+    char buffer[PATH_MAX + sizeof(RUSTD_SPAWN_HELPER_ARGUMENT) + 8];
+    ssize_t length = read(fd, buffer, sizeof(buffer) - 1);
+    close(fd);
+    if (length <= 0)
+        return;
+    buffer[length] = '\0';
 
-    sigset_t empty;
-    sigemptyset(&empty);
-    sigprocmask(SIG_SETMASK, &empty, NULL);
-
-    {
-        int r = attach_self_to_cgroup(p->cgroup_procs_path);
-        if (r < 0)
-            child_fail(error_fd, -r, 125);
-    }
-
-    if (p->stdin_fd == -1) {
-        int null_fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
-        if (null_fd < 0)
-  child_fail(error_fd, errno, 125);
-        if (dup2(null_fd, STDIN_FILENO) < 0) {
-  int error = errno;
-  close(null_fd);
-  child_fail(error_fd, error, 125);
-        }
-        close(null_fd);
-    } else if (p->stdin_fd != STDIN_FILENO && dup2(p->stdin_fd, STDIN_FILENO) < 0) {
-        child_fail(error_fd, errno, 125);
-    }
-
-    if (p->stdout_fd >= 0 && p->stdout_fd != STDOUT_FILENO
-  && dup2(p->stdout_fd, STDOUT_FILENO) < 0)
-        child_fail(error_fd, errno, 125);
-    if (p->stderr_fd >= 0 && p->stderr_fd != STDERR_FILENO
-  && dup2(p->stderr_fd, STDERR_FILENO) < 0)
-        child_fail(error_fd, errno, 125);
-
-    if (p->sandbox) {
-        const rustd_spawn_sandbox *sb = p->sandbox;
-        int needs_mount_namespace = rustd_spawn_sandbox_needs_mount_namespace(sb);
-        if (needs_mount_namespace || sb->private_network) {
-  int r = rustd_sandbox_mount_namespaces(
-      sb->private_tmp, sb->private_devices, sb->private_network,
-      sb->protect_system, sb->protect_home, needs_mount_namespace);
-  if (r < 0)
-      child_fail(error_fd, -r, 125);
-        }
-        if (sb->protect_kernel_tunables || sb->protect_kernel_modules
-      || sb->protect_kernel_logs || sb->protect_clock
-      || sb->protect_control_groups || sb->restrict_suid_sgid) {
-  int r = rustd_sandbox_protect_paths(
-      sb->protect_kernel_tunables, sb->protect_kernel_modules,
-      sb->protect_kernel_logs, sb->protect_clock,
-      sb->protect_control_groups, sb->restrict_suid_sgid);
-  if (r < 0)
-      child_fail(error_fd, -r, 125);
-        }
-    }
-
-    {
-        int r = apply_exec_mac_contexts(p);
-        if (r < 0)
-            child_fail(error_fd, -r, 125);
-    }
-
-    int seccomp_forced_no_new_privs = 0;
-    if (p->sandbox && p->sandbox->restrict_realtime) {
-        int r = rustd_sandbox_restrict_realtime();
-        if (r == -EACCES || r == -EPERM) {
-  r = rustd_sandbox_no_new_privs();
-  if (r < 0)
-      child_fail(error_fd, -r, 125);
-  seccomp_forced_no_new_privs = 1;
-  r = rustd_sandbox_restrict_realtime();
-        }
-        if (r < 0)
-  child_fail(error_fd, -r, 125);
-    }
-
-    if (p->sandbox && p->sandbox->memory_deny_write_execute) {
-        int r = rustd_seccomp_memory_deny_write_execute();
-        if (r < 0)
-  child_fail(error_fd, -r, 125);
-        seccomp_forced_no_new_privs = 1;
-    }
-
-    if (p->sandbox && p->sandbox->restrict_namespaces) {
-        int r = rustd_seccomp_restrict_namespaces(0);
-        if (r < 0)
-  child_fail(error_fd, -r, 125);
-        seccomp_forced_no_new_privs = 1;
-    }
-
-    if (p->sandbox && p->sandbox->protect_kernel_logs) {
-        int r = rustd_seccomp_protect_kernel_logs();
-        if (r == -EACCES || r == -EPERM) {
-            r = rustd_sandbox_no_new_privs();
-            if (r < 0)
-                child_fail(error_fd, -r, 125);
-            seccomp_forced_no_new_privs = 1;
-            r = rustd_seccomp_protect_kernel_logs();
-        }
-        if (r < 0)
-            child_fail(error_fd, -r, 125);
-    }
-
-    if (p->sandbox && p->sandbox->protect_clock) {
-        int r = rustd_seccomp_protect_clock();
-        if (r == -EACCES || r == -EPERM) {
-            r = rustd_sandbox_no_new_privs();
-            if (r < 0)
-                child_fail(error_fd, -r, 125);
-            seccomp_forced_no_new_privs = 1;
-            r = rustd_seccomp_protect_clock();
-        }
-        if (r < 0)
-            child_fail(error_fd, -r, 125);
-    }
-
-    {
-        int r = apply_rlimits(p->rlimits, p->n_rlimits);
-        if (r < 0)
-            child_fail(error_fd, -r, 125);
-    }
-
-    if (p->cap_bounding_set != UINT64_MAX) {
-        int r = rustd_capability_bounding_set_drop(p->cap_bounding_set);
-        if (r < 0)
-  child_fail(error_fd, -r, 125);
-    }
-
-    if (p->ambient_caps != 0 && p->cap_bounding_set != UINT64_MAX
-  && (p->ambient_caps & ~p->cap_bounding_set) != 0)
-        child_fail(error_fd, EINVAL, 125);
-
-    int keep_caps = 0;
-    if (p->ambient_caps != 0 && (uid_t)p->uid != (uid_t)-1
-  && p->uid != geteuid()) {
-        if (prctl(PR_SET_KEEPCAPS, 1L, 0L, 0L, 0L) < 0)
-  child_fail(error_fd, errno, 125);
-        keep_caps = 1;
-    }
-
-    if ((gid_t)p->gid != (gid_t)-1) {
-        if (setgroups(0, NULL) < 0)
-  child_fail(error_fd, errno, 125);
-        if (setresgid(p->gid, p->gid, p->gid) < 0)
-  child_fail(error_fd, errno, 125);
-    }
-
-    if ((uid_t)p->uid != (uid_t)-1) {
-        if (setresuid(p->uid, p->uid, p->uid) < 0)
-  child_fail(error_fd, errno, 125);
-    }
-
-    if (p->ambient_caps != 0) {
-        int r = rustd_capability_ambient_prepare(p->ambient_caps);
-        if (r < 0)
-  child_fail(error_fd, -r, 125);
-    }
-
-    if (keep_caps && prctl(PR_SET_KEEPCAPS, 0L, 0L, 0L, 0L) < 0)
-        child_fail(error_fd, errno, 125);
-
-    {
-        int r = rustd_capability_ambient_apply(p->ambient_caps);
-        if (r < 0)
-  child_fail(error_fd, -r, 125);
-    }
-
-    if (p->sandbox && p->sandbox->no_new_privs && !seccomp_forced_no_new_privs) {
-        int r = rustd_sandbox_no_new_privs();
-        if (r < 0)
-  child_fail(error_fd, -r, 125);
-    }
-
-    if (p->cwd && p->cwd[0] != '\0' && chdir(p->cwd) < 0)
-        child_fail(error_fd, errno, 126);
-
-    {
-        int r = apply_environment(p->envp);
-        if (r < 0)
-  child_fail(error_fd, -r, 125);
-    }
-
-    if (n_listen > 0) {
-        for (int i = 0; i < n_listen; i++) {
-  int src = p->listen_fds[i];
-  int dst = RUSTD_LISTEN_FDS_START + i;
-  if (src == dst) {
-      int fl = fcntl(dst, F_GETFD);
-      if (fl < 0 || fcntl(dst, F_SETFD, fl & ~FD_CLOEXEC) < 0)
-          child_fail(error_fd, errno, 125);
-  } else {
-      if (dup2(src, dst) < 0)
-          child_fail(error_fd, errno, 125);
-      int fl = fcntl(dst, F_GETFD);
-      if (fl < 0 || fcntl(dst, F_SETFD, fl & ~FD_CLOEXEC) < 0)
-          child_fail(error_fd, errno, 125);
-      if (src >= RUSTD_LISTEN_FDS_START)
-          close(src);
-  }
-        }
-
-        char buf[32];
-        snprintf(buf, sizeof(buf), "%d", n_listen);
-        if (setenv("LISTEN_FDS", buf, 1) < 0)
-  child_fail(error_fd, errno, 125);
-        snprintf(buf, sizeof(buf), "%d", (int)getpid());
-        if (setenv("LISTEN_PID", buf, 1) < 0)
-  child_fail(error_fd, errno, 125);
-    }
-
-    if (p->notify_fd >= 0) {
-        const char *notify_socket = getenv("RUSTD_NOTIFY_SOCKET");
-        if (!notify_socket || notify_socket[0] == '\0')
-  notify_socket = "@rustd/notify";
-        if (setenv("NOTIFY_SOCKET", notify_socket, 1) < 0)
-  child_fail(error_fd, errno, 125);
-    }
-
-    if (p->watchdog_usec > 0) {
-        char watchdog_value[32];
-        snprintf(
-  watchdog_value,
-  sizeof(watchdog_value),
-  "%llu",
-  (unsigned long long)p->watchdog_usec);
-        if (setenv("WATCHDOG_USEC", watchdog_value, 1) < 0)
-  child_fail(error_fd, errno, 125);
-        snprintf(watchdog_value, sizeof(watchdog_value), "%d", (int)getpid());
-        if (setenv("WATCHDOG_PID", watchdog_value, 1) < 0)
-  child_fail(error_fd, errno, 125);
-    }
-
-    int max_keep = 5 + n_listen;
-    int *keep = malloc((size_t)max_keep * sizeof(int));
-    if (!keep)
-        child_fail(error_fd, ENOMEM, 125);
-    int keep_count = 0;
-    keep[keep_count++] = STDIN_FILENO;
-    keep[keep_count++] = STDOUT_FILENO;
-    keep[keep_count++] = STDERR_FILENO;
-    for (int i = 0; i < n_listen; i++)
-        keep[keep_count++] = RUSTD_LISTEN_FDS_START + i;
-    if (error_fd >= RUSTD_LISTEN_FDS_START)
-        keep[keep_count++] = error_fd;
-    if (idle_gate_fd >= RUSTD_LISTEN_FDS_START)
-        keep[keep_count++] = idle_gate_fd;
-
-    close_fds_except(3, keep + 3, keep_count - 3);
-    free(keep);
-
-    wait_for_idle_gate(idle_gate_fd);
-
-    if (p->sandbox && p->sandbox->restrict_native_syscalls) {
-        int r = rustd_seccomp_restrict_native_architecture();
-        if (r < 0)
-            child_fail(error_fd, -r, 125);
-    }
-
-    if (p->sandbox && p->sandbox->syscall_filter_enabled) {
-        int r = rustd_seccomp_syscall_rules(
-            p->sandbox->syscall_filter_rules,
-            p->sandbox->n_syscall_filter_rules,
-            p->sandbox->syscall_filter_default_action);
-        if (r < 0)
-            child_fail(error_fd, -r, 125);
-    }
-
-    if (strchr(p->path, '/'))
-        execv(p->path, (char * const *)p->argv);
-    else
-        execvp(p->path, (char * const *)p->argv);
-    child_fail(error_fd, errno, 127);
+    /* cmdline stores argv entries as consecutive NUL-terminated strings. */
+    const char *argument = memchr(buffer, '\0', (size_t)length);
+    if (!argument || argument + 1 >= buffer + length)
+        return;
+    argument++;
+    if (strcmp(argument, RUSTD_SPAWN_HELPER_ARGUMENT) != 0)
+        return;
+    rustd_spawn_helper_main();
 }

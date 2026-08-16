@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! FFI binding for `ffi/spawn.c` — `fork`/`execve` process spawning.
+//! FFI binding for `ffi/spawn.c` — async-signal-safe process spawning.
+//!
+//! The manager never forks after threads exist.  It `posix_spawn`s a fresh
+//! RustD image in helper mode, and that helper applies the spawn parameters
+//! before `execve`.  Call [`configure_spawn_helper`] with an absolute path to
+//! the RustD executable before creating any manager threads.
 //!
 //! Upstream reference: `src/core/execute.c exec_child()` (v261)
 
 use libc::{gid_t, pid_t, uid_t};
+use std::ffi::CString;
+use std::path::Path;
 
 use crate::ffi::seccomp::{SdSeccompRule, SECCOMP_ACTION_ALLOW};
 
@@ -157,7 +164,17 @@ pub struct SdSpawnParams {
 }
 
 extern "C" {
-    /// Fork and exec with the given parameters.
+    /// Install the absolute path of the helper image used by [`rustd_spawn`].
+    ///
+    /// # Safety
+    /// `executable_path` must be a valid NUL-terminated C string for the
+    /// duration of the call.
+    pub fn rustd_spawn_helper_configure(executable_path: *const libc::c_char) -> libc::c_int;
+
+    /// Non-zero once [`rustd_spawn_helper_configure`] has succeeded.
+    pub fn rustd_spawn_helper_configured() -> libc::c_int;
+
+    /// Spawn with the given parameters without forking the manager.
     ///
     /// Returns the child PID on success, or a negative errno on failure.
     ///
@@ -166,4 +183,162 @@ extern "C" {
     /// All pointer fields within `p` must be valid for the duration of
     /// the call (they are not accessed after `rustd_spawn` returns).
     pub fn rustd_spawn(p: *const SdSpawnParams) -> pid_t;
+}
+
+/// Install the helper image that [`rustd_spawn`] launches for child setup.
+///
+/// Must be called before the manager creates any thread.  Production entry
+/// points pass `/proc/self/exe` (or an equivalent absolute path to the RustD
+/// binary).  Returns `Ok(())` on success.
+///
+/// # Errors
+/// Returns an error when the path is not absolute, cannot be reached, or the
+/// native configuration call fails.
+pub fn configure_spawn_helper(executable: &Path) -> anyhow::Result<()> {
+    let path = executable
+        .to_str()
+        .ok_or_else(|| anyhow::anyhow!("spawn helper path is not valid UTF-8"))?;
+    if !path.starts_with('/') {
+        anyhow::bail!("spawn helper path must be absolute");
+    }
+    let c_path =
+        CString::new(path).map_err(|_| anyhow::anyhow!("spawn helper path contains a NUL byte"))?;
+    // Safety: `c_path` is a valid NUL-terminated C string for this call.
+    let result = unsafe { rustd_spawn_helper_configure(c_path.as_ptr()) };
+    if result < 0 {
+        anyhow::bail!(
+            "failed to configure spawn helper '{}': errno {}",
+            path,
+            -result
+        );
+    }
+    Ok(())
+}
+
+/// Resolve `/proc/self/exe` and install it as the spawn helper.
+///
+/// # Errors
+/// Returns an error when `/proc/self/exe` cannot be read or configured.
+pub fn configure_spawn_helper_from_self() -> anyhow::Result<()> {
+    let exe = std::fs::read_link("/proc/self/exe")
+        .map_err(|error| anyhow::anyhow!("cannot read /proc/self/exe: {error}"))?;
+    configure_spawn_helper(&exe)
+}
+
+/// Test-only auto-configuration so unit tests that spawn services do not need
+/// to call the production entry path.  Production builds never include this.
+#[cfg(test)]
+pub(crate) fn ensure_spawn_helper_for_tests() {
+    use std::sync::Once;
+
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        if unsafe { rustd_spawn_helper_configured() } != 0 {
+            return;
+        }
+        if let Err(error) = configure_spawn_helper_from_self() {
+            panic!("test spawn helper configuration failed: {error}");
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn production_spawn_sources_never_call_fork() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let call = regex_lite_fork_call();
+        for relative in ["ffi/spawn.c", "ffi/spawn_helper.c"] {
+            let source = fs::read_to_string(manifest.join(relative)).unwrap();
+            assert!(!call.is_match(&source), "{relative} must not call fork()");
+        }
+
+        let spawn_c = fs::read_to_string(manifest.join("ffi/spawn.c")).unwrap();
+        let start = spawn_c
+            .find("pid_t rustd_spawn(")
+            .expect("rustd_spawn definition");
+        let body = &spawn_c[start..];
+        let end = body.find("\n}\n").expect("rustd_spawn closing brace") + 3;
+        let function = &body[..end];
+        assert!(
+            !call.is_match(function),
+            "production rustd_spawn must not call fork"
+        );
+        assert!(
+            function.contains("spawn_helper_image"),
+            "production rustd_spawn must launch through spawn_helper_image"
+        );
+        assert!(
+            call_free_contains_posix_spawn(&spawn_c),
+            "ffi/spawn.c must use posix_spawn"
+        );
+    }
+
+    fn call_free_contains_posix_spawn(source: &str) -> bool {
+        source
+            .lines()
+            .map(|line| line.split("//").next().unwrap_or(line))
+            .any(|line| line.contains("posix_spawn"))
+    }
+
+    fn regex_lite_fork_call() -> ForkCallPattern {
+        ForkCallPattern
+    }
+
+    struct ForkCallPattern;
+
+    impl ForkCallPattern {
+        fn is_match(&self, source: &str) -> bool {
+            let without_blocks = strip_block_comments(source);
+            for line in without_blocks.lines() {
+                let code = line.split("//").next().unwrap_or(line);
+                let bytes = code.as_bytes();
+                let needle = b"fork";
+                let mut index = 0;
+                while let Some(relative) = code[index..]
+                    .as_bytes()
+                    .windows(needle.len())
+                    .position(|window| window == needle)
+                {
+                    let at = index + relative;
+                    let before = if at == 0 { b' ' } else { bytes[at - 1] };
+                    if before.is_ascii_alphanumeric() || before == b'_' {
+                        index = at + needle.len();
+                        continue;
+                    }
+                    let after = &code[at + needle.len()..];
+                    let trimmed = after.trim_start();
+                    if trimmed.starts_with('(') {
+                        return true;
+                    }
+                    index = at + needle.len();
+                }
+            }
+            false
+        }
+    }
+
+    fn strip_block_comments(source: &str) -> String {
+        let mut output = String::with_capacity(source.len());
+        let bytes = source.as_bytes();
+        let mut index = 0;
+        while index < bytes.len() {
+            if index + 1 < bytes.len() && bytes[index] == b'/' && bytes[index + 1] == b'*' {
+                index += 2;
+                while index + 1 < bytes.len() && !(bytes[index] == b'*' && bytes[index + 1] == b'/')
+                {
+                    index += 1;
+                }
+                index = (index + 2).min(bytes.len());
+                output.push(' ');
+                continue;
+            }
+            output.push(bytes[index] as char);
+            index += 1;
+        }
+        output
+    }
 }
