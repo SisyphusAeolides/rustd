@@ -72,7 +72,7 @@ check-packaging:
 	work=$$(mktemp -d); \
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
 	cargo metadata --locked --no-deps --format-version 1 >"$$work/cargo-metadata.json"; \
-	python3 -c 'import json, sys; data=json.load(open(sys.argv[1], encoding="utf-8")); package=next(p for p in data["packages"] if p["name"]=="rustd"); bins={t["name"] for t in package["targets"] if "bin" in t["kind"]}; required={"rustd", "rustctl"}; missing=sorted(required-bins); assert not missing, f"missing native RustD binaries: {missing}"' "$$work/cargo-metadata.json"; \
+	python3 -c 'import json, sys; data=json.load(open(sys.argv[1], encoding="utf-8")); package=next(p for p in data["packages"] if p["name"]=="rustd-daemon"); bins={t["name"] for t in package["targets"] if "bin" in t["kind"]}; required={"rustd", "rustctl"}; missing=sorted(required-bins); assert not missing, f"missing native RustD binaries: {missing}"' "$$work/cargo-metadata.json"; \
 	test -x scripts/boot-smoke.sh; \
 	grep -Fq 'RUSTCTL="$${RUSTCTL:-/usr/bin/rustctl}"' scripts/boot-smoke.sh; \
 	grep -Fq 'PID 1 executable is rustd' scripts/boot-smoke.sh; \
