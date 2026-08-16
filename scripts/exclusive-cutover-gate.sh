@@ -31,6 +31,10 @@ require_cmd() {
     fi
 }
 
+package_installed_exactly() {
+    pacman -Qq | awk -v wanted="$1" '$0 == wanted { found = 1 } END { exit !found }'
+}
+
 echo "==> RustD exclusive cutover gate"
 echo "    root=$ROOT"
 
@@ -52,7 +56,7 @@ else
     fail "rustd-resolved exclusive marker missing"
 fi
 
-if pacman -Q systemd >/dev/null 2>&1; then
+if package_installed_exactly systemd; then
     fail "systemd package still installed"
 else
     pass "systemd package absent"
