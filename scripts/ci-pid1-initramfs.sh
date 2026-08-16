@@ -88,21 +88,44 @@ fi
 
 cat >"$INITROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
+dbus:x:81:81:System Message Bus:/:/usr/bin/nologin
 nobody:x:65534:65534:nobody:/:/bin/false
 EOF
 cat >"$INITROOT/etc/group" <<'EOF'
 root:x:0:
+dbus:x:81:
 nobody:x:65534:
 EOF
 printf 'rustd-ci\n' >"$INITROOT/etc/hostname"
 printf '0123456789abcdef0123456789abcdef\n' >"$INITROOT/etc/machine-id"
+
+# Minimal system bus config: run as root, no fork, no servicehelper (initramfs).
+mkdir -p "$INITROOT/etc/dbus-1" "$INITROOT/usr/share/dbus-1" "$INITROOT/usr/lib/dbus-1"
+cat >"$INITROOT/usr/share/dbus-1/system.conf" <<'EOF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>system</type>
+  <user>root</user>
+  <keep_umask/>
+  <listen>unix:path=/run/dbus/system_bus_socket</listen>
+  <auth>EXTERNAL</auth>
+  <pidfile>/run/dbus/pid</pidfile>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+cp "$INITROOT/usr/share/dbus-1/system.conf" "$INITROOT/etc/dbus-1/system.conf"
 
 cat >"$INITROOT/etc/rustd/system/basic.target" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Basic Target
 DefaultDependencies=no
 Wants=rustd-journald.service dbus.service
-After=rustd-journald.service dbus.service
+After=rustd-journald.service
 EOF
 
 cat >"$INITROOT/etc/rustd/system/multi-user.target" <<'EOF'
@@ -110,7 +133,14 @@ cat >"$INITROOT/etc/rustd/system/multi-user.target" <<'EOF'
 Description=RustD PID1 Certification Multi-User Target
 DefaultDependencies=no
 Requires=basic.target
+Wants=getty.target
 After=basic.target
+EOF
+
+cat >"$INITROOT/etc/rustd/system/getty.target" <<'EOF'
+[Unit]
+Description=RustD PID1 Certification Login Prompts
+DefaultDependencies=no
 EOF
 
 cat >"$INITROOT/etc/rustd/system/default.target" <<'EOF'
@@ -118,8 +148,8 @@ cat >"$INITROOT/etc/rustd/system/default.target" <<'EOF'
 Description=RustD PID1 Certification Default Target
 DefaultDependencies=no
 Requires=basic.target
-Wants=rustd-ci-cert.service
-After=basic.target
+Wants=multi-user.target rustd-ci-cert.service
+After=basic.target multi-user.target
 EOF
 
 cat >"$INITROOT/etc/rustd/system/dbus.service" <<'EOF'
@@ -129,11 +159,11 @@ DefaultDependencies=no
 
 [Service]
 Type=simple
-StandardOutput=null
-StandardError=null
+StandardOutput=journal
+StandardError=journal
 ExecStartPre=/bin/mkdir -p /run/dbus
 ExecStart=/usr/bin/dbus-daemon --system --nofork --nopidfile
-Restart=on-failure
+Restart=no
 EOF
 
 cat >"$INITROOT/etc/rustd/system/rescue.target" <<'EOF'
@@ -170,6 +200,7 @@ attempt=0
 while [ "$attempt" -lt 30 ]; do
     if /usr/bin/rustctl --quiet is-active default.target >/dev/null 2>&1 \
         && /usr/bin/rustctl --quiet is-active basic.target >/dev/null 2>&1 \
+        && /usr/bin/rustctl --quiet is-active multi-user.target >/dev/null 2>&1 \
         && /usr/bin/rustctl --quiet is-active rustd-journald.service >/dev/null 2>&1; then
         if RUSTCTL=/usr/bin/rustctl /usr/lib/rustd/boot-smoke.sh >/dev/ttyS0 2>&1; then
             echo 'RUSTD_PID1_CERT_PASS' >/dev/ttyS0

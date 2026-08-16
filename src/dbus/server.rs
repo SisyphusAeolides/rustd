@@ -712,14 +712,29 @@ async fn dispatch_signal(
 }
 
 /// Connect to D-Bus — system bus if running as root, session bus otherwise.
+///
+/// Retries briefly so PID 1 can attach after `dbus.service` creates the socket.
 async fn connect_bus(scope: ManagerScope) -> anyhow::Result<zbus::Connection> {
+    let mut last_error = None;
+    for attempt in 0..30 {
+        let result = match scope {
+            ManagerScope::System => zbus::Connection::system().await,
+            ManagerScope::User => zbus::Connection::session().await,
+        };
+        match result {
+            Ok(connection) => return Ok(connection),
+            Err(error) => {
+                last_error = Some(error);
+                if attempt + 1 < 30 {
+                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                }
+            }
+        }
+    }
+    let error = last_error.expect("at least one connection attempt");
     match scope {
-        ManagerScope::System => zbus::Connection::system()
-            .await
-            .map_err(|e| anyhow!("dbus: system bus connection failed: {e}")),
-        ManagerScope::User => zbus::Connection::session()
-            .await
-            .map_err(|e| anyhow!("dbus: session bus connection failed: {e}")),
+        ManagerScope::System => Err(anyhow!("dbus: system bus connection failed: {error}")),
+        ManagerScope::User => Err(anyhow!("dbus: session bus connection failed: {error}")),
     }
 }
 
