@@ -159,10 +159,10 @@ DefaultDependencies=no
 
 [Service]
 Type=simple
-StandardOutput=journal
-StandardError=journal
+StandardOutput=null
+StandardError=null
 ExecStartPre=/bin/mkdir -p /run/dbus
-ExecStart=/usr/bin/dbus-daemon --system --nofork --nopidfile
+ExecStart=/usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --nofork --nopidfile
 Restart=no
 EOF
 
