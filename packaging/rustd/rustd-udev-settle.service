@@ -1,0 +1,14 @@
+[Unit]
+Description=Wait for udev To Complete Device Initialization
+DefaultDependencies=no
+Wants=rustd-udev-trigger.service
+After=rustd-udev-trigger.service
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rustudevadm settle --timeout=120
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

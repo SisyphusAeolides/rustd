@@ -1,0 +1,14 @@
+[Unit]
+Description=Coldplug All udev Devices
+DefaultDependencies=no
+Wants=rustd-udevd.service
+After=rustd-udevd.service
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rustudevadm trigger --action=add --type=devices
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

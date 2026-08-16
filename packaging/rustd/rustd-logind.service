@@ -1,0 +1,14 @@
+[Unit]
+Description=RustD Login Service
+After=basic.target
+Before=rustd-user-sessions.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=notify
+BusName=org.freedesktop.login1
+ExecStart=/usr/lib/rustd/rustd-logind
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

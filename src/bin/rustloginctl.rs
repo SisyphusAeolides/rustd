@@ -241,6 +241,17 @@ fn parse_key_value_file(path: &Path) -> BTreeMap<String, String> {
     map
 }
 
+/// Prefer RustD's logind state.  The systemd location remains a read-only
+/// transition fallback so the CLI is usable while upgrading a running host.
+fn records_dir(kind: &str) -> std::path::PathBuf {
+    let rustd = Path::new("/run/rustd").join(kind);
+    if rustd.is_dir() {
+        rustd
+    } else {
+        Path::new("/run/systemd").join(kind)
+    }
+}
+
 fn get_current_username(uid: u32) -> String {
     if let Ok(passwd) = fs::read_to_string("/etc/passwd") {
         for line in passwd.lines() {
@@ -294,7 +305,7 @@ fn get_current_tty() -> String {
 
 fn collect_sessions() -> Vec<SessionRecord> {
     let mut sessions = Vec::new();
-    let sessions_dir = Path::new("/run/systemd/sessions");
+    let sessions_dir = records_dir("sessions");
 
     if sessions_dir.is_dir() {
         if let Ok(entries) = fs::read_dir(sessions_dir) {
@@ -419,7 +430,7 @@ fn collect_sessions() -> Vec<SessionRecord> {
 
 fn collect_users() -> Vec<UserRecord> {
     let mut users = Vec::new();
-    let users_dir = Path::new("/run/systemd/users");
+    let users_dir = records_dir("users");
     let all_sessions = collect_sessions();
 
     if users_dir.is_dir() {
@@ -509,7 +520,7 @@ fn collect_users() -> Vec<UserRecord> {
 
 fn collect_seats() -> Vec<SeatRecord> {
     let mut seats = Vec::new();
-    let seats_dir = Path::new("/run/systemd/seats");
+    let seats_dir = records_dir("seats");
     let all_sessions = collect_sessions();
 
     if seats_dir.is_dir() {

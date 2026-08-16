@@ -81,6 +81,10 @@ copy_shared_libraries() {
 copy_shared_libraries "$RELEASE_DIR/rustd"
 copy_shared_libraries "$RELEASE_DIR/rustctl"
 copy_shared_libraries "$RELEASE_DIR/rustd-journald"
+if [[ -x /usr/bin/dbus-daemon ]]; then
+    install -m0755 /usr/bin/dbus-daemon "$INITROOT/usr/bin/dbus-daemon"
+    copy_shared_libraries /usr/bin/dbus-daemon
+fi
 
 cat >"$INITROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
@@ -97,8 +101,16 @@ cat >"$INITROOT/etc/rustd/system/basic.target" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Basic Target
 DefaultDependencies=no
-Wants=rustd-journald.service
-After=rustd-journald.service
+Wants=rustd-journald.service dbus.service
+After=rustd-journald.service dbus.service
+EOF
+
+cat >"$INITROOT/etc/rustd/system/multi-user.target" <<'EOF'
+[Unit]
+Description=RustD PID1 Certification Multi-User Target
+DefaultDependencies=no
+Requires=basic.target
+After=basic.target
 EOF
 
 cat >"$INITROOT/etc/rustd/system/default.target" <<'EOF'
@@ -108,6 +120,20 @@ DefaultDependencies=no
 Requires=basic.target
 Wants=rustd-ci-cert.service
 After=basic.target
+EOF
+
+cat >"$INITROOT/etc/rustd/system/dbus.service" <<'EOF'
+[Unit]
+Description=D-Bus System Message Bus
+DefaultDependencies=no
+
+[Service]
+Type=simple
+StandardOutput=null
+StandardError=null
+ExecStartPre=/bin/mkdir -p /run/dbus
+ExecStart=/usr/bin/dbus-daemon --system --nofork --nopidfile
+Restart=on-failure
 EOF
 
 cat >"$INITROOT/etc/rustd/system/rescue.target" <<'EOF'

@@ -118,6 +118,10 @@ name = "rustd-hwdb"
 path = "src/bin/rustd-hwdb.rs"
 
 [[bin]]
+name = "rustd-udevd"
+path = "src/bin/rustd-udevd.rs"
+
+[[bin]]
 name = "rustd-id128"
 path = "src/bin/rustd-id128.rs"
 
@@ -408,6 +412,10 @@ path = "src/bin/rustd-hostnamed.rs"
 [[bin]]
 name = "rustd-localed"
 path = "src/bin/rustd-localed.rs"
+
+[[bin]]
+name = "rustd-logind"
+path = "src/bin/rustd-logind.rs"
 
 [[bin]]
 name = "rustd-modules-load"

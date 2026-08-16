@@ -16,16 +16,22 @@ ZSHCOMPDIR ?= $(PREFIX)/share/zsh/site-functions
 DBUS_SYSTEM_SERVICEDIR ?= $(PREFIX)/share/dbus-1/system-services
 DBUS_SYSTEM_POLICYDIR ?= $(PREFIX)/share/dbus-1/system.d
 POLKIT_ACTIONDIR ?= $(PREFIX)/share/polkit-1/actions
+PAMLIBDIR ?= $(PREFIX)/lib/security
 TARGET_DIR ?= target
 RELEASE_DIR := $(TARGET_DIR)/release
+PAM_MODULE := build/pam_rustd.so
 IDRIS2 ?= $(shell command -v idris2 2>/dev/null || find $(HOME)/.local/state/pack -name idris2 -type f -executable 2>/dev/null | head -1)
 
-.PHONY: all build test check-native check-rust check-formal check-packaging check-reproducible clean install release boot-smoke certify installed-certification performance-promotion
+.PHONY: all build pam-module test check-native check-rust check-formal check-packaging check-reproducible clean install release boot-smoke certify installed-certification performance-promotion
 
 all: build
 
 build:
 	CARGO_TARGET_DIR=$(TARGET_DIR) cargo build --release --all-features --locked
+
+pam-module:
+	mkdir -p build
+	$(CC) $(CFLAGS) -fPIC -shared pam/pam_rustd.c -o $(PAM_MODULE) $$(pkg-config --cflags --libs dbus-1) -lpam
 
 check-native:
 	mkdir -p build
@@ -70,7 +76,7 @@ check-formal:
 	agda -i formal/agda formal/agda/RustD/Job/Ordering.agda
 
 check-packaging:
-	bash -n scripts/boot-smoke.sh scripts/install-rustd-names.sh scripts/check-reproducible-release.sh scripts/installed-certification.sh scripts/performance-promotion.sh
+	bash -n scripts/boot-smoke.sh scripts/install-rustd-names.sh scripts/check-reproducible-release.sh scripts/installed-certification.sh scripts/performance-promotion.sh scripts/exclusive-cutover-gate.sh scripts/ci-pid1-initramfs.sh
 	python3 -m py_compile scripts/executable_contract.py scripts/install-executable-surfaces.py
 	@set -eu; \
 	work=$$(mktemp -d); \
@@ -89,9 +95,15 @@ check-packaging:
 	! grep -Fq '/run/systemd' packaging/tmpfiles/rustd.conf; \
 	test -d packaging/rustd; \
 	test ! -e packaging/systemd; \
-	for unit in default.target sysinit.target basic.target multi-user.target rescue.target emergency.target shutdown.target getty.target getty@.service serial-getty@.service container-getty@.service console-getty.service rustd-journald.service rustd-user-sessions.service; do test -f "packaging/rustd/$$unit"; done; \
+	for unit in default.target graphical.target sysinit.target basic.target multi-user.target rescue.target emergency.target shutdown.target getty.target getty@.service serial-getty@.service container-getty@.service console-getty.service dbus.service display-manager.service rustd-journald.service rustd-logind.service rustd-udevd.service rustd-udev-trigger.service rustd-udev-settle.service rustd-user-sessions.service user@.service; do test -f "packaging/rustd/$$unit"; done; \
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd-journald --runtime-directory /run/rustd/journal' packaging/rustd/rustd-journald.service; \
-	! grep -R -Fq '/usr/lib/systemd' packaging/rustd; \
+	grep -Fq 'ExecStart=/usr/lib/rustd/rustd-logind' packaging/rustd/rustd-logind.service; \
+	grep -Fq 'ExecStart=/usr/lib/rustd/rustd --user' packaging/rustd/user@.service; \
+	grep -Fq 'ExecStart=/usr/bin/dbus-daemon' packaging/rustd/dbus.service; \
+	test -f packaging/dbus/org.freedesktop.login1.service; \
+	test -f packaging/dbus/org.freedesktop.login1.conf; \
+	test -f packaging/rustd/systemd-udevd.service; \
+	! grep -R -Fq '/usr/lib/systemd/' packaging/rustd; \
 	! grep -R -Fq '/run/systemd' packaging/rustd
 
 check-reproducible:
@@ -99,7 +111,7 @@ check-reproducible:
 
 test: check-native check-rust check-packaging
 
-install: build
+install: build pam-module
 	@test -n "$(DESTDIR)" && test "$(DESTDIR)" != "/" || (echo "DESTDIR must name a non-root staging directory" >&2; exit 64)
 	DESTDIR="$(DESTDIR)" PREFIX="$(PREFIX)" RUSTLIBEXECDIR="$(RUSTLIBEXECDIR)" BUILDDIR="$(RELEASE_DIR)" bash scripts/install-rustd-names.sh
 	for file in packaging/rustd/*; do install -Dm0644 "$$file" "$(DESTDIR)$(RUSTUNITDIR)/$$(basename "$$file")"; done
@@ -107,6 +119,8 @@ install: build
 	for file in packaging/dbus/*.conf; do install -Dm0644 "$$file" "$(DESTDIR)$(DBUS_SYSTEM_POLICYDIR)/$$(basename "$$file")"; done
 	for file in packaging/polkit/*.policy; do install -Dm0644 "$$file" "$(DESTDIR)$(POLKIT_ACTIONDIR)/$$(basename "$$file")"; done
 	install -Dm0644 packaging/tmpfiles/rustd.conf $(DESTDIR)$(TMPFILESDIR)/rustd.conf
+	install -Dm0755 $(PAM_MODULE) "$(DESTDIR)$(PAMLIBDIR)/pam_rustd.so"
+	ln -sf pam_rustd.so "$(DESTDIR)$(PAMLIBDIR)/pam_systemd.so"
 
 clean:
 	rm -rf build $(TARGET_DIR)

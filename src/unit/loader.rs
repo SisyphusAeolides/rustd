@@ -145,11 +145,18 @@ pub struct ParsedUnit<T> {
 }
 
 fn standard_unit_search_dirs() -> Vec<PathBuf> {
+    // Native RustD roots win on name collision. Distro packages still ship
+    // units under /usr/lib/systemd/{system,user}; exclusive replacement must
+    // execute those files without claiming to be a systemd drop-in.
     vec![
         PathBuf::from("/etc/rustd/system"),
+        PathBuf::from("/etc/systemd/system"),
         PathBuf::from("/run/rustd/system"),
+        PathBuf::from("/run/systemd/system"),
         PathBuf::from("/usr/local/lib/rustd/system"),
+        PathBuf::from("/usr/local/lib/systemd/system"),
         PathBuf::from("/usr/lib/rustd/system"),
+        PathBuf::from("/usr/lib/systemd/system"),
     ]
 }
 
@@ -220,28 +227,45 @@ fn standard_user_unit_search_dirs() -> Vec<PathBuf> {
         paths.push(runtime.join("rustd/generator.early"));
     }
     paths.push(config_home.join("rustd/user"));
+    paths.push(config_home.join("systemd/user"));
     paths.push(config_home.join("rustd/user.attached"));
     paths.extend(xdg_search_dirs("XDG_CONFIG_DIRS", "/etc/xdg", "rustd/user"));
+    paths.extend(xdg_search_dirs(
+        "XDG_CONFIG_DIRS",
+        "/etc/xdg",
+        "systemd/user",
+    ));
     paths.push(PathBuf::from("/etc/rustd/user"));
+    paths.push(PathBuf::from("/etc/systemd/user"));
     if let Some(runtime) = &runtime {
         paths.push(runtime.join("rustd/user"));
+        paths.push(runtime.join("systemd/user"));
         paths.push(runtime.join("rustd/user.attached"));
     }
     paths.push(PathBuf::from("/run/rustd/user"));
+    paths.push(PathBuf::from("/run/systemd/user"));
     if let Some(runtime) = &runtime {
         paths.push(runtime.join("rustd/generator"));
     }
     paths.push(data_home.join("rustd/user"));
+    paths.push(data_home.join("systemd/user"));
     paths.extend(xdg_search_dirs(
         "XDG_DATA_DIRS",
         "/usr/local/share:/usr/share",
         "rustd/user",
     ));
+    paths.extend(xdg_search_dirs(
+        "XDG_DATA_DIRS",
+        "/usr/local/share:/usr/share",
+        "systemd/user",
+    ));
     paths.extend([
         PathBuf::from("/usr/local/lib/rustd/user"),
         PathBuf::from("/usr/local/share/rustd/user"),
+        PathBuf::from("/usr/local/lib/systemd/user"),
         PathBuf::from("/usr/lib/rustd/user"),
         PathBuf::from("/usr/share/rustd/user"),
+        PathBuf::from("/usr/lib/systemd/user"),
     ]);
     if let Some(runtime) = runtime {
         paths.push(runtime.join("rustd/generator.late"));

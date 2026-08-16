@@ -43,6 +43,7 @@ NATIVE_EXECUTABLES = frozenset(
         "rustd-inhibit",
         "rustd-journald",
         "rustd-localed",
+        "rustd-logind",
         "rustd-machine-id-setup",
         "rustd-modules-load",
         "rustd-mount",
@@ -81,6 +82,7 @@ NATIVE_EXECUTABLES = frozenset(
         "rustd-umount",
         "rustd-update-done",
         "rustd-update-utmp",
+        "rustd-udevd",
         "rustd-user-sessions",
         "rustd-volatile-root",
         "rustd-vconsole-setup",
@@ -140,6 +142,7 @@ NATIVE_LIBEXEC = frozenset(
         "rustd-hostnamed",
         "rustd-journald",
         "rustd-localed",
+        "rustd-logind",
         "rustd-modules-load",
         "rustd-quotacheck",
         "rustd-random-seed",
@@ -155,6 +158,7 @@ NATIVE_LIBEXEC = frozenset(
         "rustd-time-wait-sync",
         "rustd-update-done",
         "rustd-update-utmp",
+        "rustd-udevd",
         "rustd-user-sessions",
         "rustd-volatile-root",
         "rustd-vconsole-setup",
@@ -165,8 +169,8 @@ NATIVE_LIBEXEC = frozenset(
 EXPECTED_EXECUTABLE_COUNT = len(NATIVE_EXECUTABLES)
 EXPECTED_BUILD_EXECUTABLE_COUNT = len(NATIVE_BUILD_EXECUTABLES)
 
-assert len(NATIVE_EXECUTABLES) == 107
-assert EXPECTED_EXECUTABLE_COUNT == 107
-assert len(NATIVE_BUILD_EXECUTABLES) == 104
-assert EXPECTED_BUILD_EXECUTABLE_COUNT == 104
+assert len(NATIVE_EXECUTABLES) == 109
+assert EXPECTED_EXECUTABLE_COUNT == 109
+assert len(NATIVE_BUILD_EXECUTABLES) == 106
+assert EXPECTED_BUILD_EXECUTABLE_COUNT == 106
 assert NATIVE_LIBEXEC <= NATIVE_EXECUTABLES

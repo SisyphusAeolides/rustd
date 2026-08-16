@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -980,6 +981,27 @@ fn handle_settle(args: &SettleArgs) -> anyhow::Result<()> {
 // -----------------------------------------------------------------------------
 
 fn handle_control(args: &ControlArgs) -> anyhow::Result<()> {
+    let mut commands = Vec::new();
+    if args.reload {
+        commands.push("reload");
+    }
+    if args.stop_exec_queue {
+        commands.push("stop");
+    }
+    if args.start_exec_queue {
+        commands.push("start");
+    }
+    if args.exit {
+        commands.push("exit");
+    }
+    if args.ping {
+        commands.push("ping");
+    }
+    if !commands.is_empty() {
+        for command in commands {
+            send_udevd_control(command)?;
+        }
+    }
     if args.reload {
         println!("udevadm: Reloaded rules and hardware database.");
     }
@@ -1003,6 +1025,22 @@ fn handle_control(args: &ControlArgs) -> anyhow::Result<()> {
     }
     for prop in &args.property {
         println!("udevadm: Set global property '{prop}'.");
+    }
+    Ok(())
+}
+
+fn send_udevd_control(command: &str) -> anyhow::Result<()> {
+    let mut stream = UnixStream::connect("/run/udev/control").map_err(|error| {
+        anyhow::anyhow!("udevadm control: cannot connect to /run/udev/control: {error}")
+    })?;
+    stream.write_all(format!("{command}\n").as_bytes())?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut reply = [0_u8; 16];
+    let count = std::io::Read::read(&mut stream, &mut reply)?;
+    if &reply[..count] != b"OK\n" {
+        return Err(anyhow::anyhow!(
+            "udevadm control: daemon rejected {command}"
+        ));
     }
     Ok(())
 }

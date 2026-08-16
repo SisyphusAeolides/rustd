@@ -1,0 +1,11 @@
+[Unit]
+Description=RustD User Manager for UID %i
+After=rustd-logind.service
+
+[Service]
+ExecStart=/usr/lib/rustd/rustd --user
+Restart=on-failure
+Slice=user-%i.slice
+
+[Install]
+WantedBy=multi-user.target

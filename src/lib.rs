@@ -17,6 +17,7 @@ pub mod job;
 pub mod journal;
 pub(crate) mod kill_context;
 pub mod limits;
+pub mod logind;
 pub mod manager;
 #[cfg(feature = "ml-weave")]
 pub mod ml_weave;
@@ -31,6 +32,7 @@ pub mod service;
 pub mod socket_unit;
 pub mod target;
 pub mod timer_unit;
+pub mod udev;
 pub mod unit;
 
 pub use unit::UnitState;

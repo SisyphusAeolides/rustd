@@ -1,5 +1,5 @@
 [Unit]
 Description=RustD Multi-User System
 Requires=basic.target
-Wants=getty.target rustd-user-sessions.service rustd-hostnamed.service rustd-localed.service rustd-boot-check-no-failures.service
-After=basic.target getty.target rustd-user-sessions.service
+Wants=dbus.service getty.target rustd-logind.service rustd-user-sessions.service rustd-hostnamed.service rustd-localed.service rustd-boot-check-no-failures.service
+After=basic.target dbus.service getty.target rustd-logind.service rustd-user-sessions.service

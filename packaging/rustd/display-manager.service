@@ -1,0 +1,17 @@
+[Unit]
+Description=Display Manager
+Documentation=man:systemd.special(7)
+# Distro packages (sddm, gdm, lightdm) create Alias=display-manager.service
+# under /etc/systemd/system (or /etc/rustd/system). Those paths are searched
+# before /usr/lib/rustd/system, so an enabled DM replaces this placeholder.
+# Until then this unit satisfies Wants=display-manager.service on graphical.target.
+After=multi-user.target rustd-logind.service dbus.service
+Wants=dbus.service rustd-logind.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/true
+RemainAfterExit=yes
+
+[Install]
+WantedBy=graphical.target
