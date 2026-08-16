@@ -73,7 +73,8 @@ fn run() -> Result<i32, String> {
         (root_device()?, true)
     };
 
-    let fsck = env::var_os("RUSTD_FSCK").map_or_else(|| PathBuf::from("/usr/bin/fsck"), PathBuf::from);
+    let fsck =
+        env::var_os("RUSTD_FSCK").map_or_else(|| PathBuf::from("/usr/bin/fsck"), PathBuf::from);
     if !fsck.exists() && env::var_os("RUSTD_FSCK").is_none() {
         return Ok(0);
     }
@@ -116,7 +117,8 @@ fn run() -> Result<i32, String> {
 }
 
 fn merge_cmdline(mode: &mut Mode, repair: &mut Repair) {
-    let path = env::var_os("RUSTD_PROC_CMDLINE").map_or_else(|| PathBuf::from("/proc/cmdline"), PathBuf::from);
+    let path = env::var_os("RUSTD_PROC_CMDLINE")
+        .map_or_else(|| PathBuf::from("/proc/cmdline"), PathBuf::from);
     let Ok(text) = fs::read_to_string(path) else {
         return;
     };
@@ -196,7 +198,8 @@ fn root_is_virtual() -> Result<bool, String> {
 }
 
 fn root_is_writable() -> Result<bool, String> {
-    let path = env::var_os("RUSTD_MOUNTINFO").map_or_else(|| PathBuf::from("/proc/self/mountinfo"), PathBuf::from);
+    let path = env::var_os("RUSTD_MOUNTINFO")
+        .map_or_else(|| PathBuf::from("/proc/self/mountinfo"), PathBuf::from);
     let file =
         File::open(&path).map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
     for line in BufReader::new(file).lines() {
@@ -233,7 +236,8 @@ fn root_device() -> Result<PathBuf, String> {
 }
 
 fn touch_quotacheck_trigger() -> Result<(), String> {
-    let path = env::var_os("RUSTD_QUOTACHECK_TRIGGER").map_or_else(|| PathBuf::from("/run/rustd/quotacheck"), PathBuf::from);
+    let path = env::var_os("RUSTD_QUOTACHECK_TRIGGER")
+        .map_or_else(|| PathBuf::from("/run/rustd/quotacheck"), PathBuf::from);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
@@ -268,11 +272,13 @@ impl ProgressTarget {
 }
 
 fn progress_target() -> Option<ProgressTarget> {
-    let show = env::var_os("RUSTD_SHOW_STATUS").map_or_else(|| PathBuf::from("/run/rustd/show-status"), PathBuf::from);
+    let show = env::var_os("RUSTD_SHOW_STATUS")
+        .map_or_else(|| PathBuf::from("/run/rustd/show-status"), PathBuf::from);
     if !show.exists() {
         return None;
     }
-    let socket_path = env::var_os("RUSTD_FSCK_PROGRESS").map_or_else(|| PathBuf::from("/run/rustd/fsck.progress"), PathBuf::from);
+    let socket_path = env::var_os("RUSTD_FSCK_PROGRESS")
+        .map_or_else(|| PathBuf::from("/run/rustd/fsck.progress"), PathBuf::from);
     let socket = UnixStream::connect(socket_path).ok()?;
     let fd = socket.as_raw_fd();
     let flags = unsafe { libc::fcntl(fd, libc::F_GETFD) };

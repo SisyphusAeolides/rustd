@@ -62,8 +62,10 @@ fn run() -> Result<(), String> {
 }
 
 fn read_cmdline() -> String {
-    env::var("RUSTD_PROC_CMDLINE")
-        .ok().map_or_else(|| fs::read_to_string("/proc/cmdline").unwrap_or_default(), |path| fs::read_to_string(path).unwrap_or_default())
+    env::var("RUSTD_PROC_CMDLINE").ok().map_or_else(
+        || fs::read_to_string("/proc/cmdline").unwrap_or_default(),
+        |path| fs::read_to_string(path).unwrap_or_default(),
+    )
 }
 
 fn cmdline_mode(cmdline: &str) -> Result<Option<Mode>, String> {

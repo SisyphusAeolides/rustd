@@ -19,8 +19,10 @@ fn run() -> Result<(), String> {
         2 | 4 => PathBuf::from(&args[1]),
         _ => return Err("Expected one or three generator output directories.".into()),
     };
-    let cmdline = env::var("RUSTD_PROC_CMDLINE")
-        .ok().map_or_else(|| fs::read_to_string("/proc/cmdline").unwrap_or_default(), |path| fs::read_to_string(path).unwrap_or_default());
+    let cmdline = env::var("RUSTD_PROC_CMDLINE").ok().map_or_else(
+        || fs::read_to_string("/proc/cmdline").unwrap_or_default(),
+        |path| fs::read_to_string(path).unwrap_or_default(),
+    );
 
     let (commands, success, failure) = parse_cmdline(&cmdline);
     if commands.is_empty() && success.is_none() && failure.is_none() {

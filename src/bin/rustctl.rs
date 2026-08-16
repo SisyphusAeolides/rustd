@@ -608,9 +608,10 @@ fn system_search_dirs(root: &Path) -> Vec<PathBuf> {
 fn control_dir(options: &Options) -> PathBuf {
     if options.scope == Scope::User {
         let base = if options.runtime {
-            std::env::var_os("XDG_RUNTIME_DIR").map_or_else(|| {
-                    PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }))
-                }, PathBuf::from)
+            std::env::var_os("XDG_RUNTIME_DIR").map_or_else(
+                || PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })),
+                PathBuf::from,
+            )
         } else {
             std::env::var_os("XDG_CONFIG_HOME")
                 .map(PathBuf::from)

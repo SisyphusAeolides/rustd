@@ -31,8 +31,10 @@ fn run(args: Vec<String>) -> Result<(), String> {
     }
 
     let (subsystem, device) = parse_device(&args[1])?;
-    let sysfs_root = env::var_os("RUSTD_SYSFS_ROOT").map_or_else(|| PathBuf::from("/sys"), PathBuf::from);
-    let state_root = env::var_os("RUSTD_BACKLIGHT_STATE_DIR").map_or_else(|| PathBuf::from("/var/lib/rustd/backlight"), PathBuf::from);
+    let sysfs_root =
+        env::var_os("RUSTD_SYSFS_ROOT").map_or_else(|| PathBuf::from("/sys"), PathBuf::from);
+    let state_root = env::var_os("RUSTD_BACKLIGHT_STATE_DIR")
+        .map_or_else(|| PathBuf::from("/var/lib/rustd/backlight"), PathBuf::from);
     let device_dir = sysfs_root.join("class").join(subsystem).join(device);
     let state_path = state_root.join(format!("{subsystem}:{device}"));
 
