@@ -251,9 +251,17 @@ mount -t cgroup2 none /sys/fs/cgroup
 
 echo 'RUSTD_PID1_BOOT_BEGIN' >/dev/ttyS0
 exec >/dev/ttyS0 2>&1
-mkdir -p /run/dbus
+mkdir -p /run/dbus /usr/share/dbus-1/system.d /etc/dbus-1/system.d
 if [ -x /usr/bin/dbus-daemon ]; then
     /usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --nofork --nopidfile &
+    dbus_pid=$!
+    sleep 1
+    if [ -S /run/dbus/system_bus_socket ]; then
+        echo 'RUSTD_PID1_DBUS_READY'
+    else
+        echo "RUSTD_PID1_DBUS_MISSING pid=${dbus_pid}"
+        kill "$dbus_pid" 2>/dev/null || true
+    fi
 fi
 exec /usr/lib/rustd/rustd
 EOF

@@ -713,29 +713,41 @@ async fn dispatch_signal(
 
 /// Connect to D-Bus — system bus if running as root, session bus otherwise.
 ///
-/// Retries briefly so PID 1 can attach after `dbus.service` creates the socket.
+/// Retries a few times when the socket exists but the bus is still accepting
+/// clients. Missing sockets fail immediately so PID 1 boot is not stalled.
 async fn connect_bus(scope: ManagerScope) -> anyhow::Result<zbus::Connection> {
+    let socket = match scope {
+        ManagerScope::System => std::path::Path::new("/run/dbus/system_bus_socket"),
+        ManagerScope::User => {
+            // Session bus address varies; let zbus resolve it.
+            return zbus::Connection::session()
+                .await
+                .map_err(|e| anyhow!("dbus: session bus connection failed: {e}"));
+        }
+    };
+
     let mut last_error = None;
-    for attempt in 0..15 {
-        let result = match scope {
-            ManagerScope::System => zbus::Connection::system().await,
-            ManagerScope::User => zbus::Connection::session().await,
-        };
-        match result {
+    for attempt in 0..20 {
+        if !socket.exists() {
+            return Err(anyhow!(
+                "dbus: system bus connection failed: {} missing",
+                socket.display()
+            ));
+        }
+        match zbus::Connection::system().await {
             Ok(connection) => return Ok(connection),
             Err(error) => {
                 last_error = Some(error);
-                if attempt + 1 < 15 {
+                if attempt + 1 < 20 {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
         }
     }
-    let error = last_error.expect("at least one connection attempt");
-    match scope {
-        ManagerScope::System => Err(anyhow!("dbus: system bus connection failed: {error}")),
-        ManagerScope::User => Err(anyhow!("dbus: session bus connection failed: {error}")),
-    }
+    Err(anyhow!(
+        "dbus: system bus connection failed: {}",
+        last_error.expect("at least one connection attempt")
+    ))
 }
 
 #[cfg(test)]
