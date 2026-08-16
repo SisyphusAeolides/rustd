@@ -536,6 +536,7 @@ fn apply_partitions_to_image(
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(image_path)?;
     file.set_len(total_size)?;
 

@@ -170,7 +170,7 @@ fn load_mountpoints() -> std::collections::HashMap<String, String> {
     };
     let reader = BufReader::new(file);
 
-    for line in reader.lines().flatten() {
+    for line in reader.lines().map_while(Result::ok) {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() >= 5 {
             let mp = unescape_octal(parts[4]);

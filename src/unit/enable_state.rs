@@ -2601,7 +2601,7 @@ mod tests {
             &[source.display().to_string()],
             false,
             &config,
-            &[config.clone()],
+            std::slice::from_ref(&config),
         )
         .unwrap();
         assert!(carries);

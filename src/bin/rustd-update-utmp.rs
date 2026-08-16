@@ -373,11 +373,22 @@ impl AuditLibrary {
             }
             return None;
         }
+        let close: unsafe extern "C" fn(c_int) -> c_int = unsafe { mem::transmute(close) };
+        let log: unsafe extern "C" fn(
+            c_int,
+            c_int,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            *const c_char,
+            c_int,
+        ) -> c_int = unsafe { mem::transmute(log) };
         Some(Self {
             handle,
             fd,
-            close: unsafe { mem::transmute(close) },
-            log: unsafe { mem::transmute(log) },
+            close,
+            log,
         })
     }
 

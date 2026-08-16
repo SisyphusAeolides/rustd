@@ -300,11 +300,10 @@ fn handle_status(volume: &str) -> anyhow::Result<()> {
 
                     let slaves_dir = dm_dir.join("slaves");
                     if let Ok(slaves) = fs::read_dir(slaves_dir) {
-                        for slave in slaves.flatten() {
+                        if let Some(slave) = slaves.flatten().next() {
                             let slave_name = slave.file_name().to_string_lossy().to_string();
                             underlying_device = format!("/dev/{slave_name}");
                             luks_info = probe_luks_header(Path::new(&underlying_device));
-                            break;
                         }
                     }
 
