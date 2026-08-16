@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Kernel command-line parser for RustD — reads `/proc/cmdline` and exposes
-//! native RustD manager parameters as a typed struct.
+//! Kernel command-line parser for `RustD` — reads `/proc/cmdline` and exposes
+//! native `RustD` manager parameters as a typed struct.
 
 use std::fs;
 use std::str::FromStr;
 
 // ── KernelCmdline ─────────────────────────────────────────────────────────
 
-/// Parsed kernel command-line parameters relevant to the RustD service manager.
+/// Parsed kernel command-line parameters relevant to the `RustD` service manager.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, PartialEq)]
 pub struct KernelCmdline {

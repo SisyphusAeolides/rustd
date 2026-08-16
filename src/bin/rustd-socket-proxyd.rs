@@ -406,7 +406,7 @@ fn connect_remote(remote: &str) -> Result<RawFd, String> {
 }
 
 fn connect_abstract_unix(name: &str) -> Result<RawFd, String> {
-    if name.as_bytes().len() + 1 >= 108 {
+    if name.len() + 1 >= 108 {
         return Err(String::from("Specified AF_UNIX address is too long."));
     }
     // SAFETY: socket() has no Rust memory preconditions.

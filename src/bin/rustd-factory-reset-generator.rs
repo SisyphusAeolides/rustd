@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Factory-reset generator for RustD.
+//! Factory-reset generator for `RustD`.
 
 use serde_json::Value;
 use std::collections::HashMap;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD remount helper with systemd-compatible inputs.
+//! `RustD` remount helper with systemd-compatible inputs.
 
 use std::env;
 use std::fs;

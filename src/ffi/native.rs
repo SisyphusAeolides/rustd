@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Raw bindings for RustD's private native helper ABI.
+//! Raw bindings for `RustD`'s private native helper ABI.
 //!
 //! Upstream reference: `src/libsystemd/sd-daemon/sd-daemon.c` (v261)
 

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD quota-check helper.
+//! `RustD` quota-check helper.
 
 use std::env;
 use std::fs;

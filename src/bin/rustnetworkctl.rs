@@ -531,7 +531,7 @@ fn delete_one(index: u32) -> Result<(), String> {
             buffer.as_ptr().cast::<libc::c_void>(),
             buffer.len(),
             0,
-            (&address as *const SockAddrNetlink).cast::<libc::sockaddr>(),
+            std::ptr::addr_of!(address).cast::<libc::sockaddr>(),
             std::mem::size_of::<SockAddrNetlink>() as libc::socklen_t,
         )
     };

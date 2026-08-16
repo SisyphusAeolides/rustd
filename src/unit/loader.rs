@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD unit loader: search paths, drop-ins, and template instantiation.
+//! `RustD` unit loader: search paths, drop-ins, and template instantiation.
 //!
-//! `UnitLoader` finds a RustD unit file on disk, applies drop-in overlays, and
+//! `UnitLoader` finds a `RustD` unit file on disk, applies drop-in overlays, and
 //! returns a fully parsed `LoadedUnit`.
 //!
 //! Native system unit search directory priority (highest first):
@@ -32,7 +32,7 @@ use crate::unit::{
 
 // ── LoadedUnit ────────────────────────────────────────────────────────────
 
-/// A fully parsed and resolved RustD unit file.
+/// A fully parsed and resolved `RustD` unit file.
 #[derive(Debug)]
 pub enum LoadedUnit {
     Service(Box<ParsedUnit<ServiceSection>>),
@@ -283,7 +283,7 @@ fn user_unit_search_dirs(override_value: Option<&OsStr>) -> Vec<PathBuf> {
 
 // ── UnitLoader ────────────────────────────────────────────────────────────
 
-/// Loads RustD unit files from disk.
+/// Loads `RustD` unit files from disk.
 pub struct UnitLoader {
     /// Search directories in priority order (highest priority first).
     pub search_dirs: Vec<PathBuf>,
@@ -299,7 +299,7 @@ impl Default for UnitLoader {
 }
 
 impl UnitLoader {
-    /// Create a loader with the standard RustD system search paths.
+    /// Create a loader with the standard `RustD` system search paths.
     #[must_use]
     pub fn system() -> Self {
         let override_value = std::env::var_os("RUSTD_UNIT_PATH");
@@ -310,7 +310,7 @@ impl UnitLoader {
         }
     }
 
-    /// Create a loader with the RustD user/XDG search hierarchy.
+    /// Create a loader with the `RustD` user/XDG search hierarchy.
     #[must_use]
     pub fn user() -> Self {
         let override_value = std::env::var_os("RUSTD_UNIT_PATH");

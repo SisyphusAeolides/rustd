@@ -565,7 +565,7 @@ impl Manager {
                 );
                 let _ =
                     self.reload_count
-                        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                        .try_update(Ordering::AcqRel, Ordering::Acquire, |count| {
                             Some(count.saturating_add(1))
                         });
                 if let Some(tx) = self.signal_tx.as_ref() {

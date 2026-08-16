@@ -37,9 +37,7 @@ fn run() -> Result<(), String> {
         return Err(String::from("This program requires no arguments."));
     }
 
-    let state_root = env::var_os("RUSTD_RFKILL_STATE_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/lib/systemd/rfkill"));
+    let state_root = env::var_os("RUSTD_RFKILL_STATE_DIR").map_or_else(|| PathBuf::from("/var/lib/systemd/rfkill"), PathBuf::from);
     let mut device = open_rfkill()?;
     let mut queue: HashMap<u32, (PathBuf, bool)> = HashMap::new();
     let mut ready = false;
@@ -105,9 +103,7 @@ fn open_rfkill() -> Result<File, String> {
         .map_err(|error| format!("Failed to read socket activation descriptors: {error}"))?;
     match inherited {
         0 => {
-            let path = env::var_os("RUSTD_RFKILL_DEVICE")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/dev/rfkill"));
+            let path = env::var_os("RUSTD_RFKILL_DEVICE").map_or_else(|| PathBuf::from("/dev/rfkill"), PathBuf::from);
             match OpenOptions::new()
                 .read(true)
                 .write(true)
@@ -164,9 +160,7 @@ fn rfkill_type(kind: u8) -> Option<&'static str> {
 fn determine_state_file(root: &Path, event: RfkillEvent) -> Result<PathBuf, String> {
     let kind =
         rfkill_type(event.kind).ok_or_else(|| format!("Unknown rfkill type {}.", event.kind))?;
-    let sysfs_root = env::var_os("RUSTD_SYSFS_ROOT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/sys"));
+    let sysfs_root = env::var_os("RUSTD_SYSFS_ROOT").map_or_else(|| PathBuf::from("/sys"), PathBuf::from);
     let device_path = sysfs_root
         .join("class/rfkill")
         .join(format!("rfkill{}", event.idx));

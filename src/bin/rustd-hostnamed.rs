@@ -15,27 +15,21 @@ const BUS_NAME: &str = "org.freedesktop.hostname1";
 const OBJECT_PATH: &str = "/org/freedesktop/hostname1";
 
 fn hostname_path() -> PathBuf {
-    std::env::var_os("SYSTEMD_ETC_HOSTNAME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/etc/hostname"))
+    std::env::var_os("SYSTEMD_ETC_HOSTNAME").map_or_else(|| PathBuf::from("/etc/hostname"), PathBuf::from)
 }
 
 fn machine_info_path() -> PathBuf {
-    std::env::var_os("SYSTEMD_ETC_MACHINE_INFO")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/etc/machine-info"))
+    std::env::var_os("SYSTEMD_ETC_MACHINE_INFO").map_or_else(|| PathBuf::from("/etc/machine-info"), PathBuf::from)
 }
 
 fn os_release_path() -> PathBuf {
-    std::env::var_os("SYSTEMD_OS_RELEASE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
+    std::env::var_os("SYSTEMD_OS_RELEASE").map_or_else(|| {
             if Path::new("/etc/os-release").exists() {
                 PathBuf::from("/etc/os-release")
             } else {
                 PathBuf::from("/usr/lib/os-release")
             }
-        })
+        }, PathBuf::from)
 }
 
 fn read_env(path: &Path) -> BTreeMap<String, String> {

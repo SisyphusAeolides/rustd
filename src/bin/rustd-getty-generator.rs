@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD getty generator.
+//! `RustD` getty generator.
 
 use std::collections::BTreeSet;
 use std::env;

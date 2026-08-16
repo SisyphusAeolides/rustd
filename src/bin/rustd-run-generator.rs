@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD kernel command-line run generator.
+//! `RustD` kernel command-line run generator.
 
 use std::env;
 use std::fs;
@@ -20,9 +20,7 @@ fn run() -> Result<(), String> {
         _ => return Err("Expected one or three generator output directories.".into()),
     };
     let cmdline = env::var("RUSTD_PROC_CMDLINE")
-        .ok()
-        .map(|path| fs::read_to_string(path).unwrap_or_default())
-        .unwrap_or_else(|| fs::read_to_string("/proc/cmdline").unwrap_or_default());
+        .ok().map_or_else(|| fs::read_to_string("/proc/cmdline").unwrap_or_default(), |path| fs::read_to_string(path).unwrap_or_default());
 
     let (commands, success, failure) = parse_cmdline(&cmdline);
     if commands.is_empty() && success.is_none() && failure.is_none() {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD boot health check.
+//! `RustD` boot health check.
 
 use std::env;
 use std::ffi::OsString;

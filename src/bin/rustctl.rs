@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! rustctl — native command-line control plane for the RustD service manager.
+//! rustctl — native command-line control plane for the `RustD` service manager.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -608,11 +608,9 @@ fn system_search_dirs(root: &Path) -> Vec<PathBuf> {
 fn control_dir(options: &Options) -> PathBuf {
     if options.scope == Scope::User {
         let base = if options.runtime {
-            std::env::var_os("XDG_RUNTIME_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
+            std::env::var_os("XDG_RUNTIME_DIR").map_or_else(|| {
                     PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }))
-                })
+                }, PathBuf::from)
         } else {
             std::env::var_os("XDG_CONFIG_HOME")
                 .map(PathBuf::from)

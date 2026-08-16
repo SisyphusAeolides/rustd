@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD boot debug generator.
+//! `RustD` boot debug generator.
 
 use std::env;
 use std::fs;
@@ -56,9 +56,7 @@ fn run() -> Result<(), String> {
 }
 
 fn cmdline_path() -> PathBuf {
-    env::var_os("RUSTD_PROC_CMDLINE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/proc/cmdline"))
+    env::var_os("RUSTD_PROC_CMDLINE").map_or_else(|| PathBuf::from("/proc/cmdline"), PathBuf::from)
 }
 
 fn parse_cmdline(config: &mut Config, initrd: bool) {

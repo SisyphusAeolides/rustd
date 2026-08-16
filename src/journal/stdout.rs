@@ -33,7 +33,7 @@ use crate::journal::entry::{priority, EntryRing, JournalEntry};
 use crate::journal::sink::JournalSink;
 use crate::journal::socket::SocketPathGuard;
 
-/// The native RustD journal stdout path used by installed execution.
+/// The native `RustD` journal stdout path used by installed execution.
 pub const DEFAULT_STDOUT_PATH: &str = "/run/rustd/journal/stdout";
 
 pub struct StdoutServer {
@@ -44,7 +44,7 @@ pub struct StdoutServer {
 }
 
 impl StdoutServer {
-    /// Bind the installed RustD journal stdout socket.
+    /// Bind the installed `RustD` journal stdout socket.
     ///
     /// # Errors
     ///

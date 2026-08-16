@@ -1,6 +1,6 @@
 [package]
-name = "rustd"
-version = "0.1.0"
+name = "rustd-daemon"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.75"
 license = "LGPL-2.1-or-later"

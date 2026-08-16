@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! `rustd-cat` connects command output to the RustD journal stream.
+//! `rustd-cat` connects command output to the `RustD` journal stream.
 
 use std::env;
 use std::fs::File;

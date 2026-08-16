@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Native RustD time synchronization wait helper.
+//! Native `RustD` time synchronization wait helper.
 
 use std::collections::VecDeque;
 use std::env;

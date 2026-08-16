@@ -31,7 +31,7 @@ use crate::journal::entry::{EntryRing, JournalEntry};
 use crate::journal::sink::JournalSink;
 use crate::journal::socket::SocketPathGuard;
 
-/// The native RustD journal datagram path used by installed execution.
+/// The native `RustD` journal datagram path used by installed execution.
 pub const DEFAULT_SOCKET_PATH: &str = "/run/rustd/journal/socket";
 
 pub struct JournalReceiver {
@@ -42,7 +42,7 @@ pub struct JournalReceiver {
 }
 
 impl JournalReceiver {
-    /// Bind the installed RustD journal datagram socket.
+    /// Bind the installed `RustD` journal datagram socket.
     ///
     /// # Errors
     ///

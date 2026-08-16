@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD boot-success generator.
+//! `RustD` boot-success generator.
 
 use std::env;
 use std::fs;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD volatile-root helper.
+//! `RustD` volatile-root helper.
 
 use std::env;
 use std::fs;
@@ -63,9 +63,7 @@ fn run() -> Result<(), String> {
 
 fn read_cmdline() -> String {
     env::var("RUSTD_PROC_CMDLINE")
-        .ok()
-        .map(|path| fs::read_to_string(path).unwrap_or_default())
-        .unwrap_or_else(|| fs::read_to_string("/proc/cmdline").unwrap_or_default())
+        .ok().map_or_else(|| fs::read_to_string("/proc/cmdline").unwrap_or_default(), |path| fs::read_to_string(path).unwrap_or_default())
 }
 
 fn cmdline_mode(cmdline: &str) -> Result<Option<Mode>, String> {
@@ -130,7 +128,7 @@ fn mount_info(path: &Path) -> Result<Option<MountInfo>, String> {
         if fields.len() < 5 || right.is_empty() {
             continue;
         }
-        if PathBuf::from(unescape_mountinfo(fields[4])) == canonical {
+        if std::path::Path::new(&unescape_mountinfo(fields[4])) == canonical {
             return Ok(Some(MountInfo {
                 fs_type: right[0].to_owned(),
             }));

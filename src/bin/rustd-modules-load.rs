@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD kernel module loader.
+//! `RustD` kernel module loader.
 
 use std::collections::{BTreeMap, HashSet};
 use std::env;

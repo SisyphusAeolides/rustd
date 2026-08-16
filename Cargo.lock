@@ -884,8 +884,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b74b56ffa8bb2830709a538c2cbcae9aa062db0d2a42563bfb09bdaae44020eb"
 
 [[package]]
-name = "rustd"
-version = "0.1.0"
+name = "rustd-daemon"
+version = "0.1.1"
 dependencies = [
  "anstream",
  "anyhow",

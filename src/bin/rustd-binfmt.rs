@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD binary-format registration utility.
+//! `RustD` binary-format registration utility.
 
 use std::collections::BTreeMap;
 use std::env;

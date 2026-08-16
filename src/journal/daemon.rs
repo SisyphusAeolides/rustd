@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! RustD journal daemon runtime wiring.
+//! `RustD` journal daemon runtime wiring.
 //!
 //! The daemon keeps the externally visible journal sockets in a configurable
 //! directory. Installed execution uses the native `/run/rustd/journal` path,
@@ -17,7 +17,7 @@ use crate::journal::sink::JournalSink;
 use crate::journal::stdout::StdoutServer;
 use crate::journal::writer::JournalWriter;
 
-/// Default runtime directory for an installed RustD journal daemon.
+/// Default runtime directory for an installed `RustD` journal daemon.
 pub const DEFAULT_RUNTIME_DIRECTORY: &str = "/run/rustd/journal";
 /// Default directory for an installed persistent journal daemon.
 pub const DEFAULT_JOURNAL_DIRECTORY: &str = "/var/log/journal";

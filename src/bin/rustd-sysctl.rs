@@ -2,7 +2,7 @@
 //! `systemd-sysctl` compatibility utility.
 //!
 //! Upstream reference: systemd v261 `src/sysctl/sysctl.c` and
-//! `src/basic/sysctl-util.c` at the pinned RustD baseline.
+//! `src/basic/sysctl-util.c` at the pinned `RustD` baseline.
 
 use std::collections::{BTreeMap, HashSet};
 use std::env;
@@ -573,11 +573,7 @@ fn run(args: Args) -> i32 {
     }
 
     ok &= apply(&options, &args.prefixes, args.strict);
-    if ok {
-        0
-    } else {
-        1
-    }
+    i32::from(!ok)
 }
 
 fn main() {

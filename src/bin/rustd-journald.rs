@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! rustd-journald — collect RustD journal datagrams and stdout streams.
+//! rustd-journald — collect `RustD` journal datagrams and stdout streams.
 //!
 //! Compatibility reference: systemd v261 `src/journald/journald.c`.
 
