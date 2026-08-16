@@ -1,0 +1,14 @@
+[Unit]
+Description=RustD User Login Management
+After=basic.target
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/rustd/rustd-user-sessions start
+ExecStop=/usr/lib/rustd/rustd-user-sessions stop
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

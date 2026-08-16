@@ -1,0 +1,5 @@
+[Unit]
+Description=RustD Basic System
+Requires=sysinit.target
+Wants=sockets.target paths.target timers.target
+After=sysinit.target sockets.target paths.target timers.target

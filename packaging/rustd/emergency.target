@@ -1,0 +1,4 @@
+[Unit]
+Description=RustD Emergency Mode
+Requires=rustd-emergency.service
+After=rustd-emergency.service

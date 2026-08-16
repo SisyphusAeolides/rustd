@@ -1,0 +1,4 @@
+[Unit]
+Description=RustD Default System
+Requires=multi-user.target
+After=multi-user.target

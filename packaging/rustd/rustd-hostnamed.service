@@ -1,0 +1,13 @@
+[Unit]
+Description=RustD Hostname Service
+Conflicts=shutdown.target
+Before=shutdown.target
+
+[Service]
+Type=notify
+BusName=org.freedesktop.hostname1
+ExecStart=/usr/lib/rustd/rustd-hostnamed
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

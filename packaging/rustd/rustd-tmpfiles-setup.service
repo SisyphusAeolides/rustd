@@ -1,0 +1,11 @@
+[Unit]
+Description=RustD Temporary Files Setup
+DefaultDependencies=no
+Requires=rustd-sysusers.service
+After=rustd-sysusers.service local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/rustd/rustd-tmpfiles
+RemainAfterExit=yes

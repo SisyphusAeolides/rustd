@@ -1,0 +1,13 @@
+[Unit]
+Description=RustD Random Seed
+DefaultDependencies=no
+Before=sysinit.target shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/rustd/rustd-random-seed load
+ExecStop=/usr/lib/rustd/rustd-random-seed save
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

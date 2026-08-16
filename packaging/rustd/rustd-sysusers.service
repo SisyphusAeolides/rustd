@@ -1,0 +1,9 @@
+[Unit]
+Description=RustD System Users
+DefaultDependencies=no
+Before=rustd-tmpfiles-setup.service sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/rustd/rustd-sysusers
+RemainAfterExit=yes

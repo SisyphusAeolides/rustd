@@ -1,0 +1,4 @@
+[Unit]
+Description=RustD Login Prompts
+Wants=getty@tty1.service
+After=basic.target

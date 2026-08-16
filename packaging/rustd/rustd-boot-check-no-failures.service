@@ -1,0 +1,11 @@
+[Unit]
+Description=RustD Boot Health Check
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/rustd/rustd-boot-check-no-failures
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

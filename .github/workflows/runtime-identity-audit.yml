@@ -1,0 +1,37 @@
+name: RustD runtime identity audit
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Inventory legacy runtime roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          : > runtime-identity-audit.txt
+          grep -RInE --exclude-dir=target --exclude='*.md' \
+            '(/run/systemd|/etc/systemd|/usr/lib/systemd|/usr/local/lib/systemd|/var/lib/systemd|@systemd/notify|"systemd:)' \
+            src ffi tests scripts packaging Makefile Cargo.toml \
+            >> runtime-identity-audit.txt || true
+          cat runtime-identity-audit.txt
+
+      - name: Upload audit
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustd-runtime-identity-${{ github.sha }}
+          path: runtime-identity-audit.txt
+          if-no-files-found: error
+          retention-days: 2

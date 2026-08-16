@@ -1,0 +1,12 @@
+[Unit]
+Description=RustD Console Mute Socket
+DefaultDependencies=no
+
+[Socket]
+ListenStream=/run/rustd/io.rustd.MuteConsole
+FileDescriptorName=varlink
+SocketMode=0600
+Accept=yes
+
+[Install]
+WantedBy=sockets.target

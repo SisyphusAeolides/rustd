@@ -1,0 +1,11 @@
+[Unit]
+Description=RustD Rescue Shell
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/sh
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console

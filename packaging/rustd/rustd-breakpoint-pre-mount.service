@@ -1,0 +1,12 @@
+[Unit]
+Description=RustD Pre-Mount Breakpoint Shell
+DefaultDependencies=no
+Before=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/sh
+TTYPath=/dev/console
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty

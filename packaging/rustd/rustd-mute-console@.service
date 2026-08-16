@@ -1,0 +1,8 @@
+[Unit]
+Description=RustD Console Mute Handler
+DefaultDependencies=no
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/rustd/rustd-mute-console
+StandardInput=socket

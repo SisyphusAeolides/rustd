@@ -1,0 +1,76 @@
+name: RustD PID1 certification
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: rustd-pid1-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pid1-certification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install native and virtualization tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            busybox-static \
+            cpio \
+            gfortran \
+            linux-image-generic \
+            qemu-system-x86
+          kernel="$(ls -1v /boot/vmlinuz-*-generic | tail -1)"
+          sudo cp -L "$kernel" "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          chmod 0644 "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          echo "RUSTD_PID1_KERNEL=$RUNNER_TEMP/rustd-ci-vmlinuz" >> "$GITHUB_ENV"
+
+      - name: Install Rust 1.75.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.75.0 --profile minimal
+          rustc +1.75.0 --version --verbose
+          cargo +1.75.0 --version --verbose
+
+      - name: Build PID1 certificate payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.75.0 build --release --all-features --locked \
+            --bin rustd \
+            --bin rustctl \
+            --bin rustd-journald
+
+      - name: Cold boot RustD as PID1 three times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "RustD PID1 cold-boot certification attempt ${attempt}/3"
+            RUSTD_PID1_SERIAL_LOG="pid1-serial-${attempt}.log" \
+              bash scripts/ci-pid1-initramfs.sh
+          done
+
+      - name: Upload serial certificate logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustd-pid1-serial-${{ github.sha }}
+          path: pid1-serial-*.log
+          if-no-files-found: error
+          retention-days: 14

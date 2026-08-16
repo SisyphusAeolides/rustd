@@ -1,0 +1,11 @@
+[Unit]
+Description=RustD Battery Check
+DefaultDependencies=no
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/rustd/rustd-battery-check
+
+[Install]
+WantedBy=sysinit.target

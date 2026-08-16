@@ -1,0 +1,12 @@
+[Unit]
+Description=RustD Getty on %I
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/agetty --noclear %I linux
+Restart=always
+TTYPath=/dev/%I
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty

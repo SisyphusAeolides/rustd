@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+[Unit]
+Description=Journal Service
+Requires=systemd-journald.socket
+After=systemd-journald.socket
+Before=sysinit.target
+
+[Service]
+Type=notify-reload
+ExecStart=/usr/lib/systemd/systemd-journald
+Restart=always
+WatchdogSec=3min

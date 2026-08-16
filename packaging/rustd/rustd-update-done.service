@@ -1,0 +1,12 @@
+[Unit]
+Description=RustD Update Marker
+ConditionNeedsUpdate=|/etc
+ConditionNeedsUpdate=|/var
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/rustd/rustd-update-done
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

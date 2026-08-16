@@ -1,0 +1,12 @@
+[Unit]
+Description=RustD Serial Getty on %I
+After=basic.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/agetty -L %I 115200,57600,38400,9600 vt220
+Restart=always
+TTYPath=/dev/%I
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty

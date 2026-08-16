@@ -1,0 +1,4 @@
+[Unit]
+Description=RustD Rescue Mode
+Requires=basic.target rustd-rescue.service
+After=basic.target rustd-rescue.service

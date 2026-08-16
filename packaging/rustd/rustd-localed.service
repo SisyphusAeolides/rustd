@@ -1,0 +1,11 @@
+[Unit]
+Description=RustD Locale Service
+
+[Service]
+Type=notify
+BusName=org.freedesktop.locale1
+ExecStart=/usr/lib/rustd/rustd-localed
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

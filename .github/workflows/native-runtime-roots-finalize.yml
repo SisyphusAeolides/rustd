@@ -1,0 +1,76 @@
+name: RustD native runtime roots finalization
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rustd-native-runtime-roots-finalization
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Install validation toolchains
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gfortran
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup toolchain install 1.75.0 --profile minimal --component clippy
+
+      - name: Make RustD runtime roots native
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/finalize-native-runtime-roots.py
+          cargo +stable fmt --all
+          git diff --check
+
+      - name: Validate native ABI and packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          make check-native
+          make check-packaging
+
+      - name: Validate Rust 1.75 tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.75.0 check --all-targets --all-features --locked
+          cargo +1.75.0 test --test rustd_runtime_identity --locked
+
+      - name: Validate stable correctness
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +stable clippy --all-targets --all-features --locked -- \
+            -D clippy::correctness -D clippy::suspicious -D clippy::perf
+          cargo +stable test --all-targets --all-features --locked -- --test-threads=1
+
+      - name: Commit native runtime roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/native-runtime-roots-finalize.yml
+          rm .github/workflows/runtime-identity-audit.yml
+          rm scripts/finalize-native-runtime-roots.py
+          git diff --check
+          git config user.name "Kenny Glowner"
+          git config user.email "SisyphusAeolides@pm.me"
+          git add -A
+          git commit -m "refactor: make RustD runtime roots native"
+          git push origin HEAD:main

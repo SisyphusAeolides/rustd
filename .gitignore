@@ -1,0 +1,13 @@
+/target/
+/build/
+*.o
+*.a
+*.mod
+*.agdai
+formal/idris/build/
+**/*.tmp
+fuzz/artifacts/
+fuzz/corpus/
+
+__pycache__/
+*.py[cod]

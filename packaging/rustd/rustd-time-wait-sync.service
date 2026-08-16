@@ -1,0 +1,18 @@
+[Unit]
+Description=RustD Time Synchronization Wait
+DefaultDependencies=no
+ConditionCapability=CAP_SYS_TIME
+ConditionVirtualization=!container
+After=local-fs.target
+Before=time-sync.target shutdown.target
+Wants=time-sync.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/rustd/rustd-time-wait-sync
+TimeoutStartSec=infinity
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target

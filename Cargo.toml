@@ -1,0 +1,530 @@
+[package]
+name = "rustd"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "LGPL-2.1-or-later"
+description = "Native Linux init system and service manager for RustD"
+repository = "https://github.com/SisyphusAeolides/rustd"
+build = "build.rs"
+autobins = false
+
+[lib]
+name = "rustd"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rustd"
+path = "src/main.rs"
+
+[[bin]]
+name = "rustbootctl"
+path = "src/bin/rustbootctl.rs"
+
+[[bin]]
+name = "rustbusctl"
+path = "src/bin/rustbusctl.rs"
+
+[[bin]]
+name = "rustcoredumpctl"
+path = "src/bin/rustcoredumpctl.rs"
+
+[[bin]]
+name = "rustctl"
+path = "src/bin/rustctl.rs"
+
+[[bin]]
+name = "rustd-ac-power"
+path = "src/bin/rustd-ac-power.rs"
+
+[[bin]]
+name = "rustd-analyze"
+path = "src/bin/rustd-analyze.rs"
+
+[[bin]]
+name = "rustd-ask-password"
+path = "src/bin/rustd-ask-password.rs"
+
+[[bin]]
+name = "rustd-backlight"
+path = "src/bin/rustd-backlight.rs"
+
+[[bin]]
+name = "rustd-battery-check"
+path = "src/bin/rustd-battery-check.rs"
+
+[[bin]]
+name = "rustd-boot-check-no-failures"
+path = "src/bin/rustd-boot-check-no-failures.rs"
+
+[[bin]]
+name = "rustd-cat"
+path = "src/bin/rustd-cat.rs"
+
+[[bin]]
+name = "rustd-cgls"
+path = "src/bin/rustd-cgls.rs"
+
+[[bin]]
+name = "rustd-cgtop"
+path = "src/bin/rustd-cgtop.rs"
+
+[[bin]]
+name = "rustd-confext"
+path = "src/bin/rustd-confext.rs"
+
+[[bin]]
+name = "rustd-creds"
+path = "src/bin/rustd-creds.rs"
+
+[[bin]]
+name = "rustd-cryptenroll"
+path = "src/bin/rustd-cryptenroll.rs"
+
+[[bin]]
+name = "rustd-cryptsetup"
+path = "src/bin/rustd-cryptsetup.rs"
+
+[[bin]]
+name = "rustd-delta"
+path = "src/bin/rustd-delta.rs"
+
+[[bin]]
+name = "rustd-detect-virt"
+path = "src/bin/rustd-detect-virt.rs"
+
+[[bin]]
+name = "rustd-dissect"
+path = "src/bin/rustd-dissect.rs"
+
+[[bin]]
+name = "rustd-escape"
+path = "src/bin/rustd-escape.rs"
+
+[[bin]]
+name = "rustd-firstboot"
+path = "src/bin/rustd-firstboot.rs"
+
+[[bin]]
+name = "rustd-fsck"
+path = "src/bin/rustd-fsck.rs"
+
+[[bin]]
+name = "rustd-home-fallback-shell"
+path = "src/bin/rustd-home-fallback-shell.rs"
+
+[[bin]]
+name = "rustd-hwdb"
+path = "src/bin/rustd-hwdb.rs"
+
+[[bin]]
+name = "rustd-id128"
+path = "src/bin/rustd-id128.rs"
+
+[[bin]]
+name = "rustd-inhibit"
+path = "src/bin/rustd-inhibit.rs"
+
+[[bin]]
+name = "rustd-journald"
+path = "src/bin/rustd-journald.rs"
+
+[[bin]]
+name = "rustd-machine-id-setup"
+path = "src/bin/rustd-machine-id-setup.rs"
+
+[[bin]]
+name = "rustd-mount"
+path = "src/bin/rustd-mount.rs"
+
+[[bin]]
+name = "rustd-mstack"
+path = "src/bin/rustd-mstack.rs"
+
+[[bin]]
+name = "rustd-mute-console"
+path = "src/bin/rustd-mute-console.rs"
+
+[[bin]]
+name = "rustd-notify"
+path = "src/bin/rustd-notify.rs"
+
+[[bin]]
+name = "rustd-nspawn"
+path = "src/bin/rustd-nspawn.rs"
+
+[[bin]]
+name = "rustd-path"
+path = "src/bin/rustd-path.rs"
+
+[[bin]]
+name = "rustd-pty-forward"
+path = "src/bin/rustd-pty-forward.rs"
+
+[[bin]]
+name = "rustd-random-seed"
+path = "src/bin/rustd-random-seed.rs"
+
+[[bin]]
+name = "rustd-repart"
+path = "src/bin/rustd-repart.rs"
+
+[[bin]]
+name = "rustd-remount-fs"
+path = "src/bin/rustd-remount-fs.rs"
+
+[[bin]]
+name = "rustd-reply-password"
+path = "src/bin/rustd-reply-password.rs"
+
+[[bin]]
+name = "rustd-resolve"
+path = "src/bin/rustd-resolve.rs"
+
+[[bin]]
+name = "rustd-rfkill"
+path = "src/bin/rustd-rfkill.rs"
+
+[[bin]]
+name = "rustd-run"
+path = "src/bin/rustd-run.rs"
+
+[[bin]]
+name = "rustd-socket-activate"
+path = "src/bin/rustd-socket-activate.rs"
+
+[[bin]]
+name = "rustd-socket-proxyd"
+path = "src/bin/rustd-socket-proxyd.rs"
+
+[[bin]]
+name = "rustd-ssh-issue"
+path = "src/bin/rustd-ssh-issue.rs"
+
+[[bin]]
+name = "rustd-stdio-bridge"
+path = "src/bin/rustd-stdio-bridge.rs"
+
+[[bin]]
+name = "rustd-sulogin-shell"
+path = "src/bin/rustd-sulogin-shell.rs"
+
+[[bin]]
+name = "rustd-sysext"
+path = "src/bin/rustd-sysext.rs"
+
+[[bin]]
+name = "rustd-sysinstall"
+path = "src/bin/rustd-sysinstall.rs"
+
+[[bin]]
+name = "rustd-sysupdate"
+path = "src/bin/rustd-sysupdate.rs"
+
+[[bin]]
+name = "rustd-sysusers"
+path = "src/bin/rustd-sysusers.rs"
+
+[[bin]]
+name = "rustd-time-wait-sync"
+path = "src/bin/rustd-time-wait-sync.rs"
+
+[[bin]]
+name = "rustd-tmpfiles"
+path = "src/bin/rustd-tmpfiles.rs"
+
+[[bin]]
+name = "rustd-tty-ask-password-agent"
+path = "src/bin/rustd-tty-ask-password-agent.rs"
+
+[[bin]]
+name = "rustd-umount"
+path = "src/bin/rustd-umount.rs"
+
+[[bin]]
+name = "rustd-update-done"
+path = "src/bin/rustd-update-done.rs"
+
+[[bin]]
+name = "rustd-update-utmp"
+path = "src/bin/rustd-update-utmp.rs"
+
+[[bin]]
+name = "rustd-user-sessions"
+path = "src/bin/rustd-user-sessions.rs"
+
+[[bin]]
+name = "rustd-quotacheck"
+path = "src/bin/rustd-quotacheck.rs"
+
+[[bin]]
+name = "rustd-vconsole-setup"
+path = "src/bin/rustd-vconsole-setup.rs"
+
+[[bin]]
+name = "rustd-vmspawn"
+path = "src/bin/rustd-vmspawn.rs"
+
+[[bin]]
+name = "rustd-vpick"
+path = "src/bin/rustd-vpick.rs"
+
+[[bin]]
+name = "rustd-xdg-autostart-condition"
+path = "src/bin/rustd-xdg-autostart-condition.rs"
+
+[[bin]]
+name = "rusthomectl"
+path = "src/bin/rusthomectl.rs"
+
+[[bin]]
+name = "rusthostnamectl"
+path = "src/bin/rusthostnamectl.rs"
+
+[[bin]]
+name = "rustimportctl"
+path = "src/bin/rustimportctl.rs"
+
+[[bin]]
+name = "rustinstallkernel"
+path = "src/bin/rustinstallkernel.rs"
+
+[[bin]]
+name = "rustjournalctl"
+path = "src/bin/rustjournalctl.rs"
+
+[[bin]]
+name = "rustkernel-install"
+path = "src/bin/rustkernel-install.rs"
+
+[[bin]]
+name = "rustlocalectl"
+path = "src/bin/rustlocalectl.rs"
+
+[[bin]]
+name = "rustloginctl"
+path = "src/bin/rustloginctl.rs"
+
+[[bin]]
+name = "rustmachinectl"
+path = "src/bin/rustmachinectl.rs"
+
+[[bin]]
+name = "rustmount-ddi"
+path = "src/bin/rustmount.ddi.rs"
+
+[[bin]]
+name = "rustmount-mstack"
+path = "src/bin/rustmount.mstack.rs"
+
+[[bin]]
+name = "rustmount-storage"
+path = "src/bin/rustmount.storage.rs"
+
+[[bin]]
+name = "rustmount_ddi"
+path = "src/bin/rustmount_ddi.rs"
+
+[[bin]]
+name = "rustmount_mstack"
+path = "src/bin/rustmount_mstack.rs"
+
+[[bin]]
+name = "rustmount_storage"
+path = "src/bin/rustmount_storage.rs"
+
+[[bin]]
+name = "rustnetworkctl"
+path = "src/bin/rustnetworkctl.rs"
+
+[[bin]]
+name = "rustoomctl"
+path = "src/bin/rustoomctl.rs"
+
+[[bin]]
+name = "rustportablectl"
+path = "src/bin/rustportablectl.rs"
+
+[[bin]]
+name = "rustresolvectl"
+path = "src/bin/rustresolvectl.rs"
+
+[[bin]]
+name = "rustrun0"
+path = "src/bin/rustrun0.rs"
+
+[[bin]]
+name = "ruststoragectl"
+path = "src/bin/ruststoragectl.rs"
+
+[[bin]]
+name = "rusttimedatectl"
+path = "src/bin/rusttimedatectl.rs"
+
+[[bin]]
+name = "rustudevadm"
+path = "src/bin/rustudevadm.rs"
+
+[[bin]]
+name = "rustupdatectl"
+path = "src/bin/rustupdatectl.rs"
+
+[[bin]]
+name = "rustuserdbctl"
+path = "src/bin/rustuserdbctl.rs"
+
+[[bin]]
+name = "rustvarlinkctl"
+path = "src/bin/rustvarlinkctl.rs"
+
+[[bin]]
+name = "rustd-binfmt"
+path = "src/bin/rustd-binfmt.rs"
+
+[[bin]]
+name = "rustd-bless-boot"
+path = "src/bin/rustd-bless-boot.rs"
+
+[[bin]]
+name = "rustd-bless-boot-generator"
+path = "src/bin/rustd-bless-boot-generator.rs"
+
+[[bin]]
+name = "rustd-debug-generator"
+path = "src/bin/rustd-debug-generator.rs"
+
+[[bin]]
+name = "rustd-factory-reset-generator"
+path = "src/bin/rustd-factory-reset-generator.rs"
+
+[[bin]]
+name = "rustd-getty-generator"
+path = "src/bin/rustd-getty-generator.rs"
+
+[[bin]]
+name = "rustd-hostnamed"
+path = "src/bin/rustd-hostnamed.rs"
+
+[[bin]]
+name = "rustd-localed"
+path = "src/bin/rustd-localed.rs"
+
+[[bin]]
+name = "rustd-modules-load"
+path = "src/bin/rustd-modules-load.rs"
+
+[[bin]]
+name = "rustd-run-generator"
+path = "src/bin/rustd-run-generator.rs"
+
+[[bin]]
+name = "rustd-sysctl"
+path = "src/bin/rustd-sysctl.rs"
+
+[[bin]]
+name = "rustd-system-update-generator"
+path = "src/bin/rustd-system-update-generator.rs"
+
+[[bin]]
+name = "rustd-volatile-root"
+path = "src/bin/rustd-volatile-root.rs"
+
+# RustD exposes only native executable names.
+
+[dependencies]
+# libc: C type definitions only (pid_t, c_int, etc.) for FFI boundaries.
+# No syscalls are called through libc — those live in ffi/*.c.
+libc = "0.2"
+anyhow = "1"
+bitflags = "2"
+bytes = "1"
+crossbeam-queue = "0.3"
+memmap2 = "0.9"
+parking_lot = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# zbus: D-Bus protocol implementation for the RustD manager control plane.
+zbus = { version = "=4.0.1", default-features = false, features = ["tokio"] }
+# Keep the wire-format crate aligned with zbus 4.0 so the Rust 1.75 MSRV
+# cannot drift through newer procedural-macro dependencies.
+zvariant = { version = "=4.0.0", default-features = false }
+# toml_edit 0.19 accepts any indexmap 2.x. Newer indexmap releases require a
+# newer compiler, so retain the Rust 1.75-compatible dependency branch.
+indexmap = "=2.2.6"
+# tokio: required by zbus for async D-Bus I/O only.
+# The main event loop is the native epoll loop in src/event/; tokio is not
+# used by PID 1 itself.
+tokio = { version = "=1.35.1", features = ["rt", "net", "io-util", "sync", "time", "macros"] }
+clap = { version = "=4.5.50", features = ["derive"] }
+clap_builder = "=4.5.50"
+clap_derive = "=4.5.49"
+clap_lex = "=0.7.6"
+anstream = "=0.6.21"
+
+[features]
+default = ["supremacy"]
+chaos = []
+ml-weave = []
+fortran-sched = []
+beast-wire = []
+kalman = []
+formal-crosscheck = []
+obs = []
+supremacy = ["obs"]
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"
+strip = "symbols"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# RustD's public domain types intentionally use explicit component names such
+# as UnitState, JobQueue, JournalWriter, and CgroupManager.
+module_name_repetitions = "allow"
+# Transitional allowances while native components are being normalized.
+too_many_lines = "allow"
+struct_excessive_bools = "allow"
+single_match_else = "allow"
+match_single_binding = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+unnecessary_wraps = "allow"
+needless_pass_by_value = "allow"
+manual_strip = "allow"
+similar_names = "allow"
+match_same_arms = "allow"
+if_not_else = "allow"
+unreadable_literal = "allow"
+manual_range_contains = "allow"
+collapsible_if = "allow"
+needless_borrow = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+wildcard_in_or_patterns = "allow"
+format_collect = "allow"
+struct_field_names = "allow"
+manual_let_else = "allow"
+op_ref = "allow"
+items_after_statements = "allow"
+never_loop = "allow"
+manual_flatten = "allow"
+option_option = "allow"
+field_reassign_with_default = "allow"
+fn_params_excessive_bools = "allow"
+collapsible_match = "allow"
+cast_ptr_alignment = "allow"
+ptr_as_ptr = "allow"
+match_on_vec_items = "allow"
+
+[dev-dependencies]
+tempfile = "=3.10.1"
