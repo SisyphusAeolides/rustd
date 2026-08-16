@@ -1,19 +1,21 @@
-name: RustD native runtime roots finalization
+name: RustD native runtime roots validation
 
 on:
   push:
     branches:
       - main
+  pull_request:
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: rustd-native-runtime-roots-finalization
-  cancel-in-progress: false
+  group: rustd-native-runtime-roots-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  finalize:
+  validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -31,13 +33,13 @@ jobs:
           rustup toolchain install stable --profile minimal --component rustfmt,clippy
           rustup toolchain install 1.75.0 --profile minimal --component clippy
 
-      - name: Make RustD runtime roots native
+      - name: Validate finalized source
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/finalize-native-runtime-roots.py
-          cargo +stable fmt --all
+          cargo +stable fmt --all -- --check
           git diff --check
+          cargo +1.75.0 test --test rustd_runtime_identity --locked
 
       - name: Validate native ABI and packaging
         shell: bash
@@ -51,7 +53,6 @@ jobs:
         run: |
           set -euo pipefail
           cargo +1.75.0 check --all-targets --all-features --locked
-          cargo +1.75.0 test --test rustd_runtime_identity --locked
 
       - name: Validate stable correctness
         shell: bash
@@ -60,17 +61,3 @@ jobs:
           cargo +stable clippy --all-targets --all-features --locked -- \
             -D clippy::correctness -D clippy::suspicious -D clippy::perf
           cargo +stable test --all-targets --all-features --locked -- --test-threads=1
-
-      - name: Commit native runtime roots
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm .github/workflows/native-runtime-roots-finalize.yml
-          rm .github/workflows/runtime-identity-audit.yml
-          rm scripts/finalize-native-runtime-roots.py
-          git diff --check
-          git config user.name "Kenny Glowner"
-          git config user.email "SisyphusAeolides@pm.me"
-          git add -A
-          git commit -m "refactor: make RustD runtime roots native"
-          git push origin HEAD:main
