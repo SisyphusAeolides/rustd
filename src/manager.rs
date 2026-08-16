@@ -2683,7 +2683,7 @@ mod tests {
             std::fs::write(
                 units.path().join(name),
                 format!(
-                    "[Service]\nType=oneshot\nEnvironment=RUSTD_UNIT_ENV_TEST=unit\nExecStart={}\n",
+                    "[Service]\nType=oneshot\nStandardOutput=null\nStandardError=null\nEnvironment=RUSTD_UNIT_ENV_TEST=unit\nExecStart={}\n",
                     command(output)
                 ),
             )
@@ -2748,7 +2748,7 @@ mod tests {
         let units = tempfile::tempdir().unwrap();
         std::fs::write(
             units.path().join("on-demand.service"),
-            "[Unit]\nDescription=On-demand unit\n[Service]\nType=oneshot\nExecStart=/bin/true\n",
+            "[Unit]\nDescription=On-demand unit\n[Service]\nType=oneshot\nStandardOutput=null\nStandardError=null\nExecStart=/bin/true\n",
         )
         .unwrap();
 
@@ -3029,7 +3029,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(
             dir.path().join("restart-delay.service"),
-            "[Service]\nType=simple\nRestart=on-failure\nRestartSec=5s\nExecStart=/bin/false\n",
+            "[Service]\nType=simple\nStandardOutput=null\nStandardError=null\nRestart=on-failure\nRestartSec=5s\nExecStart=/bin/false\n",
         )
         .unwrap();
 
@@ -3062,7 +3062,7 @@ mod tests {
         let units = tempfile::tempdir().unwrap();
         std::fs::write(
             units.path().join("limited.service"),
-            "[Service]\nType=simple\nCPUWeight=200\nExecStart=/bin/sleep 30\n",
+            "[Service]\nType=simple\nStandardOutput=null\nStandardError=null\nCPUWeight=200\nExecStart=/bin/sleep 30\n",
         )
         .unwrap();
         let cgroups = tempfile::tempdir().unwrap();
@@ -3099,7 +3099,7 @@ mod tests {
         let units = tempfile::tempdir().unwrap();
         std::fs::write(
             units.path().join("timeout-kill.service"),
-            "[Service]\nType=notify\nTimeoutStartSec=50ms\nTimeoutStartFailureMode=kill\nFinalKillSignal=SIGKILL\nExecStart=/bin/sleep 5\n",
+            "[Service]\nType=notify\nStandardOutput=null\nStandardError=null\nTimeoutStartSec=50ms\nTimeoutStartFailureMode=kill\nFinalKillSignal=SIGKILL\nExecStart=/bin/sleep 5\n",
         )
         .unwrap();
         let mut manager = Manager::new(ManagerConfig::default_system()).unwrap();
@@ -3129,7 +3129,7 @@ mod tests {
         std::fs::write(
             units.path().join("timeout-abort.service"),
             format!(
-                "[Service]\nType=notify\nTimeoutStartSec=100ms\nTimeoutAbortSec=100ms\nTimeoutStartFailureMode=abort\nWatchdogSignal=SIGUSR1\nFinalKillSignal=SIGKILL\nExecStart={command}\n"
+                "[Service]\nType=notify\nStandardOutput=null\nStandardError=null\nTimeoutStartSec=100ms\nTimeoutAbortSec=100ms\nTimeoutStartFailureMode=abort\nWatchdogSignal=SIGUSR1\nFinalKillSignal=SIGKILL\nExecStart={command}\n"
             ),
         )
         .unwrap();
@@ -3156,7 +3156,7 @@ mod tests {
         std::fs::write(
             units.path().join("idle.service"),
             format!(
-                "[Service]\nType=idle\nExecStart=/bin/sh -c 'printf ready > {}'\n",
+                "[Service]\nType=idle\nStandardOutput=null\nStandardError=null\nExecStart=/bin/sh -c 'printf ready > {}'\n",
                 marker.display()
             ),
         )
@@ -3197,7 +3197,7 @@ mod tests {
         let mut f = NamedTempFile::new_in(dir.path()).unwrap();
         write!(
             f,
-            "[Unit]\nDescription=Test Sleep\n[Service]\nType=oneshot\nExecStart=/bin/sleep 0.1\n"
+            "[Unit]\nDescription=Test Sleep\n[Service]\nType=oneshot\nStandardOutput=null\nStandardError=null\nExecStart=/bin/sleep 0.1\n"
         )
         .unwrap();
         let service_path = f.path().to_path_buf();

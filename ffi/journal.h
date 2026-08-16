@@ -15,25 +15,33 @@
 
 /*
  * rustd_journal_socket_bind: create and bind the SOCK_DGRAM AF_UNIX socket at
- * /run/systemd/journal/socket.  The socket is made world-writable so
- * unprivileged services can submit log entries. An existing path is never
- * removed and causes bind to fail.
+ * /run/rustd/journal/socket.  The socket is made world-writable so
+ * unprivileged services can submit log entries. SO_PASSCRED is enabled so
+ * recv can recover peer credentials. An existing path is never removed and
+ * causes bind to fail.
  * Returns fd on success, -errno on failure.
  */
 int rustd_journal_socket_bind(void);
 
 /*
  * rustd_journal_socket_recv: receive one datagram from the journal socket.
- * Ancillary (SCM_RIGHTS) data is accepted but discarded.
+ * When SO_PASSCRED is enabled, peer credentials are written to the optional
+ * pid/uid/gid out-parameters (pass NULL to ignore). SCM_RIGHTS fds are closed.
  * Returns bytes received on success, -errno on failure (-EAGAIN if empty).
  */
-ssize_t rustd_journal_socket_recv(int fd, void *buf, size_t len);
+ssize_t rustd_journal_socket_recv(
+    int fd,
+    void *buf,
+    size_t len,
+    pid_t *pid,
+    uid_t *uid,
+    gid_t *gid);
 
 /* ── stdout stream socket ───────────────────────────────────────────────── */
 
 /*
  * rustd_journal_stdout_bind: create and bind the SOCK_STREAM AF_UNIX socket at
- * /run/systemd/journal/stdout and begin listening. An existing path is never
+ * /run/rustd/journal/stdout and begin listening. An existing path is never
  * removed and causes bind to fail.
  * Returns fd on success, -errno on failure.
  */

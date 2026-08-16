@@ -31,23 +31,28 @@ unsafe impl Send for SdJournalField {}
 extern "C" {
     // ── Datagram receiver ─────────────────────────────────────────────────
 
-    /// Bind the journal datagram socket (`/run/systemd/journal/socket`).
+    /// Bind the journal datagram socket (`/run/rustd/journal/socket`).
     ///
     /// Returns the bound `SOCK_DGRAM` fd, or a negative errno on failure.
     pub fn rustd_journal_socket_bind() -> libc::c_int;
 
     /// Non-blocking `recvmsg` on the journal datagram socket.
     ///
-    /// Returns the number of bytes received, 0 on EOF, or a negative errno.
+    /// When `SO_PASSCRED` is enabled, peer credentials are written through the
+    /// optional `pid`/`uid`/`gid` out-parameters. Returns the number of bytes
+    /// received, 0 on EOF, or a negative errno.
     pub fn rustd_journal_socket_recv(
         fd: libc::c_int,
         buf: *mut libc::c_void,
         len: libc::size_t,
+        pid: *mut libc::pid_t,
+        uid: *mut libc::uid_t,
+        gid: *mut libc::gid_t,
     ) -> libc::ssize_t;
 
     // ── stdout stream server ──────────────────────────────────────────────
 
-    /// Bind the journal stdout stream socket (`/run/systemd/journal/stdout`).
+    /// Bind the journal stdout stream socket (`/run/rustd/journal/stdout`).
     ///
     /// Returns the bound `SOCK_STREAM` listening fd, or a negative errno.
     pub fn rustd_journal_stdout_bind() -> libc::c_int;

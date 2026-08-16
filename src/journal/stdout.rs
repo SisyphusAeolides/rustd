@@ -35,7 +35,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::event::loop_::IoHandler;
 use crate::journal::entry::{priority, EntryRing, JournalEntry};
@@ -51,6 +51,10 @@ const MAX_MESSAGE_LINE_BYTES: usize = 64 * 1024;
 const MAX_MESSAGES_PER_CONNECTION: usize = 100_000;
 const WORKER_COUNT: usize = 4;
 const ACCEPT_QUEUE_CAPACITY: usize = 64;
+/// systemd v261 default `LogRateLimitIntervalSec`.
+pub const DEFAULT_LOG_RATE_LIMIT_INTERVAL: Duration = Duration::from_secs(30);
+/// systemd v261 default `LogRateLimitBurst`.
+pub const DEFAULT_LOG_RATE_LIMIT_BURST: u32 = 10_000;
 
 #[derive(Clone, Copy, Debug)]
 struct PeerCred {
@@ -74,7 +78,9 @@ impl WorkerPool {
         static POOL: OnceLock<Mutex<Option<(usize, Arc<WorkerPool>)>>> = OnceLock::new();
         let sink_addr = Arc::as_ptr(&sink) as usize;
         let slot = POOL.get_or_init(|| Mutex::new(None));
-        let mut guard = slot.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut guard = slot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((addr, pool)) = guard.as_ref() {
             if *addr == sink_addr {
                 return Arc::clone(pool);
@@ -128,7 +134,6 @@ pub struct StdoutServer {
     pub listen_fd: RawFd,
     _listener: OwnedFd,
     _path_guard: SocketPathGuard,
-    sink: Arc<JournalSink>,
     pool: Arc<WorkerPool>,
 }
 
@@ -149,10 +154,15 @@ impl StdoutServer {
     /// Returns an error if the socket path already exists, the socket cannot
     /// be bound, or its nonblocking mode or permissions cannot be configured.
     pub fn bind_at(path: &Path, sink: Arc<JournalSink>) -> anyhow::Result<Self> {
+        if path.exists() {
+            return Err(anyhow::anyhow!(
+                "journal stdout socket already exists: {}",
+                path.display()
+            ));
+        }
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let _ = std::fs::remove_file(path);
         let listener = UnixListener::bind(path)
             .map_err(|error| anyhow::anyhow!("bind journal stdout {}: {error}", path.display()))?;
         let path_guard = SocketPathGuard::capture(path)?;
@@ -169,7 +179,6 @@ impl StdoutServer {
             listen_fd,
             _listener: listener,
             _path_guard: path_guard,
-            sink,
             pool,
         })
     }
@@ -220,6 +229,48 @@ fn peer_authorized(peer: PeerCred) -> bool {
     peer.uid == 0 || peer.uid == unsafe { libc::geteuid() }
 }
 
+/// Token-bucket rate limiter matching systemd journald's per-unit log limits.
+#[derive(Debug)]
+pub struct LogRateLimiter {
+    interval: Duration,
+    burst: u32,
+    tokens: u32,
+    window_start: Instant,
+}
+
+impl LogRateLimiter {
+    /// Build a limiter from unit settings, falling back to systemd defaults.
+    #[must_use]
+    pub fn from_unit_settings(interval: Option<Duration>, burst: Option<u32>) -> Self {
+        let interval = interval
+            .filter(|value| !value.is_zero())
+            .unwrap_or(DEFAULT_LOG_RATE_LIMIT_INTERVAL);
+        let burst = burst
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_LOG_RATE_LIMIT_BURST);
+        Self {
+            interval,
+            burst,
+            tokens: burst,
+            window_start: Instant::now(),
+        }
+    }
+
+    /// Return whether one more log line may be recorded.
+    pub fn allow(&mut self) -> bool {
+        let now = Instant::now();
+        if now.duration_since(self.window_start) >= self.interval {
+            self.window_start = now;
+            self.tokens = self.burst;
+        }
+        if self.tokens == 0 {
+            return false;
+        }
+        self.tokens -= 1;
+        true
+    }
+}
+
 fn peer_credentials(fd: RawFd) -> Option<PeerCred> {
     let mut cred = libc::ucred {
         pid: 0,
@@ -232,7 +283,7 @@ fn peer_credentials(fd: RawFd) -> Option<PeerCred> {
             fd,
             libc::SOL_SOCKET,
             libc::SO_PEERCRED,
-            (&raw mut cred).cast(),
+            std::ptr::addr_of_mut!(cred).cast(),
             &mut length,
         )
     };
@@ -267,6 +318,15 @@ fn read_bounded_line(reader: &mut impl BufRead, limit: usize) -> Result<String, 
 }
 
 fn serve_connection(conn_fd: RawFd, sink: &Arc<JournalSink>, peer: PeerCred) {
+    serve_connection_with_limiter(conn_fd, sink, peer, None);
+}
+
+fn serve_connection_with_limiter(
+    conn_fd: RawFd,
+    sink: &Arc<JournalSink>,
+    peer: PeerCred,
+    limiter_override: Option<LogRateLimiter>,
+) {
     let stream = unsafe { UnixStream::from_raw_fd(conn_fd) };
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
     let mut reader = std::io::BufReader::new(stream);
@@ -280,12 +340,42 @@ fn serve_connection(conn_fd: RawFd, sink: &Arc<JournalSink>, peer: PeerCred) {
     let Ok(priority_line) = read_bounded_line(&mut reader, MAX_HEADER_LINE_BYTES) else {
         return;
     };
-    // Remaining systemd stream header fields (ignored but bounded).
-    for _ in 0..4 {
+    // LEVEL_PREFIX, FORWARD_SECURE_SEALING, NAMESPACE
+    for _ in 0..3 {
         if read_bounded_line(&mut reader, MAX_HEADER_LINE_BYTES).is_err() {
             return;
         }
     }
+    let Ok(extra_count_line) = read_bounded_line(&mut reader, MAX_HEADER_LINE_BYTES) else {
+        return;
+    };
+    let extra_count: usize = extra_count_line.parse().unwrap_or(0).min(32);
+
+    let mut interval = None;
+    let mut burst = None;
+    for _ in 0..extra_count {
+        let Ok(extra) = read_bounded_line(&mut reader, MAX_HEADER_LINE_BYTES) else {
+            return;
+        };
+        if let Some((key, value)) = extra.split_once('=') {
+            match key {
+                "RUSTD_LOG_RATE_INTERVAL_USEC" => {
+                    if let Ok(usec) = value.parse::<u64>() {
+                        interval = Some(Duration::from_micros(usec));
+                    }
+                }
+                "RUSTD_LOG_RATE_BURST" => {
+                    if let Ok(value) = value.parse::<u32>() {
+                        burst = Some(value);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let mut limiter =
+        limiter_override.unwrap_or_else(|| LogRateLimiter::from_unit_settings(interval, burst));
 
     let prio: u8 = priority_line.parse().unwrap_or(priority::INFO);
     // Privileged peers (manager / helper) may declare the unit; everyone else
@@ -301,9 +391,9 @@ fn serve_connection(conn_fd: RawFd, sink: &Arc<JournalSink>, peer: PeerCred) {
             break;
         };
         if line.is_empty() {
-            // Empty line after EOF-sized read is treated as end-of-stream when
-            // the underlying reader already returned zero bytes via Err path;
-            // a deliberate blank line is skipped.
+            continue;
+        }
+        if !limiter.allow() {
             continue;
         }
 
@@ -339,12 +429,36 @@ pub fn connect_service_stream(
     unit_name: &str,
     priority: u8,
 ) -> std::io::Result<UnixStream> {
+    connect_service_stream_with_limits(path, identifier, unit_name, priority, None, None)
+}
+
+/// Connect with explicit `LogRateLimit*` settings encoded as stream extras.
+///
+/// # Errors
+///
+/// Returns an I/O error when the socket cannot be reached or the header
+/// cannot be written.
+pub fn connect_service_stream_with_limits(
+    path: &Path,
+    identifier: &str,
+    unit_name: &str,
+    priority: u8,
+    rate_interval: Option<Duration>,
+    rate_burst: Option<u32>,
+) -> std::io::Result<UnixStream> {
     let mut stream = UnixStream::connect(path)?;
     stream.shutdown(std::net::Shutdown::Read)?;
     use std::io::Write as _;
+    let interval = rate_interval
+        .filter(|value| !value.is_zero())
+        .unwrap_or(DEFAULT_LOG_RATE_LIMIT_INTERVAL);
+    let burst = rate_burst
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_LOG_RATE_LIMIT_BURST);
     write!(
         stream,
-        "{identifier}\n{unit_name}\n{priority}\n0\n0\n\n0\n"
+        "{identifier}\n{unit_name}\n{priority}\n0\n0\n\n2\nRUSTD_LOG_RATE_INTERVAL_USEC={}\nRUSTD_LOG_RATE_BURST={burst}\n",
+        u64::try_from(interval.as_micros()).unwrap_or(u64::MAX),
     )?;
     Ok(stream)
 }
@@ -468,5 +582,55 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert!(entries[0].unit().is_empty());
         assert_eq!(entries[0].pid_str(), "9");
+    }
+
+    #[test]
+    fn rate_limiter_drops_after_burst() {
+        let mut limiter =
+            LogRateLimiter::from_unit_settings(Some(Duration::from_secs(60)), Some(3));
+        assert!(limiter.allow());
+        assert!(limiter.allow());
+        assert!(limiter.allow());
+        assert!(!limiter.allow());
+    }
+
+    #[test]
+    fn serve_connection_honors_rate_limit_extras() {
+        let ring = Arc::new(Mutex::new(EntryRing::new(64)));
+        let sink = JournalSink::in_memory(Arc::clone(&ring));
+        let mut fds = [0i32; 2];
+        assert_eq!(
+            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds.as_mut_ptr()) },
+            0
+        );
+        let mut w = unsafe { UnixStream::from_raw_fd(fds[1]) };
+        write!(
+            w,
+            "id\nunit\n6\n0\n0\n\n2\nRUSTD_LOG_RATE_INTERVAL_USEC=60000000\nRUSTD_LOG_RATE_BURST=2\none\ntwo\nthree\n"
+        )
+        .unwrap();
+        drop(w);
+        serve_connection(
+            fds[0],
+            &sink,
+            PeerCred {
+                pid: 1,
+                uid: 0,
+                gid: 0,
+            },
+        );
+        assert_eq!(ring.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn bind_rejects_preexisting_stdout_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("stdout");
+        let _holder = UnixListener::bind(&path).unwrap();
+        let ring = Arc::new(Mutex::new(EntryRing::new(8)));
+        let err = StdoutServer::bind_at(&path, JournalSink::in_memory(ring))
+            .err()
+            .expect("preexisting path must fail");
+        assert!(err.to_string().contains("already exists"));
     }
 }

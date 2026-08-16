@@ -33,7 +33,7 @@
 /* ── internal helpers ───────────────────────────────────────────────────── */
 
 /*
- * ensure_journal_dir: mkdir /run/systemd/journal with mode 0755 if absent.
+ * ensure_journal_dir: mkdir /run/rustd/journal with mode 0755 if absent.
  * Ignores EEXIST.  Returns 0 or -errno.
  */
 static int ensure_journal_dir(void) {
@@ -357,14 +357,29 @@ int rustd_journal_socket_bind(void) {
         return -saved;
     }
 
+    {
+        int enable = 1;
+        if (setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &enable, sizeof(enable)) < 0) {
+            int saved = errno;
+            close(fd);
+            return -saved;
+        }
+    }
+
     return fd;
 }
 
 /* ── rustd_journal_socket_recv ─────────────────────────────────────────────── */
 
-ssize_t rustd_journal_socket_recv(int fd, void *buf, size_t len) {
-    /* Provide a small ancillary buffer to absorb SCM_RIGHTS fds silently. */
-    char cmsg_buf[256];
+ssize_t rustd_journal_socket_recv(
+        int fd,
+        void *buf,
+        size_t len,
+        pid_t *pid,
+        uid_t *uid,
+        gid_t *gid) {
+    char cmsg_buf[CMSG_SPACE(sizeof(struct ucred)) + CMSG_SPACE(sizeof(int) * 16)];
+    struct cmsghdr *cmsg;
 
     struct iovec iov = { .iov_base = buf, .iov_len = len };
     struct msghdr msg;
@@ -374,11 +389,39 @@ ssize_t rustd_journal_socket_recv(int fd, void *buf, size_t len) {
     msg.msg_control    = cmsg_buf;
     msg.msg_controllen = sizeof(cmsg_buf);
 
-    ssize_t n = recvmsg(fd, &msg, MSG_DONTWAIT);
+    if (pid)
+        *pid = 0;
+    if (uid)
+        *uid = (uid_t)-1;
+    if (gid)
+        *gid = (gid_t)-1;
+
+    ssize_t n = recvmsg(fd, &msg, MSG_DONTWAIT | MSG_CMSG_CLOEXEC);
     if (n < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
             return -EAGAIN;
         return -errno;
+    }
+
+    for (cmsg = CMSG_FIRSTHDR(&msg); cmsg; cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+        if (cmsg->cmsg_level != SOL_SOCKET)
+            continue;
+        if (cmsg->cmsg_type == SCM_CREDENTIALS &&
+            cmsg->cmsg_len >= CMSG_LEN(sizeof(struct ucred))) {
+            const struct ucred *cred = (const struct ucred *)CMSG_DATA(cmsg);
+            if (pid)
+                *pid = cred->pid;
+            if (uid)
+                *uid = cred->uid;
+            if (gid)
+                *gid = cred->gid;
+        } else if (cmsg->cmsg_type == SCM_RIGHTS) {
+            size_t count = (cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int);
+            const int *fds = (const int *)CMSG_DATA(cmsg);
+            size_t i;
+            for (i = 0; i < count; i++)
+                (void)close(fds[i]);
+        }
     }
     return n;
 }

@@ -24,7 +24,7 @@ use crate::dynamic_user::DynamicUser;
 use crate::event::child::ChildExit;
 use crate::ffi::spawn::{rustd_spawn, SdSpawnParams, SdSpawnRlimit, SdSpawnSandbox};
 use crate::journal::stdout::{
-    connect_service_stream, wants_journal_stdio, DEFAULT_STDOUT_PATH,
+    connect_service_stream_with_limits, wants_journal_stdio, DEFAULT_STDOUT_PATH,
 };
 use crate::kill_context::{signal_primary, KillOperation, KillPolicy};
 use crate::restart::should_restart_result;
@@ -1521,19 +1521,23 @@ fn spawn_command(
     let mut stdout_stream = None;
     let mut stderr_stream = None;
     let stdout_fd = if wants_journal_stdio(&section.standard_output) {
-        match connect_service_stream(&journal_path, identifier, unit_name, 6) {
-            Ok(stream) => {
-                let fd = stream.as_raw_fd();
-                stdout_stream = Some(stream);
-                fd
-            }
-            Err(error) => {
-                // Journal may be unavailable during early boot or unit tests;
-                // fall back to /dev/null rather than inheriting PID 1 stdio.
-                let _ = error;
-                -1
-            }
-        }
+        let stream = connect_service_stream_with_limits(
+            &journal_path,
+            identifier,
+            unit_name,
+            6,
+            section.log_rate_limit_interval_sec,
+            section.log_rate_limit_burst,
+        )
+        .map_err(|error| {
+            anyhow!(
+                "failed to connect {unit_name} StandardOutput to journal {}: {error}",
+                journal_path.display()
+            )
+        })?;
+        let fd = stream.as_raw_fd();
+        stdout_stream = Some(stream);
+        fd
     } else if section.standard_output.eq_ignore_ascii_case("null") {
         -1
     } else {
@@ -1547,14 +1551,23 @@ fn spawn_command(
         section.standard_error.as_str()
     };
     let stderr_fd = if wants_journal_stdio(stderr_mode) {
-        match connect_service_stream(&journal_path, identifier, unit_name, 3) {
-            Ok(stream) => {
-                let fd = stream.as_raw_fd();
-                stderr_stream = Some(stream);
-                fd
-            }
-            Err(_) => -1,
-        }
+        let stream = connect_service_stream_with_limits(
+            &journal_path,
+            identifier,
+            unit_name,
+            3,
+            section.log_rate_limit_interval_sec,
+            section.log_rate_limit_burst,
+        )
+        .map_err(|error| {
+            anyhow!(
+                "failed to connect {unit_name} StandardError to journal {}: {error}",
+                journal_path.display()
+            )
+        })?;
+        let fd = stream.as_raw_fd();
+        stderr_stream = Some(stream);
+        fd
     } else {
         -1
     };
@@ -1945,6 +1958,8 @@ mod tests {
     fn make_service(name: &str, exec_start: &str, service_type: ServiceType) -> UnitRecord {
         let mut section = ServiceSection {
             service_type,
+            standard_output: "null".into(),
+            standard_error: "null".into(),
             ..Default::default()
         };
         if let Some(command) = ExecCommand::parse(exec_start) {
@@ -1954,6 +1969,13 @@ mod tests {
     }
 
     fn make_service_with_section(name: &str, section: ServiceSection) -> UnitRecord {
+        let mut section = section;
+        if section.standard_output.is_empty() {
+            section.standard_output = "null".into();
+        }
+        if section.standard_error.is_empty() {
+            section.standard_error = "null".into();
+        }
         let loaded = LoadedUnit::Service(Box::new(ParsedUnit {
             name: name.to_owned(),
             source_path: PathBuf::from(format!("/fake/{name}")),
@@ -1966,6 +1988,29 @@ mod tests {
 
     fn shell_command(script: &str) -> ExecCommand {
         ExecCommand::parse(&format!("/bin/sh -c '{script}'")).unwrap()
+    }
+
+    #[test]
+    fn journal_stdio_connect_failure_fails_activation() {
+        let mut section = ServiceSection {
+            service_type: ServiceType::Simple,
+            standard_output: "journal".into(),
+            standard_error: "null".into(),
+            ..Default::default()
+        };
+        section.exec_start.push(shell_command("true"));
+        let mut record = make_service_with_section("journal-missing.service", section);
+        std::env::set_var(
+            "RUSTD_JOURNAL_STDOUT",
+            "/tmp/rustd-journal-stdout-definitely-missing",
+        );
+        let error = activate(&mut record, &[]).unwrap_err();
+        std::env::remove_var("RUSTD_JOURNAL_STDOUT");
+        assert!(
+            error.to_string().contains("failed to connect"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(record.state, UnitState::Failed);
     }
 
     #[test]

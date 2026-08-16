@@ -16,7 +16,8 @@
 //! - `KEY\n` followed by a little-endian `uint64_t` length, followed by
 //!   `length` raw bytes, followed by `\n` — binary / large value.
 //!
-//! Fields that start with `_` are trusted metadata; others are user-supplied.
+//! Fields that start with `_` are trusted metadata and are never accepted from
+//! the sender. Peer `_PID`/`_UID`/`_GID` come from `SCM_CREDENTIALS`.
 
 use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt as _;
@@ -58,11 +59,23 @@ impl JournalReceiver {
     /// Returns an error if the socket path already exists, the socket cannot
     /// be bound, or its nonblocking mode or permissions cannot be configured.
     pub fn bind_at(path: &Path, sink: Arc<JournalSink>) -> anyhow::Result<Self> {
+        if path.exists() {
+            return Err(anyhow::anyhow!(
+                "journal datagram socket already exists: {}",
+                path.display()
+            ));
+        }
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let socket = UnixDatagram::bind(path)
             .map_err(|error| anyhow::anyhow!("bind journal socket {}: {error}", path.display()))?;
         let path_guard = SocketPathGuard::capture(path)?;
         socket.set_nonblocking(true)?;
+        // World-writable for unprivileged local clients; identity is recovered
+        // from SCM_CREDENTIALS, never from the payload.
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
+        enable_passcred(socket.as_raw_fd())?;
 
         let raw = socket.into_raw_fd();
         let socket = unsafe { OwnedFd::from_raw_fd(raw) };
@@ -81,29 +94,70 @@ impl JournalReceiver {
     }
 }
 
+fn enable_passcred(fd: RawFd) -> anyhow::Result<()> {
+    let enable: libc::c_int = 1;
+    let result = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_PASSCRED,
+            std::ptr::addr_of!(enable).cast(),
+            std::mem::size_of_val(&enable) as libc::socklen_t,
+        )
+    };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "setsockopt(SO_PASSCRED) failed: {}",
+            std::io::Error::last_os_error()
+        ))
+    }
+}
+
 impl IoHandler for JournalReceiver {
     fn on_io(&mut self, _fd: i32, _events: u32) {
         let mut buf = vec![0u8; JOURNAL_RECV_BUF];
         loop {
-            let n =
-                unsafe { rustd_journal_socket_recv(self.fd, buf.as_mut_ptr().cast(), buf.len()) };
+            let mut pid: libc::pid_t = 0;
+            let mut uid: libc::uid_t = libc::uid_t::MAX;
+            let mut gid: libc::gid_t = libc::gid_t::MAX;
+            let n = unsafe {
+                rustd_journal_socket_recv(
+                    self.fd,
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
+                    std::ptr::addr_of_mut!(pid),
+                    std::ptr::addr_of_mut!(uid),
+                    std::ptr::addr_of_mut!(gid),
+                )
+            };
             if n <= 0 {
                 break;
             }
             #[allow(clippy::cast_sign_loss)]
             let data = &buf[..n as usize];
-            if let Some(entry) = parse_datagram(data) {
+            let peer = if pid > 0 && uid != libc::uid_t::MAX {
+                Some((pid, uid, gid))
+            } else {
+                None
+            };
+            if let Some(entry) = parse_datagram_with_peer(data, peer) {
                 self.sink.record(entry);
             }
         }
     }
 }
 
+#[cfg(test)]
 fn parse_datagram(data: &[u8]) -> Option<JournalEntry> {
     parse_datagram_with_peer(data, None)
 }
 
-fn parse_datagram_with_peer(data: &[u8], peer: Option<(libc::pid_t, libc::uid_t, libc::gid_t)>) -> Option<JournalEntry> {
+fn parse_datagram_with_peer(
+    data: &[u8],
+    peer: Option<(libc::pid_t, libc::uid_t, libc::gid_t)>,
+) -> Option<JournalEntry> {
     let mut fields: HashMap<String, Vec<u8>> = HashMap::new();
     let mut pos = 0usize;
 
@@ -262,5 +316,17 @@ mod tests {
             entry.fields.get("_TRANSPORT").map(Vec::as_slice),
             Some(b"journal".as_slice())
         );
+    }
+
+    #[test]
+    fn bind_rejects_preexisting_socket_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("socket");
+        let _holder = UnixDatagram::bind(&path).unwrap();
+        let ring = Arc::new(Mutex::new(EntryRing::new(8)));
+        let err = JournalReceiver::bind_at(&path, JournalSink::in_memory(ring))
+            .err()
+            .expect("preexisting path must fail");
+        assert!(err.to_string().contains("already exists"));
     }
 }
