@@ -20,7 +20,7 @@ TARGET_DIR ?= target
 RELEASE_DIR := $(TARGET_DIR)/release
 IDRIS2 ?= $(shell command -v idris2 2>/dev/null || find $(HOME)/.local/state/pack -name idris2 -type f -executable 2>/dev/null | head -1)
 
-.PHONY: all build test check-native check-rust check-formal check-packaging check-reproducible clean install release boot-smoke certify
+.PHONY: all build test check-native check-rust check-formal check-packaging check-reproducible clean install release boot-smoke certify installed-certification performance-promotion
 
 all: build
 
@@ -70,7 +70,7 @@ check-formal:
 	agda -i formal/agda formal/agda/RustD/Job/Ordering.agda
 
 check-packaging:
-	bash -n scripts/boot-smoke.sh scripts/install-rustd-names.sh scripts/check-reproducible-release.sh
+	bash -n scripts/boot-smoke.sh scripts/install-rustd-names.sh scripts/check-reproducible-release.sh scripts/installed-certification.sh scripts/performance-promotion.sh
 	python3 -m py_compile scripts/executable_contract.py scripts/install-executable-surfaces.py
 	@set -eu; \
 	work=$$(mktemp -d); \
@@ -116,4 +116,10 @@ release: build test check-formal check-reproducible
 boot-smoke:
 	bash scripts/boot-smoke.sh
 
-certify: release boot-smoke
+installed-certification:
+	bash scripts/installed-certification.sh
+
+performance-promotion:
+	bash scripts/performance-promotion.sh
+
+certify: release boot-smoke installed-certification
