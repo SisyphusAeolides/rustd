@@ -24,6 +24,7 @@ pub struct Session {
     pub locked: bool,
 }
 
+#[must_use]
 pub fn root() -> PathBuf {
     std::env::var_os("RUSTD_LOGIND_RUNTIME")
         .map(PathBuf::from)
@@ -95,6 +96,11 @@ impl Session {
     }
 }
 
+/// Ensure session/user/seat runtime directories exist.
+///
+/// # Errors
+///
+/// Returns an error when a runtime directory cannot be created.
 pub fn prepare() -> io::Result<()> {
     for kind in ["sessions", "users", "seats"] {
         fs::create_dir_all(directory(kind))?;
@@ -102,13 +108,15 @@ pub fn prepare() -> io::Result<()> {
     Ok(())
 }
 
+/// Load every session record under the logind runtime root.
+#[must_use]
 pub fn sessions() -> Vec<Session> {
     let mut result = fs::read_dir(directory("sessions"))
         .into_iter()
         .flatten()
         .flatten()
         .filter_map(|entry| {
-            entry.file_type().ok().filter(|kind| kind.is_file())?;
+            entry.file_type().ok().filter(std::fs::FileType::is_file)?;
             Some(Session::from_map(
                 entry.file_name().to_string_lossy().into_owned(),
                 parse(&entry.path()),
@@ -119,12 +127,19 @@ pub fn sessions() -> Vec<Session> {
     result
 }
 
+/// Load one session by id, if present.
+#[must_use]
 pub fn session(id: &str) -> Option<Session> {
     let path = directory("sessions").join(id);
     path.is_file()
         .then(|| Session::from_map(id.to_owned(), parse(&path)))
 }
 
+/// Persist a session record and refresh user/seat summaries.
+///
+/// # Errors
+///
+/// Returns an error when directories or session files cannot be written.
 pub fn save(session: &Session) -> io::Result<()> {
     prepare()?;
     atomic_write(
@@ -134,6 +149,12 @@ pub fn save(session: &Session) -> io::Result<()> {
     rebuild_summaries()
 }
 
+/// Remove a session record and refresh summaries.
+///
+/// # Errors
+///
+/// Returns an error when the session file cannot be removed or summaries
+/// cannot be rewritten.
 pub fn remove(id: &str) -> io::Result<()> {
     let path = directory("sessions").join(id);
     if path.exists() {
@@ -142,6 +163,11 @@ pub fn remove(id: &str) -> io::Result<()> {
     rebuild_summaries()
 }
 
+/// Rebuild `/run/rustd/users` and `/run/rustd/seats` from session files.
+///
+/// # Errors
+///
+/// Returns an error when summary directories or files cannot be rewritten.
 pub fn rebuild_summaries() -> io::Result<()> {
     prepare()?;
     for kind in ["users", "seats"] {
@@ -190,6 +216,8 @@ pub fn rebuild_summaries() -> io::Result<()> {
     Ok(())
 }
 
+/// Escape a value for use in a D-Bus object path component.
+#[must_use]
 pub fn object_component(value: &str) -> String {
     value.bytes().fold(String::new(), |mut output, byte| {
         if byte.is_ascii_alphanumeric() || byte == b'_' {
@@ -202,12 +230,20 @@ pub fn object_component(value: &str) -> String {
     })
 }
 
+/// D-Bus object path for a session id.
+#[must_use]
 pub fn session_path(id: &str) -> String {
     format!("/org/freedesktop/login1/session/{}", object_component(id))
 }
+
+/// D-Bus object path for a user id.
+#[must_use]
 pub fn user_path(uid: u32) -> String {
     format!("/org/freedesktop/login1/user/{uid}")
 }
+
+/// D-Bus object path for a seat id.
+#[must_use]
 pub fn seat_path(id: &str) -> String {
     format!("/org/freedesktop/login1/seat/{}", object_component(id))
 }

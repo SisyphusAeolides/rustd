@@ -77,6 +77,12 @@ impl Device {
         })
     }
 
+    /// Build a device record from a sysfs path.
+    ///
+    /// # Errors
+    ///
+    /// Currently always succeeds; the `Result` is retained for call-site
+    /// compatibility with future I/O that may fail while reading sysfs.
     pub fn from_syspath(action: &str, syspath: &Path) -> io::Result<Self> {
         let syspath = syspath
             .canonicalize()
@@ -146,6 +152,11 @@ pub struct Rule {
     pub line: usize,
 }
 
+/// Load udev rules from the standard rule directories.
+///
+/// # Errors
+///
+/// Returns an error when a rules directory exists but cannot be read.
 pub fn load_rules() -> io::Result<Vec<Rule>> {
     let mut files = BTreeMap::<String, PathBuf>::new();
     // Entries overwrite earlier paths: /run > /etc > /usr/lib.
@@ -171,6 +182,11 @@ pub fn load_rules() -> io::Result<Vec<Rule>> {
     Ok(rules)
 }
 
+/// Parse one `.rules` file into rule records.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be read.
 pub fn parse_rule_file(path: &Path) -> io::Result<Vec<Rule>> {
     let text = fs::read_to_string(path)?;
     let mut rules = Vec::new();
@@ -192,6 +208,12 @@ pub fn parse_rule_file(path: &Path) -> io::Result<Vec<Rule>> {
     Ok(rules)
 }
 
+/// Parse a single udev rule line into tokens.
+///
+/// # Errors
+///
+/// Returns an error string when the line has unbalanced quotes or an
+/// unrecognized key/operator form.
 pub fn parse_rule_line(line: &str) -> Result<Vec<Token>, String> {
     let mut fields = Vec::new();
     let mut start = 0;
@@ -479,7 +501,14 @@ fn expand(value: &str, device: &Device) -> String {
     result
 }
 
+/// Create device nodes/symlinks and write the `/run/udev/data` record.
+///
+/// # Errors
+///
+/// Returns an error when node creation or database writes fail.
 pub fn persist_device(device: &Device) -> io::Result<()> {
+    use std::fmt::Write as _;
+
     fs::create_dir_all("/run/udev/data")?;
     if device.action == "remove" {
         remove_device(device);
@@ -494,16 +523,16 @@ pub fn persist_device(device: &Device) -> io::Result<()> {
     let id = database_id(device);
     let mut data = format!("P:{}\n", device.devpath);
     if let Some(node) = device_node(device) {
-        data.push_str(&format!("N:{}\n", node.trim_start_matches("/dev/")));
+        let _ = writeln!(data, "N:{}", node.trim_start_matches("/dev/"));
     }
     for link in &device.symlinks {
-        data.push_str(&format!("S:{link}\n"));
+        let _ = writeln!(data, "S:{link}");
     }
     for tag in &device.tags {
-        data.push_str(&format!("G:{tag}\n"));
+        let _ = writeln!(data, "G:{tag}");
     }
     for (key, value) in &device.properties {
-        data.push_str(&format!("E:{key}={value}\n"));
+        let _ = writeln!(data, "E:{key}={value}");
     }
     fs::write(Path::new("/run/udev/data").join(id), data)
 }

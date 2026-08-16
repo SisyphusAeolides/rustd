@@ -25,11 +25,11 @@ struct Manager {
     next_session: AtomicU64,
 }
 
+type SessionListEntry = (String, u32, String, String, String, OwnedObjectPath);
+
 #[interface(name = "org.freedesktop.login1.Manager")]
 impl Manager {
-    fn list_sessions(
-        &self,
-    ) -> zbus::fdo::Result<Vec<(String, u32, String, String, String, OwnedObjectPath)>> {
+    fn list_sessions(&self) -> zbus::fdo::Result<Vec<SessionListEntry>> {
         logind::sessions()
             .into_iter()
             .map(|session| {
@@ -95,21 +95,22 @@ impl Manager {
 
     /// Minimal `CreateSession` compatible entry point. The final `properties`
     /// array is accepted but currently ignored; PAM supplies the other fields.
+    #[allow(clippy::too_many_arguments)]
     async fn create_session(
         &self,
         uid: u32,
-        _pid: u32,
+        pid: u32,
         service: String,
         session_type: String,
         class: String,
         seat: String,
-        _vtnr: u32,
+        vtnr: u32,
         tty: String,
-        _display: String,
-        _remote: bool,
-        _remote_user: String,
-        _remote_host: String,
-        _properties: Vec<(String, zbus::zvariant::OwnedValue)>,
+        display: String,
+        remote: bool,
+        remote_user: String,
+        remote_host: String,
+        properties: Vec<(String, zbus::zvariant::OwnedValue)>,
         #[zbus(connection)] connection: &zbus::Connection,
     ) -> zbus::fdo::Result<(
         String,
@@ -119,6 +120,15 @@ impl Manager {
         String,
         OwnedObjectPath,
     )> {
+        let _ = (
+            pid,
+            vtnr,
+            display,
+            remote,
+            remote_user,
+            remote_host,
+            properties,
+        );
         let number = self.next_session.fetch_add(1, Ordering::Relaxed) + 1;
         let id = format!("rustd-{uid}-{number}");
         let user = passwd_name(uid).unwrap_or_else(|| uid.to_string());
@@ -211,11 +221,12 @@ impl Manager {
     }
     fn inhibit(
         &self,
-        _what: String,
-        _who: String,
-        _why: String,
-        _mode: String,
+        what: String,
+        who: String,
+        why: String,
+        mode: String,
     ) -> zbus::fdo::Result<zbus::zvariant::OwnedFd> {
+        let _ = (what, who, why, mode);
         Err(zbus::fdo::Error::NotSupported(
             "inhibitor file descriptors are not implemented".into(),
         ))
@@ -232,8 +243,12 @@ impl Manager {
     fn can_hibernate(&self) -> &str {
         "no"
     }
-    fn prepare_for_shutdown(&self, _active: bool) {}
-    fn prepare_for_sleep(&self, _active: bool) {}
+    fn prepare_for_shutdown(&self, active: bool) {
+        let _ = active;
+    }
+    fn prepare_for_sleep(&self, active: bool) {
+        let _ = active;
+    }
 }
 
 fn set_locked(id: &str, locked: bool) -> zbus::fdo::Result<()> {
@@ -274,11 +289,13 @@ impl SessionObject {
     }
     #[zbus(property)]
     fn tty(&self) -> String {
-        logind::session(&self.id).map_or_default(|s| s.tty)
+        logind::session(&self.id).map(|s| s.tty).unwrap_or_default()
     }
     #[zbus(property)]
     fn service(&self) -> String {
-        logind::session(&self.id).map_or_default(|s| s.service)
+        logind::session(&self.id)
+            .map(|s| s.service)
+            .unwrap_or_default()
     }
     #[zbus(property)]
     fn locked_hint(&self) -> bool {
@@ -300,7 +317,8 @@ impl UserObject {
         logind::sessions()
             .into_iter()
             .find(|s| s.uid == self.uid)
-            .map_or_default(|s| s.user)
+            .map(|s| s.user)
+            .unwrap_or_default()
     }
     #[zbus(property)]
     fn state(&self) -> &str {
