@@ -1259,6 +1259,7 @@ fn run_command_list(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_command(
     unit_name: &str,
     section: &ServiceSection,
@@ -1538,8 +1539,6 @@ fn spawn_command(
         let fd = stream.as_raw_fd();
         stdout_stream = Some(stream);
         fd
-    } else if section.standard_output.eq_ignore_ascii_case("null") {
-        -1
     } else {
         -1
     };

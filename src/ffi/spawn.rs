@@ -250,10 +250,12 @@ mod tests {
     #[test]
     fn production_spawn_sources_never_call_fork() {
         let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let call = regex_lite_fork_call();
         for relative in ["ffi/spawn.c", "ffi/spawn_helper.c"] {
             let source = fs::read_to_string(manifest.join(relative)).unwrap();
-            assert!(!call.is_match(&source), "{relative} must not call fork()");
+            assert!(
+                !ForkCallPattern::is_match(&source),
+                "{relative} must not call fork()"
+            );
         }
 
         let spawn_c = fs::read_to_string(manifest.join("ffi/spawn.c")).unwrap();
@@ -264,7 +266,7 @@ mod tests {
         let end = body.find("\n}\n").expect("rustd_spawn closing brace") + 3;
         let function = &body[..end];
         assert!(
-            !call.is_match(function),
+            !ForkCallPattern::is_match(function),
             "production rustd_spawn must not call fork"
         );
         assert!(
@@ -284,14 +286,10 @@ mod tests {
             .any(|line| line.contains("posix_spawn"))
     }
 
-    fn regex_lite_fork_call() -> ForkCallPattern {
-        ForkCallPattern
-    }
-
     struct ForkCallPattern;
 
     impl ForkCallPattern {
-        fn is_match(&self, source: &str) -> bool {
+        fn is_match(source: &str) -> bool {
             let without_blocks = strip_block_comments(source);
             for line in without_blocks.lines() {
                 let code = line.split("//").next().unwrap_or(line);

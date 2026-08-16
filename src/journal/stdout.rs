@@ -73,9 +73,11 @@ struct WorkerPool {
     active: Arc<AtomicUsize>,
 }
 
+type WorkerPoolSlot = Option<(usize, Arc<WorkerPool>)>;
+
 impl WorkerPool {
     fn global(sink: Arc<JournalSink>) -> Arc<Self> {
-        static POOL: OnceLock<Mutex<Option<(usize, Arc<WorkerPool>)>>> = OnceLock::new();
+        static POOL: OnceLock<Mutex<WorkerPoolSlot>> = OnceLock::new();
         let sink_addr = Arc::as_ptr(&sink) as usize;
         let slot = POOL.get_or_init(|| Mutex::new(None));
         let mut guard = slot
@@ -540,7 +542,7 @@ mod tests {
         let mut w = unsafe { UnixStream::from_raw_fd(fds[1]) };
         write!(w, "id\nunit\n6\n0\n0\n\n0\n").unwrap();
         let huge = "x".repeat(MAX_MESSAGE_LINE_BYTES + 8);
-        write!(w, "{huge}\n").unwrap();
+        writeln!(w, "{huge}").unwrap();
         drop(w);
         serve_connection(
             fds[0],

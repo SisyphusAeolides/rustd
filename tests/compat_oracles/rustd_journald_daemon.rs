@@ -33,7 +33,7 @@ fn isolated_daemon_persists_datagram_and_stdout_entries_then_exits_on_sigterm() 
 
     let mut stdout = UnixStream::connect(&stdout_path).expect("connect journal stdout");
     stdout
-        .write_all(b"integration-test\nexample.service\n4\nstdout message\n")
+        .write_all(b"integration-test\nexample.service\n4\n0\n0\n\n0\nstdout message\n")
         .expect("write journal stdout stream");
     drop(stdout);
 
