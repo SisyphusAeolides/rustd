@@ -588,7 +588,7 @@ fn pretty_sample(name: &str, id: Id128) -> String {
             .collect::<Vec<_>>()
             .join(",");
     format!(
-        "As string:\n{}\n\nAs UUID:\n{}\n\nAs systemd-id128(1) macro:\n#define {} RUSTD_ID128_MAKE({})\n\nAs Python constant:\n>>> import uuid\n>>> {} = uuid.UUID('{}')\n",
+        "As string:\n{}\n\nAs UUID:\n{}\n\nAs systemd-id128(1) macro:\n#define {} SD_ID128_MAKE({})\n\nAs Python constant:\n>>> import uuid\n>>> {} = uuid.UUID('{}')\n",
         id.plain(),
         id.uuid(),
         identifier,

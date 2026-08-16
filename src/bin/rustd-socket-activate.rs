@@ -47,7 +47,7 @@ const HELP: &[u8] = concat!(
     "     --fdname=NAME[:NAME...] Specify names for file descriptors\n",
     "     --inetd                 Enable inetd file descriptor passing protocol\n",
     "     --now                   Start instantly instead of waiting for connection\n\n",
-    "Note: file descriptors from rustd_listen_fds() will be passed through.\n\n",
+    "Note: file descriptors from sd_listen_fds() will be passed through.\n\n",
     "See the systemd-socket-activate(1) man page for details.\n"
 )
 .as_bytes();
