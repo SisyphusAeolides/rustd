@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! `org.freedesktop.systemd1.Manager` D-Bus interface.
+//! `io.rustd.Manager1.Manager` D-Bus interface.
 //!
 //! Upstream reference: `src/core/dbus-manager.c` (v261)
 
@@ -289,7 +289,7 @@ pub(crate) enum SetUnitProperty {
 /// Errors returned by the Manager `SetUnitProperties` method and its
 /// manager-loop request queue.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 pub(crate) enum SetUnitPropertiesError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -299,11 +299,11 @@ pub(crate) enum SetUnitPropertiesError {
     Failed(String),
     #[zbus(name = "DBus.Error.PropertyReadOnly")]
     PropertyReadOnly(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.BadUnitSetting")]
+    #[zbus(name = "Manager1.BadUnitSetting")]
     BadUnitSetting(String),
-    #[zbus(name = "systemd1.UnitMasked")]
+    #[zbus(name = "Manager1.UnitMasked")]
     UnitMasked(String),
 }
 
@@ -458,7 +458,7 @@ pub type FileDescriptorStoreEntry = (String, u32, u32, u32, u64, u32, u32, Strin
 /// The standard Manager interface uses both freedesktop D-Bus errors and the
 /// systemd-specific `UnitMasked` error for these methods.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum UnitFileMethodError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -466,13 +466,13 @@ enum UnitFileMethodError {
     FileNotFound(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.UnitMasked")]
+    #[zbus(name = "Manager1.UnitMasked")]
     UnitMasked(String),
 }
 
 /// Errors returned by `SetDefaultTarget`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum SetDefaultTargetMethodError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -480,17 +480,17 @@ enum SetDefaultTargetMethodError {
     AccessDenied(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.UnitExists")]
+    #[zbus(name = "Manager1.UnitExists")]
     UnitExists(String),
-    #[zbus(name = "systemd1.UnitMasked")]
+    #[zbus(name = "Manager1.UnitMasked")]
     UnitMasked(String),
 }
 
 /// Errors returned by Manager unit-file mask operations.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum UnitFileMutationError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -498,7 +498,7 @@ enum UnitFileMutationError {
     AccessDenied(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.UnitExists")]
+    #[zbus(name = "Manager1.UnitExists")]
     UnitExists(String),
 }
 
@@ -524,7 +524,7 @@ impl From<UnitFileLookupError> for UnitFileMutationError {
 
 /// Errors returned by `EnableUnitFiles`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum UnitFileEnableError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -532,17 +532,17 @@ enum UnitFileEnableError {
     AccessDenied(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.UnitExists")]
+    #[zbus(name = "Manager1.UnitExists")]
     UnitExists(String),
-    #[zbus(name = "systemd1.UnitMasked")]
+    #[zbus(name = "Manager1.UnitMasked")]
     UnitMasked(String),
 }
 
 /// Errors returned by `AddDependencyUnitFiles`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum AddDependencyUnitFilesError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -550,13 +550,13 @@ enum AddDependencyUnitFilesError {
     AccessDenied(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.UnitExists")]
+    #[zbus(name = "Manager1.UnitExists")]
     UnitExists(String),
-    #[zbus(name = "systemd1.UnitMasked")]
+    #[zbus(name = "Manager1.UnitMasked")]
     UnitMasked(String),
-    #[zbus(name = "systemd1.BadUnitSetting")]
+    #[zbus(name = "Manager1.BadUnitSetting")]
     BadUnitSetting(String),
 }
 
@@ -624,7 +624,7 @@ impl From<UnitFileLookupError> for UnitFileEnableError {
 
 /// Errors returned by `DisableUnitFiles`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum UnitFileDisableError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -632,7 +632,7 @@ enum UnitFileDisableError {
     AccessDenied(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
 }
 
@@ -744,9 +744,9 @@ impl From<UnitFileLookupError> for UnitFileLinksMethodError {
 /// `GetJob`, `GetJobAfter`, and `GetJobBefore` all use the same
 /// systemd-specific error when the requested live job has disappeared.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum JobMethodError {
-    #[zbus(name = "systemd1.NoSuchJob")]
+    #[zbus(name = "Manager1.NoSuchJob")]
     NoSuchJob(String),
     #[zbus(name = "DBus.Error.AccessDenied")]
     AccessDenied(String),
@@ -756,11 +756,11 @@ enum JobMethodError {
 
 /// Errors returned by `GetUnitByControlGroup`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum CgroupLookupError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
@@ -768,13 +768,13 @@ enum CgroupLookupError {
 
 /// Errors returned by the Manager dynamic-user query methods.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum DynamicUserMethodError {
     #[zbus(name = "DBus.Error.NotSupported")]
     NotSupported(String),
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
-    #[zbus(name = "systemd1.NoSuchDynamicUser")]
+    #[zbus(name = "Manager1.NoSuchDynamicUser")]
     NoSuchDynamicUser(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
@@ -782,7 +782,7 @@ enum DynamicUserMethodError {
 
 /// Errors returned by the Manager diagnostic-dump methods.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum DumpMethodError {
     #[zbus(name = "DBus.Error.LimitsExceeded")]
     LimitsExceeded(String),
@@ -792,37 +792,37 @@ enum DumpMethodError {
 
 /// Errors returned by `GetUnitByPIDFD`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum PidFdLookupError {
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.NoUnitForPID")]
+    #[zbus(name = "Manager1.NoUnitForPID")]
     NoUnitForPid(String),
-    #[zbus(name = "systemd1.NoSuchProcess")]
+    #[zbus(name = "Manager1.NoSuchProcess")]
     NoSuchProcess(String),
 }
 
 /// Errors returned by `GetUnitByPID`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum PidLookupError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.NoUnitForPID")]
+    #[zbus(name = "Manager1.NoUnitForPID")]
     NoUnitForPid(String),
 }
 
 /// Errors returned by `GetUnitByInvocationID`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum InvocationIdLookupError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.NoUnitForInvocationID")]
+    #[zbus(name = "Manager1.NoUnitForInvocationID")]
     NoUnitForInvocationId(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
@@ -830,7 +830,7 @@ enum InvocationIdLookupError {
 
 /// Errors returned by `KillUnit`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum KillUnitMethodError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -840,15 +840,15 @@ enum KillUnitMethodError {
     Failed(String),
     #[zbus(name = "DBus.Error.NotSupported")]
     NotSupported(String),
-    #[zbus(name = "systemd1.NoSuchProcess")]
+    #[zbus(name = "Manager1.NoSuchProcess")]
     NoSuchProcess(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
 }
 
 /// Errors returned by `FreezeUnit` and `ThawUnit`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum FreezerMethodError {
     #[zbus(name = "DBus.Error.AccessDenied")]
     AccessDenied(String),
@@ -856,19 +856,19 @@ enum FreezerMethodError {
     Failed(String),
     #[zbus(name = "DBus.Error.NotSupported")]
     NotSupported(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.UnitBusy")]
+    #[zbus(name = "Manager1.UnitBusy")]
     UnitBusy(String),
-    #[zbus(name = "systemd1.UnitInactive")]
+    #[zbus(name = "Manager1.UnitInactive")]
     UnitInactive(String),
-    #[zbus(name = "systemd1.FrozenByParent")]
+    #[zbus(name = "Manager1.FrozenByParent")]
     FrozenByParent(String),
 }
 
 /// Errors returned by delegated cgroup process migration and removal.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum CgroupDelegationMethodError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -878,11 +878,11 @@ enum CgroupDelegationMethodError {
     Failed(String),
     #[zbus(name = "DBus.Error.UnixProcessIdUnknown")]
     UnixProcessIdUnknown(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.BadUnitSetting")]
+    #[zbus(name = "Manager1.BadUnitSetting")]
     BadUnitSetting(String),
-    #[zbus(name = "systemd1.UnitMasked")]
+    #[zbus(name = "Manager1.UnitMasked")]
     UnitMasked(String),
 }
 
@@ -947,9 +947,9 @@ impl KillWhom {
 
 /// Errors returned by `GetUnit`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum UnitLookupError {
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
@@ -957,7 +957,7 @@ enum UnitLookupError {
 
 /// Errors returned by `RefUnit` and `UnrefUnit`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum UnitReferenceMethodError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -965,19 +965,19 @@ enum UnitReferenceMethodError {
     AccessDenied(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.BadUnitSetting")]
+    #[zbus(name = "Manager1.BadUnitSetting")]
     BadUnitSetting(String),
-    #[zbus(name = "systemd1.UnitMasked")]
+    #[zbus(name = "Manager1.UnitMasked")]
     UnitMasked(String),
-    #[zbus(name = "systemd1.NotReferenced")]
+    #[zbus(name = "Manager1.NotReferenced")]
     NotReferenced(String),
 }
 
 /// Errors returned by `EnqueueUnitJob` after validating the requested job.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum EnqueueUnitJobError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -985,13 +985,13 @@ enum EnqueueUnitJobError {
     AccessDenied(String),
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
 }
 
 /// Errors returned by `LoadUnit` before the manager creates its object.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum LoadUnitError {
     #[zbus(name = "DBus.Error.InvalidArgs")]
     InvalidArgs(String),
@@ -1001,21 +1001,21 @@ enum LoadUnitError {
 
 /// Errors returned by `DumpUnitFileDescriptorStore`.
 #[derive(Debug, zbus::DBusError)]
-#[zbus(prefix = "org.freedesktop")]
+#[zbus(prefix = "io.rustd")]
 enum FileDescriptorStoreMethodError {
     #[zbus(name = "DBus.Error.Failed")]
     Failed(String),
     #[zbus(name = "DBus.Error.NotSupported")]
     NotSupported(String),
-    #[zbus(name = "systemd1.NoSuchUnit")]
+    #[zbus(name = "Manager1.NoSuchUnit")]
     NoSuchUnit(String),
-    #[zbus(name = "systemd1.FileDescriptorStoreDisabled")]
+    #[zbus(name = "Manager1.FileDescriptorStoreDisabled")]
     Disabled(String),
 }
 
 // ── ManagerInterface ──────────────────────────────────────────────────────
 
-/// The `org.freedesktop.systemd1.Manager` interface object.
+/// The `io.rustd.Manager1.Manager` interface object.
 pub struct ManagerInterface {
     /// Manager scope selecting system or user lookup paths.
     pub scope: ManagerScope,
@@ -1119,7 +1119,7 @@ fn default_rlimit(
     }
 }
 
-#[interface(name = "org.freedesktop.systemd1.Manager")]
+#[interface(name = "io.rustd.Manager1.Manager")]
 impl ManagerInterface {
     // ── properties ────────────────────────────────────────────────────
 
@@ -4520,19 +4520,19 @@ impl ManagerInterface {
     }
 }
 
-/// Registered Manager interface with v261-compatible introspection.
+/// Registered manager interface with stable RustD introspection.
 ///
 /// zbus 4.0.1 derives an input argument's introspection name from the Rust
 /// identifier. Rust requires the `type` argument in
-/// `AddDependencyUnitFiles` to be written as `r#type`, but systemd v261
-/// publishes the argument as `type`. This forwarding interface keeps zbus's
-/// generated dispatch while correcting that documentation-only spelling.
-pub struct ManagerInterfaceV261 {
+/// `AddDependencyUnitFiles` to be written as `r#type`. This forwarding
+/// interface keeps zbus's generated dispatch while exposing the API argument
+/// as `type`.
+pub struct ManagerInterfaceApi {
     inner: ManagerInterface,
 }
 
-impl ManagerInterfaceV261 {
-    /// Wrap a Manager implementation for registration on the v261 D-Bus API.
+impl ManagerInterfaceApi {
+    /// Wrap a manager implementation for registration on the RustD D-Bus API.
     #[must_use]
     pub fn new(inner: ManagerInterface) -> Self {
         Self { inner }
@@ -4540,7 +4540,7 @@ impl ManagerInterfaceV261 {
 }
 
 #[zbus::export::async_trait::async_trait]
-impl zbus::object_server::Interface for ManagerInterfaceV261 {
+impl zbus::object_server::Interface for ManagerInterfaceApi {
     fn name() -> zbus::names::InterfaceName<'static> {
         <ManagerInterface as zbus::object_server::Interface>::name()
     }
@@ -5373,7 +5373,7 @@ fn systemd_architecture() -> &'static str {
 /// matching the upstream `bus_unit_path()` helper.
 pub fn unit_path(name: &str) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
     let escaped = escape_unit_name(name);
-    let path = format!("/org/freedesktop/systemd1/unit/{escaped}");
+    let path = format!("/io/rustd/Manager1/unit/{escaped}");
     zbus::zvariant::OwnedObjectPath::try_from(path)
         .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))
 }
@@ -5385,10 +5385,7 @@ pub fn unit_path(name: &str) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPat
 pub fn invocation_id_path(
     invocation_id: &[u8; 16],
 ) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
-    let path = format!(
-        "/org/freedesktop/systemd1/unit/_{}",
-        format_id128(invocation_id)
-    );
+    let path = format!("/io/rustd/Manager1/unit/_{}", format_id128(invocation_id));
     zbus::zvariant::OwnedObjectPath::try_from(path)
         .map_err(|error| zbus::fdo::Error::InvalidArgs(error.to_string()))
 }
@@ -5801,7 +5798,7 @@ fn nanoseconds_to_usec(nanoseconds: i64) -> u64 {
 
 /// Build the canonical numeric D-Bus object path for a job.
 pub fn job_path(id: u32) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
-    let path = format!("/org/freedesktop/systemd1/job/{id}");
+    let path = format!("/io/rustd/Manager1/job/{id}");
     zbus::zvariant::OwnedObjectPath::try_from(path)
         .map_err(|error| zbus::fdo::Error::InvalidArgs(error.to_string()))
 }
@@ -6285,7 +6282,7 @@ mod tests {
     #[test]
     fn unit_path_produces_valid_path() {
         let p = unit_path("systemd-journald.service").unwrap();
-        assert!(p.as_str().starts_with("/org/freedesktop/systemd1/unit/"));
+        assert!(p.as_str().starts_with("/io/rustd/Manager1/unit/"));
     }
 
     fn test_interface() -> (
@@ -6537,7 +6534,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             job_path(job.id).unwrap().as_str(),
-            "/org/freedesktop/systemd1/job/1"
+            "/io/rustd/Manager1/job/1"
         );
         assert_eq!(
             queue.lock().unwrap().pop_front().unwrap().kind,
@@ -6614,7 +6611,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             job_path(job.id).unwrap().as_str(),
-            "/org/freedesktop/systemd1/job/1"
+            "/io/rustd/Manager1/job/1"
         );
         assert_eq!(
             queue.lock().unwrap().pop_front().unwrap().kind,
@@ -7492,7 +7489,7 @@ mod tests {
         ] {
             assert_eq!(
                 zbus::DBusError::name(&error).as_str(),
-                "org.freedesktop.systemd1.NoSuchJob"
+                "io.rustd.Manager1.NoSuchJob"
             );
             assert_eq!(
                 zbus::DBusError::description(&error),
@@ -7524,7 +7521,7 @@ mod tests {
         let missing = interface.cancel_live_job(42).unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&missing).as_str(),
-            "org.freedesktop.systemd1.NoSuchJob"
+            "io.rustd.Manager1.NoSuchJob"
         );
         assert_eq!(
             zbus::DBusError::description(&missing),
@@ -7611,7 +7608,7 @@ mod tests {
         let missing = interface.get_unit_by_pid_for_pid(4321).unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&missing).as_str(),
-            "org.freedesktop.systemd1.NoUnitForPID"
+            "io.rustd.Manager1.NoUnitForPID"
         );
         assert_eq!(
             zbus::DBusError::description(&missing),
@@ -7644,7 +7641,7 @@ mod tests {
         let invalid = cgroup_interface.get_unit_by_pid_for_pid(-1).unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&invalid).as_str(),
-            "org.freedesktop.DBus.Error.InvalidArgs"
+            "io.rustd.DBus.Error.InvalidArgs"
         );
         assert_eq!(
             zbus::DBusError::description(&invalid),
@@ -7750,7 +7747,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&missing).as_str(),
-            "org.freedesktop.systemd1.NoUnitForPID"
+            "io.rustd.Manager1.NoUnitForPID"
         );
         let expected_missing = format!("PID {pid} does not belong to any loaded unit.");
         assert_eq!(
@@ -7764,7 +7761,7 @@ mod tests {
         let invalid = interface.get_unit_by_pidfd(normal_fd).unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&invalid).as_str(),
-            "org.freedesktop.DBus.Error.Failed"
+            "io.rustd.DBus.Error.Failed"
         );
         assert_eq!(
             zbus::DBusError::description(&invalid),
@@ -7823,7 +7820,7 @@ mod tests {
                 .unwrap_err();
             assert_eq!(
                 zbus::DBusError::name(&error).as_str(),
-                "org.freedesktop.DBus.Error.InvalidArgs"
+                "io.rustd.DBus.Error.InvalidArgs"
             );
             assert_eq!(
                 zbus::DBusError::description(&error),
@@ -7837,7 +7834,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&unknown).as_str(),
-            "org.freedesktop.systemd1.NoUnitForInvocationID"
+            "io.rustd.Manager1.NoUnitForInvocationID"
         );
         assert_eq!(
             zbus::DBusError::description(&unknown),
@@ -7859,7 +7856,7 @@ mod tests {
         let caller = interface.get_unit_by_invocation_id_for_pid(0).unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&caller).as_str(),
-            "org.freedesktop.systemd1.NoSuchUnit"
+            "io.rustd.Manager1.NoSuchUnit"
         );
         assert_eq!(
             zbus::DBusError::description(&caller),
@@ -7909,21 +7906,21 @@ mod tests {
                 "missing.service",
                 "all",
                 libc::SIGTERM,
-                "org.freedesktop.systemd1.NoSuchUnit",
+                "io.rustd.Manager1.NoSuchUnit",
                 "Unit missing.service not loaded.",
             ),
             (
                 "killable.service",
                 "invalid",
                 libc::SIGTERM,
-                "org.freedesktop.DBus.Error.InvalidArgs",
+                "io.rustd.DBus.Error.InvalidArgs",
                 "Invalid whom argument: invalid",
             ),
             (
                 "killable.service",
                 "all",
                 0,
-                "org.freedesktop.DBus.Error.InvalidArgs",
+                "io.rustd.DBus.Error.InvalidArgs",
                 "Signal number out of range.",
             ),
         ] {
@@ -7958,7 +7955,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&no_process).as_str(),
-            "org.freedesktop.systemd1.NoSuchProcess"
+            "io.rustd.Manager1.NoSuchProcess"
         );
         assert_eq!(
             zbus::DBusError::description(&no_process),
@@ -8133,7 +8130,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&missing).as_str(),
-            "org.freedesktop.systemd1.NoSuchUnit"
+            "io.rustd.Manager1.NoSuchUnit"
         );
         assert_eq!(
             zbus::DBusError::description(&missing),
@@ -8223,7 +8220,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&invalid_name).as_str(),
-            "org.freedesktop.DBus.Error.InvalidArgs"
+            "io.rustd.DBus.Error.InvalidArgs"
         );
         assert_eq!(
             zbus::DBusError::description(&invalid_name),
@@ -8234,7 +8231,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&invalid_path).as_str(),
-            "org.freedesktop.DBus.Error.InvalidArgs"
+            "io.rustd.DBus.Error.InvalidArgs"
         );
         assert_eq!(
             zbus::DBusError::description(&invalid_path),
@@ -8245,7 +8242,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&unknown_name).as_str(),
-            "org.freedesktop.systemd1.NoSuchDynamicUser"
+            "io.rustd.Manager1.NoSuchDynamicUser"
         );
         assert_eq!(
             zbus::DBusError::description(&unknown_name),
@@ -8254,7 +8251,7 @@ mod tests {
         let invalid_uid = interface.lookup_dynamic_user_by_uid(u32::MAX).unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&invalid_uid).as_str(),
-            "org.freedesktop.DBus.Error.InvalidArgs"
+            "io.rustd.DBus.Error.InvalidArgs"
         );
         assert_eq!(
             zbus::DBusError::description(&invalid_uid),
@@ -8263,7 +8260,7 @@ mod tests {
         let unknown_uid = interface.lookup_dynamic_user_by_uid(61_234).unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&unknown_uid).as_str(),
-            "org.freedesktop.systemd1.NoSuchDynamicUser"
+            "io.rustd.Manager1.NoSuchDynamicUser"
         );
         assert_eq!(
             zbus::DBusError::description(&unknown_uid),
@@ -8280,7 +8277,7 @@ mod tests {
         ] {
             assert_eq!(
                 zbus::DBusError::name(&error).as_str(),
-                "org.freedesktop.DBus.Error.NotSupported"
+                "io.rustd.DBus.Error.NotSupported"
             );
             assert_eq!(
                 zbus::DBusError::description(&error),
@@ -8354,7 +8351,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&disabled).as_str(),
-            "org.freedesktop.systemd1.FileDescriptorStoreDisabled"
+            "io.rustd.Manager1.FileDescriptorStoreDisabled"
         );
         assert_eq!(
             zbus::DBusError::description(&disabled),
@@ -8366,7 +8363,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&unsupported).as_str(),
-            "org.freedesktop.DBus.Error.NotSupported"
+            "io.rustd.DBus.Error.NotSupported"
         );
         assert_eq!(
             zbus::DBusError::description(&unsupported),
@@ -8378,7 +8375,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&missing).as_str(),
-            "org.freedesktop.systemd1.NoSuchUnit"
+            "io.rustd.Manager1.NoSuchUnit"
         );
         assert_eq!(
             zbus::DBusError::description(&missing),
@@ -8507,7 +8504,7 @@ mod tests {
         ] {
             assert_eq!(
                 zbus::DBusError::name(&error).as_str(),
-                "org.freedesktop.DBus.Error.LimitsExceeded"
+                "io.rustd.DBus.Error.LimitsExceeded"
             );
             assert_eq!(
                 zbus::DBusError::description(&error),
@@ -8624,7 +8621,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&missing).as_str(),
-            "org.freedesktop.systemd1.NoSuchUnit"
+            "io.rustd.Manager1.NoSuchUnit"
         );
         assert_eq!(
             zbus::DBusError::description(&missing),
@@ -8656,7 +8653,7 @@ mod tests {
                 .unwrap_err();
             assert_eq!(
                 zbus::DBusError::name(&error).as_str(),
-                "org.freedesktop.DBus.Error.InvalidArgs"
+                "io.rustd.DBus.Error.InvalidArgs"
             );
             assert_eq!(zbus::DBusError::description(&error), Some(description));
         }
@@ -8697,7 +8694,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&missing).as_str(),
-            "org.freedesktop.systemd1.NoSuchUnit"
+            "io.rustd.Manager1.NoSuchUnit"
         );
         assert_eq!(
             zbus::DBusError::description(&missing),
@@ -8774,7 +8771,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&not_referenced).as_str(),
-            "org.freedesktop.systemd1.NotReferenced"
+            "io.rustd.Manager1.NotReferenced"
         );
         assert_eq!(
             zbus::DBusError::description(&not_referenced),
@@ -8787,15 +8784,15 @@ mod tests {
         let masked = validate_reference_unit_load_state("foo.service", "masked").unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&masked).as_str(),
-            "org.freedesktop.systemd1.UnitMasked"
+            "io.rustd.Manager1.UnitMasked"
         );
         let invalid = validate_reference_unit_load_state("foo.service", "bad-setting").unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&invalid).as_str(),
-            "org.freedesktop.systemd1.BadUnitSetting"
+            "io.rustd.Manager1.BadUnitSetting"
         );
 
-        let interface = ManagerInterfaceV261::new(interface);
+        let interface = ManagerInterfaceApi::new(interface);
         let mut xml = String::new();
         zbus::Interface::introspect_to_writer(&interface, &mut xml, 0);
         for method in ["RefUnit", "UnrefUnit"] {
@@ -8831,7 +8828,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&missing).as_str(),
-            "org.freedesktop.DBus.Error.FileNotFound"
+            "io.rustd.DBus.Error.FileNotFound"
         );
         assert_eq!(
             zbus::DBusError::description(&missing),
@@ -8843,7 +8840,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             zbus::DBusError::name(&invalid).as_str(),
-            "org.freedesktop.DBus.Error.InvalidArgs"
+            "io.rustd.DBus.Error.InvalidArgs"
         );
         assert_eq!(
             zbus::DBusError::description(&invalid),
@@ -8853,7 +8850,7 @@ mod tests {
         let masked: UnitFileMethodError = UnitFileLookupError::DefaultTargetMasked.into();
         assert_eq!(
             zbus::DBusError::name(&masked).as_str(),
-            "org.freedesktop.systemd1.UnitMasked"
+            "io.rustd.Manager1.UnitMasked"
         );
     }
 
@@ -8935,7 +8932,7 @@ mod tests {
     #[test]
     fn manager_output_argument_names_match_v261() {
         let (interface, _, _, _) = test_interface();
-        let interface = ManagerInterfaceV261::new(interface);
+        let interface = ManagerInterfaceApi::new(interface);
         let mut xml = String::new();
         zbus::Interface::introspect_to_writer(&interface, &mut xml, 0);
 
@@ -8990,7 +8987,7 @@ mod tests {
     #[test]
     fn add_dependency_unit_files_matches_v261_signature_and_errors() {
         let (interface, _, _, _) = test_interface();
-        let interface = ManagerInterfaceV261::new(interface);
+        let interface = ManagerInterfaceApi::new(interface);
         let mut xml = String::new();
         zbus::Interface::introspect_to_writer(&interface, &mut xml, 0);
         let method = xml
@@ -9012,7 +9009,7 @@ mod tests {
         let invalid_type = AddDependencyUnitFilesError::InvalidArgs("Invalid argument".into());
         assert_eq!(
             zbus::DBusError::name(&invalid_type).as_str(),
-            "org.freedesktop.DBus.Error.InvalidArgs"
+            "io.rustd.DBus.Error.InvalidArgs"
         );
         let bad_target = AddDependencyUnitFilesError::from_lookup(
             UnitFileLookupError::InvalidName("bad".into()),
@@ -9020,7 +9017,7 @@ mod tests {
         );
         assert_eq!(
             zbus::DBusError::name(&bad_target).as_str(),
-            "org.freedesktop.systemd1.BadUnitSetting"
+            "io.rustd.Manager1.BadUnitSetting"
         );
         let invalid_file = AddDependencyUnitFilesError::from_lookup(
             UnitFileLookupError::InvalidName("../bad.service".into()),

@@ -309,9 +309,9 @@ mod tests {
         assert_eq!(
             bus_introspection_path(&[
                 "--bus-introspect".to_owned(),
-                "/org/freedesktop/systemd1".to_owned(),
+                "/io/rustd/Manager1".to_owned(),
             ]),
-            Some(Ok("/org/freedesktop/systemd1"))
+            Some(Ok("/io/rustd/Manager1"))
         );
         assert!(matches!(
             bus_introspection_path(&["--bus-introspect".to_owned()]),

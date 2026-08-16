@@ -182,15 +182,15 @@ async fn try_dbus_transient_unit(cli: &Cli, unit_name: &str) -> anyhow::Result<i
     }
 
     // In a full D-Bus setup, ExecStart is encoded as an array of structs: [(path, [args], bool)]
-    // Here we pass the transient unit request to org.freedesktop.systemd1.Manager
+    // Pass the transient unit request to the native RustD manager.
     let aux: Vec<(&str, Vec<(&str, Value<'_>)>)> = Vec::new();
     let mode = "replace";
 
     let reply: Result<OwnedObjectPath, _> = conn
         .call_method(
-            Some("org.freedesktop.systemd1"),
-            "/org/freedesktop/systemd1",
-            Some("org.freedesktop.systemd1.Manager"),
+            Some("io.rustd.Manager1"),
+            "/io/rustd/Manager1",
+            Some("io.rustd.Manager1.Manager"),
             "StartTransientUnit",
             &(unit_name, mode, &props, &aux),
         )
@@ -214,17 +214,17 @@ async fn wait_for_unit_completion(conn: &Connection, unit_name: &str) -> anyhow:
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         let unit_obj_path = format!(
-            "/org/freedesktop/systemd1/unit/{}",
+            "/io/rustd/Manager1/unit/{}",
             unit_name.replace('.', "_2e").replace('-', "_2d")
         );
 
         let active_state: Result<String, _> = conn
             .call_method(
-                Some("org.freedesktop.systemd1"),
+                Some("io.rustd.Manager1"),
                 unit_obj_path.as_str(),
                 Some("org.freedesktop.DBus.Properties"),
                 "Get",
-                &("org.freedesktop.systemd1.Unit", "ActiveState"),
+                &("io.rustd.Manager1.Unit", "ActiveState"),
             )
             .await
             .and_then(|r| r.body().deserialize());

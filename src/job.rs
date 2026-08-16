@@ -46,7 +46,7 @@ impl JobKind {
     }
 }
 
-/// Runtime state exported by `org.freedesktop.systemd1.Job.State`.
+/// Runtime state exported by `io.rustd.Manager1.Job.State`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobState {
     /// The job is queued behind ordering prerequisites.

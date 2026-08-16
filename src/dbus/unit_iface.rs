@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! `org.freedesktop.systemd1.Unit` D-Bus interface.
+//! `io.rustd.Manager1.Unit` D-Bus interface.
 //!
 //! One instance is registered per unit at its canonical object path.
 //!
@@ -137,7 +137,7 @@ impl UnitInterface {
     }
 }
 
-#[interface(name = "org.freedesktop.systemd1.Unit")]
+#[interface(name = "io.rustd.Manager1.Unit")]
 impl UnitInterface {
     // ── properties ────────────────────────────────────────────────────
 
@@ -1071,7 +1071,7 @@ mod tests {
 
         let path = iface.enqueue(JobKind::Start).unwrap();
 
-        assert_eq!(path.as_str(), "/org/freedesktop/systemd1/job/1");
+        assert_eq!(path.as_str(), "/io/rustd/Manager1/job/1");
         assert_eq!(queue.lock().unwrap().len(), 1);
         // Safety: the descriptor is owned by `wake` for this test.
         let counter = unsafe { crate::ffi::event::rustd_eventfd_read(wake.raw_fd()) };

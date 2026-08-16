@@ -848,17 +848,17 @@ fn escape_unit_component(input: &[u8], output: &mut Vec<u8>) {
 
 fn unit_interface(unit: &str) -> &'static str {
     match unit.rsplit_once('.').map(|(_, suffix)| suffix) {
-        Some("automount") => "org.freedesktop.systemd1.Automount",
-        Some("device") => "org.freedesktop.systemd1.Device",
-        Some("mount") => "org.freedesktop.systemd1.Mount",
-        Some("path") => "org.freedesktop.systemd1.Path",
-        Some("scope") => "org.freedesktop.systemd1.Scope",
-        Some("slice") => "org.freedesktop.systemd1.Slice",
-        Some("socket") => "org.freedesktop.systemd1.Socket",
-        Some("swap") => "org.freedesktop.systemd1.Swap",
-        Some("target") => "org.freedesktop.systemd1.Target",
-        Some("timer") => "org.freedesktop.systemd1.Timer",
-        _ => "org.freedesktop.systemd1.Service",
+        Some("automount") => "io.rustd.Manager1.Automount",
+        Some("device") => "io.rustd.Manager1.Device",
+        Some("mount") => "io.rustd.Manager1.Mount",
+        Some("path") => "io.rustd.Manager1.Path",
+        Some("scope") => "io.rustd.Manager1.Scope",
+        Some("slice") => "io.rustd.Manager1.Slice",
+        Some("socket") => "io.rustd.Manager1.Socket",
+        Some("swap") => "io.rustd.Manager1.Swap",
+        Some("target") => "io.rustd.Manager1.Target",
+        Some("timer") => "io.rustd.Manager1.Timer",
+        _ => "io.rustd.Manager1.Service",
     }
 }
 
@@ -876,9 +876,9 @@ fn query_unit_cgroup(unit: &str, mode: UnitMode) -> Result<String, String> {
         .map_err(|error| format!("Failed to connect to bus: {error}"))?;
         let manager = zbus::Proxy::new(
             &connection,
-            "org.freedesktop.systemd1",
-            "/org/freedesktop/systemd1",
-            "org.freedesktop.systemd1.Manager",
+            "io.rustd.Manager1",
+            "/io/rustd/Manager1",
+            "io.rustd.Manager1.Manager",
         )
         .await
         .map_err(|error| format!("Failed to query unit control group path: {error}"))?;
@@ -887,14 +887,10 @@ fn query_unit_cgroup(unit: &str, mode: UnitMode) -> Result<String, String> {
             .await
             .map_err(|error| format!("Failed to query unit control group path: {error}"))?;
         let interface = unit_interface(unit);
-        let unit_proxy = zbus::Proxy::new(
-            &connection,
-            "org.freedesktop.systemd1",
-            path.as_str(),
-            interface,
-        )
-        .await
-        .map_err(|error| format!("Failed to query unit control group path: {error}"))?;
+        let unit_proxy =
+            zbus::Proxy::new(&connection, "io.rustd.Manager1", path.as_str(), interface)
+                .await
+                .map_err(|error| format!("Failed to query unit control group path: {error}"))?;
         unit_proxy
             .get_property::<String>("ControlGroup")
             .await

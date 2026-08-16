@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! D-Bus server lifecycle — start/stop the `org.freedesktop.systemd1` bus.
+//! D-Bus server lifecycle for the native RustD manager API.
 //!
 //! Spawns a single-threaded tokio runtime on a dedicated OS thread.  The
 //! runtime hosts the zbus `Connection` and serves all D-Bus calls without
@@ -23,7 +23,7 @@ use crate::config::{ManagerScope, UnitDefaults};
 use crate::dbus::job_iface::JobInterface;
 use crate::dbus::manager_iface::{
     clear_unit_references_for_sender, invocation_id_path, job_path, manager_log_from_config,
-    unit_path, ManagerEnvironment, ManagerInterface, ManagerInterfaceV261, ManagerSignal,
+    unit_path, ManagerEnvironment, ManagerInterface, ManagerInterfaceApi, ManagerSignal,
     SetUnitPropertiesRequests, UnitLoadRequests, UnitReferences,
 };
 use crate::dbus::service_iface::ServiceInterface;
@@ -33,10 +33,10 @@ use crate::ipc::UnitInfo;
 use crate::ipc_server::ResetFailedRequests;
 use crate::job::{JobInfo, JobQueue, JobRegistry};
 
-/// Well-known bus name for the systemd manager.
-pub const SYSTEMD_BUS_NAME: &str = "org.freedesktop.systemd1";
+/// Well-known bus name for the RustD manager.
+pub const RUSTD_BUS_NAME: &str = "io.rustd.Manager1";
 /// Root object path.
-pub const SYSTEMD_OBJECT_PATH: &str = "/org/freedesktop/systemd1";
+pub const RUSTD_OBJECT_PATH: &str = "/io/rustd/Manager1";
 
 // ── DbusServer ────────────────────────────────────────────────────────────
 
@@ -54,7 +54,7 @@ impl DbusServer {
     /// Start the D-Bus server on a background thread.
     ///
     /// Connects to the session bus (or system bus when running as PID 1).
-    /// The `ManagerInterface` is registered at [`SYSTEMD_OBJECT_PATH`].
+    /// The `ManagerInterface` is registered at [`RUSTD_OBJECT_PATH`].
     ///
     /// Returns `None` (non-fatal) if D-Bus is unavailable in the environment.
     ///
@@ -107,7 +107,7 @@ impl DbusServer {
         let signal_tx_clone = signal_tx.clone();
 
         let handle = thread::Builder::new()
-            .name("systemd-dbus".into())
+            .name("rustd-dbus".into())
             .spawn(move || {
                 rt.block_on(async move {
                     if let Err(e) = run_server(
@@ -263,7 +263,7 @@ async fn run_server(
         signal_tx,
     };
     conn.object_server()
-        .at(SYSTEMD_OBJECT_PATH, ManagerInterfaceV261::new(manager))
+        .at(RUSTD_OBJECT_PATH, ManagerInterfaceApi::new(manager))
         .await
         .map_err(|e| anyhow!("dbus: failed to register manager object: {e}"))?;
 
@@ -272,14 +272,14 @@ async fn run_server(
     register_job_objects(&conn, &jobs, &queue, &wake).await;
 
     // Request the well-known name.
-    conn.request_name(SYSTEMD_BUS_NAME)
+    conn.request_name(RUSTD_BUS_NAME)
         .await
-        .map_err(|e| anyhow!("dbus: failed to request bus name '{SYSTEMD_BUS_NAME}': {e}"))?;
+        .map_err(|e| anyhow!("dbus: failed to request bus name '{RUSTD_BUS_NAME}': {e}"))?;
 
     // Get the signal context for the Manager object.
     let signal_ctxt = conn
         .object_server()
-        .interface::<_, ManagerInterfaceV261>(SYSTEMD_OBJECT_PATH)
+        .interface::<_, ManagerInterfaceApi>(RUSTD_OBJECT_PATH)
         .await
         .map_err(|e| anyhow!("dbus: failed to get manager interface context: {e}"))?;
 
@@ -429,7 +429,7 @@ async fn poll_dbus_service_readiness(
     }
 }
 
-/// Register `org.freedesktop.systemd1.Unit` (and `.Service` for service units)
+/// Register the native RustD unit and service interfaces
 /// objects for the current snapshot.
 async fn register_unit_objects(
     scope: ManagerScope,
@@ -612,7 +612,7 @@ async fn dispatch_signal(
     scope: ManagerScope,
     unit_defaults: &Arc<RwLock<UnitDefaults>>,
     conn: &zbus::Connection,
-    ctxt_iface: &zbus::InterfaceRef<ManagerInterfaceV261>,
+    ctxt_iface: &zbus::InterfaceRef<ManagerInterfaceApi>,
     snapshot: &Arc<RwLock<Vec<UnitInfo>>>,
     queue: &Arc<Mutex<JobQueue>>,
     jobs: &JobRegistry,

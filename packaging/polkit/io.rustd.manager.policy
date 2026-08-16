@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+        "https://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+
+<!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
+<policyconfig>
+        <vendor>The RustD Project</vendor>
+        <vendor_url>https://github.com/SisyphusAeolides/rustd</vendor_url>
+
+        <action id="io.rustd.manager.units">
+                <description>Manage RustD units</description>
+                <message>Authentication is required to manage RustD units.</message>
+                <defaults>
+                        <allow_any>auth_admin</allow_any>
+                        <allow_inactive>auth_admin</allow_inactive>
+                        <allow_active>auth_admin_keep</allow_active>
+                </defaults>
+        </action>
+
+        <action id="io.rustd.manager.environment">
+                <description>Change the RustD manager environment</description>
+                <message>Authentication is required to change the RustD manager environment.</message>
+                <defaults>
+                        <allow_any>auth_admin</allow_any>
+                        <allow_inactive>auth_admin</allow_inactive>
+                        <allow_active>auth_admin_keep</allow_active>
+                </defaults>
+        </action>
+
+        <action id="io.rustd.manager.reload">
+                <description>Reload or reexecute the RustD manager</description>
+                <message>Authentication is required to reload or reexecute the RustD manager.</message>
+                <defaults>
+                        <allow_any>auth_admin</allow_any>
+                        <allow_inactive>auth_admin</allow_inactive>
+                        <allow_active>auth_admin_keep</allow_active>
+                </defaults>
+        </action>
+</policyconfig>

@@ -104,7 +104,7 @@ enum Commands {
 
     /// Show process information and credentials of a bus service
     Status {
-        /// Service name (e.g. org.freedesktop.systemd1 or :1.123)
+        /// Service name (e.g. io.rustd.Manager1 or :1.123)
         service: Option<String>,
     },
 

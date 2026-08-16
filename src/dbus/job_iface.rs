@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! `org.freedesktop.systemd1.Job` D-Bus interface.
+//! `io.rustd.Manager1.Job` D-Bus interface.
 //!
 //! One object is registered for every live exported manager job at the
-//! canonical numeric path `/org/freedesktop/systemd1/job/<id>`.
+//! canonical numeric path `/io/rustd/Manager1/job/<id>`.
 //!
 //! Upstream reference: `src/core/dbus-job.c` (v261)
 
@@ -66,7 +66,7 @@ impl JobInterface {
     }
 }
 
-#[interface(name = "org.freedesktop.systemd1.Job")]
+#[interface(name = "io.rustd.Manager1.Job")]
 impl JobInterface {
     /// Cancel the job. Already-started unit work is not forcibly rolled back.
     async fn cancel(

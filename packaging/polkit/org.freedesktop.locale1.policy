@@ -4,8 +4,8 @@
 
 <!-- SPDX-License-Identifier: LGPL-2.1-or-later -->
 <policyconfig>
-        <vendor>The systemd Project</vendor>
-        <vendor_url>https://systemd.io</vendor_url>
+        <vendor>The RustD Project</vendor>
+        <vendor_url>https://github.com/SisyphusAeolides/rustd</vendor_url>
 
         <action id="org.freedesktop.locale1.set-locale">
                 <description>Set system locale</description>

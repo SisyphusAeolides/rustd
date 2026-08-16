@@ -5,7 +5,7 @@
 //! `org.freedesktop.DBus.GetConnectionUnixUser` and fail closed when the bus
 //! cannot provide credentials. Root callers are allowed directly; other
 //! callers are authorized through `PolicyKit` using the same system-bus-name
-//! subject form used by upstream systemd.
+//! subject form used by the RustD manager.
 //!
 //! Upstream reference: `src/shared/bus-polkit.c` and `src/core/dbus-util.c`
 //! (v261).
@@ -43,18 +43,17 @@ fn manager_action(header: &zbus::MessageHeader<'_>) -> &'static str {
 
 fn manager_action_for_member(member: Option<&str>) -> &'static str {
     match member {
-        Some("Reload" | "Reexecute") => "org.freedesktop.systemd1.reload-daemon",
+        Some("Reload" | "Reexecute") => "io.rustd.manager.reload",
         Some("SetEnvironment" | "UnsetEnvironment" | "UnsetAndSetEnvironment") => {
-            "org.freedesktop.systemd1.set-environment"
+            "io.rustd.manager.environment"
         }
-        _ => "org.freedesktop.systemd1.manage-units",
+        _ => "io.rustd.manager.units",
     }
 }
 
 /// Authorize a privileged D-Bus manager method for the actual caller.
 ///
-/// Root is accepted without contacting `PolicyKit`, matching systemd's sender
-/// privilege fast path. Non-root callers are checked through
+/// Root is accepted without contacting `PolicyKit`. Non-root callers are checked through
 /// `org.freedesktop.PolicyKit1.Authority.CheckAuthorization` using the unique
 /// D-Bus sender name as a `system-bus-name` subject. `PolicyKit` absence or an
 /// authorization transport error fails closed.
@@ -173,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn manager_environment_methods_use_the_v261_polkit_action() {
+    fn manager_methods_use_native_polkit_actions() {
         for member in [
             "SetEnvironment",
             "UnsetEnvironment",
@@ -181,18 +180,18 @@ mod tests {
         ] {
             assert_eq!(
                 manager_action_for_member(Some(member)),
-                "org.freedesktop.systemd1.set-environment"
+                "io.rustd.manager.environment"
             );
         }
         for member in ["Reload", "Reexecute"] {
             assert_eq!(
                 manager_action_for_member(Some(member)),
-                "org.freedesktop.systemd1.reload-daemon"
+                "io.rustd.manager.reload"
             );
         }
         assert_eq!(
             manager_action_for_member(Some("StartUnit")),
-            "org.freedesktop.systemd1.manage-units"
+            "io.rustd.manager.units"
         );
     }
 }

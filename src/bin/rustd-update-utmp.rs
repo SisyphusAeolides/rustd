@@ -162,9 +162,9 @@ fn manager_userspace_timestamp() -> Result<u64, ManagerTimestampError> {
             .map_err(|error| ManagerTimestampError::Connection(error.to_string()))?;
         let proxy = zbus::Proxy::new(
             &connection,
-            "org.freedesktop.systemd1",
-            "/org/freedesktop/systemd1",
-            "org.freedesktop.systemd1.Manager",
+            "io.rustd.Manager1",
+            "/io/rustd/Manager1",
+            "io.rustd.Manager1.Manager",
         )
         .await
         .map_err(|error| ManagerTimestampError::Property(error.to_string()))?;

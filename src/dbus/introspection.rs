@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 //! Offline D-Bus introspection for the manager executable.
 //!
-//! systemd exposes this surface through `systemd --bus-introspect=PATH` so
-//! callers and release tooling can inspect the compiled interface without a
+//! Callers and release tooling can inspect the compiled interface without a
 //! running system or session bus. Keep this output sourced from the actual
 //! zbus interface implementations rather than a hand-maintained XML copy.
 
@@ -18,16 +17,16 @@ use crate::config::{ManagerScope, UnitDefaults};
 use crate::dbus::job_iface::JobInterface;
 use crate::dbus::manager_iface::{
     manager_environment_from_process, manager_log_from_config, ManagerInterface,
-    ManagerInterfaceV261, SHUTDOWN_NONE,
+    ManagerInterfaceApi, SHUTDOWN_NONE,
 };
 use crate::dbus::service_iface::ServiceInterface;
 use crate::dbus::unit_iface::UnitInterface;
 use crate::event::EventLoopWake;
 use crate::job::{JobInfo, JobKind, JobQueue, JobState};
 
-const MANAGER_PATH: &str = "/org/freedesktop/systemd1";
-const UNIT_PATH: &str = "/org/freedesktop/systemd1/unit";
-const JOB_PATH: &str = "/org/freedesktop/systemd1/job";
+const MANAGER_PATH: &str = "/io/rustd/Manager1";
+const UNIT_PATH: &str = "/io/rustd/Manager1/unit";
+const JOB_PATH: &str = "/io/rustd/Manager1/job";
 
 const DOCTYPE: &str = concat!(
     "<!DOCTYPE node PUBLIC \"-//freedesktop//DTD D-BUS Object Introspection 1.0//EN\"\n",
@@ -73,10 +72,10 @@ const STANDARD_INTERFACES: &str = r#" <interface name="org.freedesktop.DBus.Peer
 #[must_use]
 pub fn interface_list() -> &'static str {
     concat!(
-        "/org/freedesktop/systemd1\torg.freedesktop.systemd1.Manager\n",
-        "/org/freedesktop/systemd1/job\torg.freedesktop.systemd1.Job\n",
-        "/org/freedesktop/systemd1/unit\torg.freedesktop.systemd1.Unit\n",
-        "/org/freedesktop/systemd1/unit\torg.freedesktop.systemd1.Service\n",
+        "/io/rustd/Manager1\tio.rustd.Manager1.Manager\n",
+        "/io/rustd/Manager1/job\tio.rustd.Manager1.Job\n",
+        "/io/rustd/Manager1/unit\tio.rustd.Manager1.Unit\n",
+        "/io/rustd/Manager1/unit\tio.rustd.Manager1.Service\n",
     )
 }
 
@@ -84,7 +83,7 @@ fn append_interface<I: zbus::object_server::Interface>(xml: &mut String, interfa
     <I as zbus::object_server::Interface>::introspect_to_writer(interface, xml, 1);
 }
 
-fn manager_interface() -> anyhow::Result<ManagerInterfaceV261> {
+fn manager_interface() -> anyhow::Result<ManagerInterfaceApi> {
     let queue = Arc::new(Mutex::new(JobQueue::default()));
     let jobs = queue
         .lock()
@@ -93,7 +92,7 @@ fn manager_interface() -> anyhow::Result<ManagerInterfaceV261> {
     let wake = EventLoopWake::create()?;
     let (signal_tx, _signal_rx) = tokio::sync::mpsc::unbounded_channel();
 
-    Ok(ManagerInterfaceV261::new(ManagerInterface {
+    Ok(ManagerInterfaceApi::new(ManagerInterface {
         scope: ManagerScope::System,
         cgroup: CgroupManager::with_root("/nonexistent/rustd-introspection-cgroup"),
         unit_defaults: Arc::new(RwLock::new(UnitDefaults::default())),
@@ -205,23 +204,23 @@ mod tests {
     #[test]
     fn list_contains_only_compiled_interfaces() {
         assert_eq!(interface_list().lines().count(), 4);
-        assert!(interface_list().contains("org.freedesktop.systemd1.Manager"));
-        assert!(interface_list().contains("org.freedesktop.systemd1.Service"));
+        assert!(interface_list().contains("io.rustd.Manager1.Manager"));
+        assert!(interface_list().contains("io.rustd.Manager1.Service"));
     }
 
     #[test]
     fn manager_unit_service_and_job_xml_are_generated_from_interfaces() {
         let manager = introspect_path(MANAGER_PATH).unwrap().unwrap();
-        assert!(manager.contains("<interface name=\"org.freedesktop.systemd1.Manager\">"));
+        assert!(manager.contains("<interface name=\"io.rustd.Manager1.Manager\">"));
         assert!(manager.contains("<method name=\"StartUnit\">"));
         assert!(!manager.contains("name=\"r#type\""));
 
         let unit = introspect_path(UNIT_PATH).unwrap().unwrap();
-        assert!(unit.contains("<interface name=\"org.freedesktop.systemd1.Unit\">"));
-        assert!(unit.contains("<interface name=\"org.freedesktop.systemd1.Service\">"));
+        assert!(unit.contains("<interface name=\"io.rustd.Manager1.Unit\">"));
+        assert!(unit.contains("<interface name=\"io.rustd.Manager1.Service\">"));
 
         let job = introspect_path(JOB_PATH).unwrap().unwrap();
-        assert!(job.contains("<interface name=\"org.freedesktop.systemd1.Job\">"));
+        assert!(job.contains("<interface name=\"io.rustd.Manager1.Job\">"));
         assert!(introspect_path("/not/compiled").unwrap().is_none());
     }
 }

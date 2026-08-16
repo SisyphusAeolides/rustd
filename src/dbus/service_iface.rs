@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! `org.freedesktop.systemd1.Service` D-Bus interface.
+//! `io.rustd.Manager1.Service` D-Bus interface.
 //!
 //! One instance is registered per service unit at its canonical object path,
-//! alongside the `org.freedesktop.systemd1.Unit` interface.
+//! alongside the `io.rustd.Manager1.Unit` interface.
 //!
 //! Upstream reference: `src/core/dbus-service.c` (v261)
 
@@ -54,7 +54,7 @@ type ExecExProperty = (
 
 // ── ServiceInterface ──────────────────────────────────────────────────────
 
-/// The `org.freedesktop.systemd1.Service` interface object.
+/// The `io.rustd.Manager1.Service` interface object.
 ///
 /// Runtime properties are read from the shared manager snapshot. Parsed
 /// configuration properties are loaded through the canonical unit loader so
@@ -102,7 +102,7 @@ impl ServiceInterface {
     }
 }
 
-#[interface(name = "org.freedesktop.systemd1.Service")]
+#[interface(name = "io.rustd.Manager1.Service")]
 impl ServiceInterface {
     // ── configuration properties ──────────────────────────────────────
 

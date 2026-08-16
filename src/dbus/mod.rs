@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! D-Bus server — `org.freedesktop.systemd1`.
+//! D-Bus server for the native `io.rustd.Manager1` API.
 //!
 //! Runs a zbus `Connection` on a dedicated tokio thread pool.  The main
 //! epoll loop is unaffected; D-Bus calls enqueue jobs into the shared

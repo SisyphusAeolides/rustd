@@ -273,11 +273,11 @@ async fn try_polkit_transient_run0(
     _uid: u32,
     _gid: u32,
 ) -> anyhow::Result<i32> {
-    // Connect to system bus and check org.freedesktop.systemd1 Manager
+    // Connect to the system bus and check the native RustD manager.
     let conn = zbus::Connection::system().await?;
     let proxy = zbus::fdo::DBusProxy::new(&conn).await?;
     let has_owner = proxy
-        .name_has_owner("org.freedesktop.systemd1".try_into()?)
+        .name_has_owner("io.rustd.Manager1".try_into()?)
         .await
         .unwrap_or(false);
 

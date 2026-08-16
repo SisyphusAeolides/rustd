@@ -451,9 +451,9 @@ fn io_to_dbus(error: io::Error) -> zbus::fdo::Error {
 async fn restart_vconsole(connection: &zbus::Connection) -> zbus::fdo::Result<()> {
     let proxy = zbus::Proxy::new(
         connection,
-        "org.freedesktop.systemd1",
-        "/org/freedesktop/systemd1",
-        "org.freedesktop.systemd1.Manager",
+        "io.rustd.Manager1",
+        "/io/rustd/Manager1",
+        "io.rustd.Manager1.Manager",
     )
     .await
     .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
