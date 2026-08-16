@@ -7,7 +7,7 @@ Before=basic.target multi-user.target shutdown.target
 Conflicts=shutdown.target
 
 [Service]
-Type=simple
+Type=exec
 StandardOutput=null
 StandardError=null
 ExecStartPre=/usr/bin/mkdir -p /run/dbus

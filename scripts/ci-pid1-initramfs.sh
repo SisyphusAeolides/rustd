@@ -9,6 +9,7 @@ KEEP_ROOT="${RUSTD_PID1_KEEP_ROOT:-0}"
 RELEASE_DIR="${RUSTD_RELEASE_DIR:-target/release}"
 SERIAL_LOG="${RUSTD_PID1_SERIAL_LOG:-pid1-serial.log}"
 KERNEL="${RUSTD_PID1_KERNEL:-}"
+QEMU_TIMEOUT="${RUSTD_PID1_QEMU_TIMEOUT:-90s}"
 
 cleanup() {
     status=$?
@@ -52,7 +53,9 @@ mkdir -p \
     "$INITROOT/sys/fs/cgroup" \
     "$INITROOT/tmp" \
     "$INITROOT/usr/bin" \
-    "$INITROOT/usr/lib/rustd"
+    "$INITROOT/usr/lib/rustd" \
+    "$INITROOT/var"
+ln -s ../run "$INITROOT/var/run"
 
 cp "$(command -v busybox)" "$INITROOT/bin/busybox"
 for applet in basename cat grep mkdir mount poweroff readlink sh sleep; do
@@ -124,7 +127,7 @@ cat >"$INITROOT/etc/rustd/system/basic.target" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Basic Target
 DefaultDependencies=no
-Wants=rustd-journald.service
+Wants=rustd-journald.service dbus.service
 After=rustd-journald.service
 EOF
 
@@ -158,10 +161,9 @@ Description=D-Bus System Message Bus
 DefaultDependencies=no
 
 [Service]
-Type=simple
-StandardOutput=null
-StandardError=null
-ExecStartPre=/bin/mkdir -p /run/dbus
+Type=exec
+StandardOutput=console
+StandardError=console
 ExecStart=/usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --nofork --nopidfile
 Restart=no
 EOF
@@ -185,8 +187,8 @@ DefaultDependencies=no
 
 [Service]
 Type=simple
-StandardOutput=null
-StandardError=null
+StandardOutput=console
+StandardError=console
 ExecStart=/usr/lib/rustd/rustd-journald --runtime-directory /run/rustd/journal
 Restart=always
 RestartSec=1
@@ -202,7 +204,9 @@ while [ "$attempt" -lt 30 ]; do
         && /usr/bin/rustctl --quiet is-active basic.target >/dev/null 2>&1 \
         && /usr/bin/rustctl --quiet is-active multi-user.target >/dev/null 2>&1 \
         && /usr/bin/rustctl --quiet is-active getty.target >/dev/null 2>&1 \
-        && /usr/bin/rustctl --quiet is-active rustd-journald.service >/dev/null 2>&1; then
+        && /usr/bin/rustctl --quiet is-active rustd-journald.service >/dev/null 2>&1 \
+        && /usr/bin/rustctl --quiet is-active dbus.service >/dev/null 2>&1 \
+        && [ -S /run/dbus/system_bus_socket ]; then
         if RUSTCTL=/usr/bin/rustctl /usr/lib/rustd/boot-smoke.sh >/dev/ttyS0 2>&1; then
             echo 'RUSTD_PID1_CERT_PASS' >/dev/ttyS0
             sleep 1
@@ -211,7 +215,7 @@ while [ "$attempt" -lt 30 ]; do
         fi
     fi
     attempt=$((attempt + 1))
-    sleep 1
+    /bin/sleep 1
 done
 
 echo 'RUSTD_PID1_CERT_FAIL: boot contract did not become healthy' >/dev/ttyS0
@@ -228,10 +232,10 @@ DefaultDependencies=no
 After=basic.target rustd-journald.service
 
 [Service]
-Type=simple
-StandardOutput=null
-StandardError=null
-ExecStart=/usr/lib/rustd/ci-cert.sh
+Type=exec
+StandardOutput=console
+StandardError=console
+ExecStart=/bin/sh /usr/lib/rustd/ci-cert.sh
 Restart=no
 EOF
 
@@ -246,23 +250,22 @@ mkdir -p /dev/pts /dev/shm /run /run/rustd /tmp /sys/fs/cgroup
 mount -t devpts devpts /dev/pts
 mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run
-mkdir -p /run/rustd
+mkdir -p /run/dbus /run/rustd /usr/share/dbus-1/system.d /etc/dbus-1/system.d
 mount -t cgroup2 none /sys/fs/cgroup
 
 echo 'RUSTD_PID1_BOOT_BEGIN' >/dev/ttyS0
 exec >/dev/ttyS0 2>&1
-mkdir -p /run/dbus /usr/share/dbus-1/system.d /etc/dbus-1/system.d
-if [ -x /usr/bin/dbus-daemon ]; then
-    /usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --nofork --nopidfile &
-    dbus_pid=$!
-    sleep 1
-    if [ -S /run/dbus/system_bus_socket ]; then
-        echo 'RUSTD_PID1_DBUS_READY'
-    else
-        echo "RUSTD_PID1_DBUS_MISSING pid=${dbus_pid}"
-        kill "$dbus_pid" 2>/dev/null || true
-    fi
-fi
+(
+    sleep 10
+    echo 'RUSTD_PID1_DIAGNOSTIC_BEGIN'
+    /usr/bin/rustctl --no-pager --plain list-jobs || true
+    /usr/bin/rustctl --no-pager --plain list-units || true
+    /usr/bin/rustctl --no-pager --plain status dbus.service || true
+    /usr/bin/rustctl --no-pager --plain status rustd-ci-cert.service || true
+    /usr/bin/rustctl --no-pager --plain show dbus.service || true
+    /usr/bin/rustctl --no-pager --plain show rustd-ci-cert.service || true
+    echo 'RUSTD_PID1_DIAGNOSTIC_END'
+) &
 exec /usr/lib/rustd/rustd
 EOF
 chmod 0755 "$INITROOT/init"
@@ -276,7 +279,7 @@ INITRAMFS="$ROOT/rustd-pid1-initramfs.cpio.gz"
 )
 
 set +e
-timeout --signal=TERM --kill-after=5s 90s \
+timeout --signal=TERM --kill-after=5s "$QEMU_TIMEOUT" \
     qemu-system-x86_64 \
     -machine accel=tcg \
     -cpu max \

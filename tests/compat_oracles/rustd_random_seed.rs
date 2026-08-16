@@ -7,6 +7,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 use std::process::{Command, Output};
+use std::sync::OnceLock;
 
 const HOST: &str = "/usr/lib/systemd/systemd-random-seed";
 const MACHINE_ID: &str = "00112233445566778899aabbccddeeff\n";
@@ -17,6 +18,25 @@ fn host_is_pinned_v261() -> bool {
             .arg("--version")
             .output()
             .is_ok_and(|output| output.stdout.starts_with(b"systemd 261 "))
+}
+
+fn unprivileged_user_namespaces_available() -> bool {
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| {
+        Command::new("unshare")
+            .args(["--user", "--map-root-user", "true"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    })
+}
+
+fn skip_without_user_namespaces() -> bool {
+    if unprivileged_user_namespaces_available() {
+        false
+    } else {
+        eprintln!("skipping random-seed fixture: unprivileged user namespaces unavailable");
+        true
+    }
 }
 
 fn plain(binary: &str, arguments: &[&OsStr]) -> Output {
@@ -112,6 +132,9 @@ fn complete_option_verb_and_raw_byte_surface_matches_live_v261() {
 
 #[test]
 fn deterministic_save_enforces_size_mode_and_creditable_xattr() {
+    if skip_without_user_namespaces() {
+        return;
+    }
     let temporary = tempfile::tempdir().expect("create save fixture");
     let seed = temporary.path().join("state/random-seed");
     let random = temporary.path().join("urandom");
@@ -145,6 +168,9 @@ fn deterministic_save_enforces_size_mode_and_creditable_xattr() {
 
 #[test]
 fn load_consumes_xattr_mixes_machine_id_and_hashes_old_and_new_seed() {
+    if skip_without_user_namespaces() {
+        return;
+    }
     let temporary = tempfile::tempdir().expect("create load fixture");
     let seed = temporary.path().join("random-seed");
     let random = temporary.path().join("urandom");
@@ -189,6 +215,9 @@ fn load_consumes_xattr_mixes_machine_id_and_hashes_old_and_new_seed() {
 
 #[test]
 fn load_first_boot_suppresses_credit_and_fallback_random_is_not_creditable() {
+    if skip_without_user_namespaces() {
+        return;
+    }
     let temporary = tempfile::tempdir().expect("create fallback fixture");
     let seed = temporary.path().join("random-seed");
     let random = temporary.path().join("urandom");
@@ -222,6 +251,9 @@ fn load_first_boot_suppresses_credit_and_fallback_random_is_not_creditable() {
 fn isolated_live_load_matches_v261_size_mode_xattr_and_entropy_injection() {
     if !host_is_pinned_v261() {
         eprintln!("skipping live comparison: systemd package is not v261");
+        return;
+    }
+    if skip_without_user_namespaces() {
         return;
     }
     let old_seed: Vec<u8> = (0x40_u8..0x80).collect();

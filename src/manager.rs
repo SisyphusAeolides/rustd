@@ -1614,6 +1614,12 @@ impl Manager {
                 ) {
                     record.exec_main_exit_realtime_ns = exit_realtime;
                     record.exec_main_exit_monotonic_ns = exit_monotonic;
+                    if record.state == UnitState::Failed && !explicitly_stopping {
+                        eprintln!(
+                            "rustd: service '{name}' exited unsuccessfully: code={} status={}",
+                            exit.code, exit.status
+                        );
+                    }
                     if let Some(source) = self.start_timeouts.remove(&name) {
                         let _ = self.event_loop.remove_timer(source);
                     }
