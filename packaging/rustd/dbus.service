@@ -2,12 +2,14 @@
 Description=D-Bus System Message Bus
 Documentation=man:dbus-daemon(1)
 DefaultDependencies=no
-After=sysinit.target
+After=sysinit.target rustd-journald.service
 Before=basic.target multi-user.target shutdown.target
 Conflicts=shutdown.target
 
 [Service]
 Type=simple
+StandardOutput=null
+StandardError=null
 ExecStartPre=/usr/bin/mkdir -p /run/dbus
 ExecStart=/usr/bin/dbus-daemon --system --nofork --nopidfile
 ExecReload=/usr/bin/dbus-send --print-reply --system --type=method_call --dest=org.freedesktop.DBus / org.freedesktop.DBus.ReloadConfig

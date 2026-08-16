@@ -716,7 +716,7 @@ async fn dispatch_signal(
 /// Retries briefly so PID 1 can attach after `dbus.service` creates the socket.
 async fn connect_bus(scope: ManagerScope) -> anyhow::Result<zbus::Connection> {
     let mut last_error = None;
-    for attempt in 0..30 {
+    for attempt in 0..15 {
         let result = match scope {
             ManagerScope::System => zbus::Connection::system().await,
             ManagerScope::User => zbus::Connection::session().await,
@@ -725,8 +725,8 @@ async fn connect_bus(scope: ManagerScope) -> anyhow::Result<zbus::Connection> {
             Ok(connection) => return Ok(connection),
             Err(error) => {
                 last_error = Some(error);
-                if attempt + 1 < 30 {
-                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                if attempt + 1 < 15 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
         }

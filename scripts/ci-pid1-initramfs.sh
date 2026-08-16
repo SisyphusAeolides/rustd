@@ -124,7 +124,7 @@ cat >"$INITROOT/etc/rustd/system/basic.target" <<'EOF'
 [Unit]
 Description=RustD PID1 Certification Basic Target
 DefaultDependencies=no
-Wants=rustd-journald.service dbus.service
+Wants=rustd-journald.service
 After=rustd-journald.service
 EOF
 
@@ -149,7 +149,7 @@ Description=RustD PID1 Certification Default Target
 DefaultDependencies=no
 Requires=basic.target
 Wants=multi-user.target rustd-ci-cert.service
-After=basic.target multi-user.target
+After=basic.target
 EOF
 
 cat >"$INITROOT/etc/rustd/system/dbus.service" <<'EOF'
@@ -201,6 +201,7 @@ while [ "$attempt" -lt 30 ]; do
     if /usr/bin/rustctl --quiet is-active default.target >/dev/null 2>&1 \
         && /usr/bin/rustctl --quiet is-active basic.target >/dev/null 2>&1 \
         && /usr/bin/rustctl --quiet is-active multi-user.target >/dev/null 2>&1 \
+        && /usr/bin/rustctl --quiet is-active getty.target >/dev/null 2>&1 \
         && /usr/bin/rustctl --quiet is-active rustd-journald.service >/dev/null 2>&1; then
         if RUSTCTL=/usr/bin/rustctl /usr/lib/rustd/boot-smoke.sh >/dev/ttyS0 2>&1; then
             echo 'RUSTD_PID1_CERT_PASS' >/dev/ttyS0
@@ -250,6 +251,10 @@ mount -t cgroup2 none /sys/fs/cgroup
 
 echo 'RUSTD_PID1_BOOT_BEGIN' >/dev/ttyS0
 exec >/dev/ttyS0 2>&1
+mkdir -p /run/dbus
+if [ -x /usr/bin/dbus-daemon ]; then
+    /usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --nofork --nopidfile &
+fi
 exec /usr/lib/rustd/rustd
 EOF
 chmod 0755 "$INITROOT/init"
