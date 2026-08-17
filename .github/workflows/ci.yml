@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  statuses: write
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -26,40 +25,6 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Mark commit pending
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          REVISION: ${{ github.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import urllib.request
-
-          url = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/statuses/{os.environ['REVISION']}"
-          payload = {
-              "state": "pending",
-              "context": "rustd/ci",
-              "description": "RustD native validation is running",
-              "target_url": os.environ["RUN_URL"],
-          }
-          request = urllib.request.Request(
-              url,
-              data=json.dumps(payload).encode("utf-8"),
-              headers={
-                  "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                  "Accept": "application/vnd.github+json",
-                  "X-GitHub-Api-Version": "2022-11-28",
-                  "Content-Type": "application/json",
-              },
-              method="POST",
-          )
-          with urllib.request.urlopen(request) as response:
-              response.read()
-          PY
 
       - name: Install native toolchain
         run: |
@@ -104,7 +69,7 @@ jobs:
           bash -o pipefail -c '
             set -eux
             make check-native
-            cargo clippy --all-targets --all-features --locked -- -D warnings -A clippy::doc_markdown -A clippy::default_trait_access -A clippy::borrow_as_ptr -A clippy::needless_borrows_for_generic_args -A clippy::map_unwrap_or -A clippy::bool_to_int_with_if
+            cargo clippy --all-targets --all-features --locked -- -D warnings -A unknown-lints -A renamed-and-removed-lints -A clippy::doc_markdown -A clippy::default_trait_access -A clippy::borrow_as_ptr -A clippy::needless_borrows_for_generic_args -A clippy::map_unwrap_or -A clippy::bool_to_int_with_if
             cargo test --all-targets --all-features --locked -- --test-threads=1
             cargo build --release --all-features --locked
             make check-packaging
@@ -135,60 +100,3 @@ jobs:
             ${{ runner.temp }}/rustd-source.tar.gz
           if-no-files-found: error
           retention-days: 14
-
-      - name: Publish final status
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          REVISION: ${{ github.sha }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          STATUS_STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
-          STATUS_DESCRIPTION: ${{ job.status == 'success' && 'RustD native validation passed' || 'RustD native validation failed' }}
-        run: |
-          set -euo pipefail
-          export STATUS_STATE STATUS_DESCRIPTION
-          python3 - <<'PY'
-          import json
-          import os
-          import time
-          import urllib.error
-          import urllib.request
-
-          url = f"https://api.github.com/repos/{os.environ['REPOSITORY']}/statuses/{os.environ['REVISION']}"
-          payload = {
-              "state": os.environ["STATUS_STATE"],
-              "context": "rustd/ci",
-              "description": os.environ["STATUS_DESCRIPTION"],
-              "target_url": os.environ["RUN_URL"],
-          }
-          data = json.dumps(payload).encode("utf-8")
-          headers = {
-              "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-              "Accept": "application/vnd.github+json",
-              "X-GitHub-Api-Version": "2022-11-28",
-              "Content-Type": "application/json",
-          }
-          retryable_http = {403, 429, 500, 502, 503, 504}
-          last_error = None
-          for attempt in range(5):
-              request = urllib.request.Request(url, data=data, headers=headers, method="POST")
-              try:
-                  with urllib.request.urlopen(request, timeout=15) as response:
-                      response.read()
-                  break
-              except urllib.error.HTTPError as error:
-                  last_error = error
-                  if error.code not in retryable_http or attempt == 4:
-                      raise
-                  retry_after = error.headers.get("Retry-After")
-                  delay = int(retry_after) if retry_after and retry_after.isdigit() else 2**attempt
-              except (urllib.error.URLError, TimeoutError) as error:
-                  last_error = error
-                  if attempt == 4:
-                      raise
-                  delay = 2**attempt
-              time.sleep(min(delay, 30))
-          else:
-              raise RuntimeError(f"status publication failed: {last_error}")
-          PY

@@ -38,11 +38,17 @@ fn wait_for_path(path: &Path, child: &mut Child) {
         if path.exists() {
             return;
         }
-        assert!(
-            child.try_wait().expect("poll activation helper").is_none(),
-            "activation helper exited before creating {}",
-            path.display()
-        );
+        if let Some(status) = child.try_wait().expect("poll activation helper") {
+            let mut stderr = String::new();
+            if let Some(mut pipe) = child.stderr.take() {
+                pipe.read_to_string(&mut stderr)
+                    .expect("read activation helper stderr");
+            }
+            panic!(
+                "activation helper exited before creating {}: status={status}, stderr={stderr}",
+                path.display()
+            );
+        }
         thread::sleep(Duration::from_millis(10));
     }
     panic!("activation socket did not appear: {}", path.display());
@@ -93,19 +99,39 @@ fn spawn_accept(path: &Path, inetd: bool, raised_limit: bool) -> Child {
         "resource.getrlimit(resource.RLIMIT_NOFILE))\n",
         "s.sendall(repr(v).encode())\n",
     );
-    let mut process = if raised_limit {
-        let mut process = Command::new("/usr/bin/prlimit");
-        process.args(["--nofile=65536:1048576", "--", binary()]);
-        process
-    } else {
-        command()
-    };
+    let mut process = command();
+    if raised_limit {
+        // SAFETY: this closure runs after fork and before exec, performs only
+        // libc rlimit calls, captures no parent state, and preserves the
+        // runner's hard limit.
+        unsafe {
+            process.pre_exec(|| {
+                let mut limit = libc::rlimit {
+                    rlim_cur: 0,
+                    rlim_max: 0,
+                };
+                if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                if limit.rlim_max <= 1024 {
+                    return Err(std::io::Error::other(
+                        "RLIMIT_NOFILE hard limit is too low for the clamp test",
+                    ));
+                }
+                limit.rlim_cur = std::cmp::min(limit.rlim_max, 65_536);
+                if libc::setrlimit(libc::RLIMIT_NOFILE, &limit) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
     process
         .arg("--accept")
         .arg("-l")
         .arg(path)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .process_group(0);
     if inetd {
         process.args(["--inetd", "/bin/cat"]);
@@ -357,7 +383,7 @@ fn accept_inetd_and_safe_child_limit_use_rustd_listen_contract() {
     // Accept children keep a safe soft NOFILE ceiling of 1024 even when the
     // activator itself was launched with a higher soft limit.
     assert!(
-        raised.contains("(1024, 1048576)"),
+        raised.contains("(1024, "),
         "accept child RLIMIT_NOFILE: {raised}"
     );
 }
