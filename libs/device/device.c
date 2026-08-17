@@ -369,10 +369,32 @@ const char *rustd_device_get_property_value(rustd_device *device, const char *ke
     return NULL;
 }
 
+static int sysattr_path_is_safe(const char *key) {
+    const char *segment;
+    const char *cursor;
+
+    if (!key || !*key || key[0] == '/')
+        return 0;
+    segment = key;
+    for (cursor = key;; cursor++) {
+        size_t length;
+        if (*cursor != '/' && *cursor != '\0')
+            continue;
+        length = (size_t)(cursor - segment);
+        if (length == 0 ||
+            (length == 1 && segment[0] == '.') ||
+            (length == 2 && segment[0] == '.' && segment[1] == '.'))
+            return 0;
+        if (*cursor == '\0')
+            return 1;
+        segment = cursor + 1;
+    }
+}
+
 const char *rustd_device_get_sysattr_value(rustd_device *device, const char *key) {
     static __thread char buffer[1024];
     char *value;
-    if (!device || !key)
+    if (!device || !sysattr_path_is_safe(key))
         return NULL;
     value = read_sysfs_value(device->syspath, key);
     if (!value)
@@ -380,6 +402,52 @@ const char *rustd_device_get_sysattr_value(rustd_device *device, const char *key
     snprintf(buffer, sizeof(buffer), "%s", value);
     free(value);
     return buffer;
+}
+
+int rustd_device_set_sysattr_value(rustd_device *device, const char *key, const char *value) {
+    char path[PATH_MAX];
+    char copied[4097];
+    size_t length;
+    size_t offset = 0;
+    int fd;
+    int n;
+
+    if (!device || !sysattr_path_is_safe(key))
+        return -EINVAL;
+    if (!value)
+        return 0;
+
+    n = snprintf(path, sizeof(path), "%s/%s", device->syspath, key);
+    if (n < 0 || (size_t)n >= sizeof(path))
+        return -ENAMETOOLONG;
+
+    length = strnlen(value, 4096);
+    memcpy(copied, value, length);
+    while (length > 0 && (copied[length - 1] == '\n' || copied[length - 1] == '\r'))
+        length--;
+    copied[length] = '\0';
+
+    fd = open(path, O_WRONLY | O_CLOEXEC);
+    if (fd < 0)
+        return -errno;
+    while (offset < length) {
+        ssize_t written = write(fd, copied + offset, length - offset);
+        if (written < 0) {
+            int error = errno;
+            if (error == EINTR)
+                continue;
+            close(fd);
+            return -error;
+        }
+        if (written == 0) {
+            close(fd);
+            return -EIO;
+        }
+        offset += (size_t)written;
+    }
+    if (close(fd) < 0)
+        return -errno;
+    return 0;
 }
 
 rustd_device *rustd_device_get_parent(rustd_device *device) {

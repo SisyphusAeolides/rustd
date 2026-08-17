@@ -242,10 +242,9 @@ int udev_device_has_tag(struct udev_device *device, const char *tag) {
     return 0;
 }
 int udev_device_set_sysattr_value(struct udev_device *device, const char *key, const char *value) {
-    (void)device;
-    (void)key;
-    (void)value;
-    return -ENOSYS;
+    if (!device)
+        return -EINVAL;
+    return rustd_device_set_sysattr_value(device->dev, key, value);
 }
 
 struct udev_enumerate *udev_enumerate_new(struct udev *udev) {

@@ -40,6 +40,7 @@ const char *rustd_device_get_driver(rustd_device *device);
 const char *rustd_device_get_action(rustd_device *device);
 const char *rustd_device_get_property_value(rustd_device *device, const char *key);
 const char *rustd_device_get_sysattr_value(rustd_device *device, const char *key);
+int rustd_device_set_sysattr_value(rustd_device *device, const char *key, const char *value);
 dev_t rustd_device_get_devnum(rustd_device *device);
 int rustd_device_get_is_initialized(rustd_device *device);
 rustd_device *rustd_device_get_parent(rustd_device *device);

@@ -1,6 +1,13 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
+#define _GNU_SOURCE
 #include <assert.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <libudev.h>
 #include <systemd/sd-device.h>
@@ -15,6 +22,8 @@ static void verify_function_types(void) {
     int (*monitor_new)(sd_device_monitor **) = sd_device_monitor_new;
     sd_event *(*monitor_event)(sd_device_monitor *) = sd_device_monitor_get_event;
     void (*flush_matches)(sd_journal *) = sd_journal_flush_matches;
+    int (*set_sysattr)(struct udev_device *, const char *, const char *) =
+        udev_device_set_sysattr_value;
 
     assert(login_new);
     assert(device_open);
@@ -23,6 +32,7 @@ static void verify_function_types(void) {
     assert(monitor_new);
     assert(monitor_event);
     assert(flush_matches);
+    assert(set_sysattr);
 }
 
 int main(void) {
@@ -31,6 +41,32 @@ int main(void) {
     verify_function_types();
     udev = udev_new();
     assert(udev);
+
+    {
+        char directory[128];
+        char attribute[160];
+        struct udev_device *device;
+        int fd;
+
+        snprintf(directory, sizeof(directory), "/tmp/rustd-udev-compat-%ld", (long)getpid());
+        assert(mkdir(directory, 0700) == 0);
+        snprintf(attribute, sizeof(attribute), "%s/control", directory);
+        fd = open(attribute, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
+        assert(fd >= 0);
+        assert(close(fd) == 0);
+
+        device = udev_device_new_from_syspath(udev, directory);
+        assert(device);
+        assert(udev_device_set_sysattr_value(device, "control", "compat\n") == 0);
+        assert(strcmp(udev_device_get_sysattr_value(device, "control"), "compat") == 0);
+        assert(udev_device_set_sysattr_value(device, NULL, "blocked") == -EINVAL);
+        assert(udev_device_set_sysattr_value(device, "../escape", "blocked") == -EINVAL);
+        assert(udev_device_unref(device) == NULL);
+
+        assert(unlink(attribute) == 0);
+        assert(rmdir(directory) == 0);
+    }
+
     assert(udev_ref(udev) == udev);
     assert(udev_unref(udev) == NULL);
     assert(udev_unref(udev) == NULL);
