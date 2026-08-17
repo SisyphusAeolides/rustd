@@ -35,12 +35,34 @@ jobs:
           make check-compat 2>&1 | tee /tmp/compatibility-abi.log
 
       - name: Record behavioral closure progress
-        if: ${{ success() }}
         shell: bash
         run: |
           set -euo pipefail
           python3 scripts/check-compat-source-readiness.py \
             --report target/compat-readiness.json 2>&1 | tee -a /tmp/compatibility-abi.log
+
+      - name: Enforce compatibility non-regression floor
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("target/compat-readiness.json").read_text(encoding="utf-8"))
+          supported = int(report["supported"])
+          unsupported = int(report["unsupported"])
+          missing = int(report["missing_source_definition"])
+          if int(report["required"]) != 184:
+              raise SystemExit(f"required compatibility surface changed: {report['required']} != 184")
+          if supported < 119:
+              raise SystemExit(f"compatibility support regressed: {supported} < 119")
+          if unsupported > 65:
+              raise SystemExit(f"unsupported compatibility surface regressed: {unsupported} > 65")
+          if missing != 0:
+              raise SystemExit(f"compatibility source definitions are missing: {missing}")
+          print(f"compatibility floor OK: supported={supported} unsupported={unsupported} missing={missing}")
+          PY
 
       - name: Upload compatibility evidence
         if: ${{ always() }}
