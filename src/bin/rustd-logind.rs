@@ -4,7 +4,7 @@
 
 #![allow(clippy::unused_self, clippy::needless_pass_by_value)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -157,12 +157,12 @@ impl Manager {
     }
 
     fn list_seats(&self) -> Vec<(String, OwnedObjectPath)> {
-        let mut seats = HashMap::new();
+        let mut seats = HashSet::new();
         for session in logind::sessions() {
-            seats.entry(session.seat.clone()).or_insert(());
+            seats.insert(session.seat.clone());
         }
         seats
-            .into_keys()
+            .into_iter()
             .filter_map(|seat| {
                 path(logind::seat_path(&seat))
                     .ok()
@@ -284,12 +284,14 @@ impl Manager {
         "na"
     }
 
-    async fn power_off(&self, _interactive: bool) -> zbus::fdo::Result<()> {
+    async fn power_off(&self, interactive: bool) -> zbus::fdo::Result<()> {
+        let _ = interactive;
         self.ensure_shutdown_allowed()?;
         self.call_manager_method("PowerOff").await
     }
 
-    async fn reboot(&self, _interactive: bool) -> zbus::fdo::Result<()> {
+    async fn reboot(&self, interactive: bool) -> zbus::fdo::Result<()> {
+        let _ = interactive;
         self.ensure_shutdown_allowed()?;
         self.call_manager_method("Reboot").await
     }
@@ -429,7 +431,7 @@ impl SessionObject {
         true
     }
     #[zbus(property)]
-    fn state(&self) -> &str {
+    fn state(&self) -> &'static str {
         "active"
     }
     #[zbus(property)]
@@ -500,7 +502,7 @@ impl UserObject {
         )
     }
     #[zbus(property)]
-    fn state(&self) -> &str {
+    fn state(&self) -> &'static str {
         "active"
     }
     #[zbus(property)]
@@ -534,7 +536,8 @@ impl UserObject {
     fn terminate(&self) -> zbus::fdo::Result<()> {
         Ok(())
     }
-    fn kill(&self, _signal: i32) -> zbus::fdo::Result<()> {
+    fn kill(&self, signal: i32) -> zbus::fdo::Result<()> {
+        let _ = signal;
         Ok(())
     }
 }
