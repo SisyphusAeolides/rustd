@@ -31,10 +31,10 @@ jobs:
           replacements = [
               ("use std::collections::HashMap;", "use std::collections::{HashMap, HashSet};", 1),
               ("""        let mut seats = HashMap::new();\n        for session in logind::sessions() {\n            seats.entry(session.seat.clone()).or_insert(());\n        }\n        seats\n            .into_keys()\n""", """        let mut seats = HashSet::new();\n        for session in logind::sessions() {\n            seats.insert(session.seat.clone());\n        }\n        seats\n            .into_iter()\n""", 1),
-              ("""    async fn power_off(&self, _interactive: bool) -> zbus::fdo::Result<()> {\n        self.manager\n""", """    async fn power_off(&self, interactive: bool) -> zbus::fdo::Result<()> {\n        let _ = interactive;\n        self.manager\n""", 1),
-              ("""    async fn reboot(&self, _interactive: bool) -> zbus::fdo::Result<()> {\n        self.manager\n""", """    async fn reboot(&self, interactive: bool) -> zbus::fdo::Result<()> {\n        let _ = interactive;\n        self.manager\n""", 1),
-              ("""    fn kill(&self, _signal: i32) -> zbus::fdo::Result<()> {\n        let pid = self\n""", """    fn kill(&self, signal: i32) -> zbus::fdo::Result<()> {\n        let _ = signal;\n        let pid = self\n""", 1),
-              ("fn state<'a>(&'a self) -> &'static str", "fn state(&self) -> &'static str", 2),
+              ("""    async fn power_off(&self, _interactive: bool) -> zbus::fdo::Result<()> {\n""", """    async fn power_off(&self, interactive: bool) -> zbus::fdo::Result<()> {\n        let _ = interactive;\n""", 1),
+              ("""    async fn reboot(&self, _interactive: bool) -> zbus::fdo::Result<()> {\n""", """    async fn reboot(&self, interactive: bool) -> zbus::fdo::Result<()> {\n        let _ = interactive;\n""", 1),
+              ("""    fn kill(&self, _signal: i32) -> zbus::fdo::Result<()> {\n""", """    fn kill(&self, signal: i32) -> zbus::fdo::Result<()> {\n        let _ = signal;\n""", 1),
+              ("fn state(&self) -> &str", "fn state(&self) -> &'static str", 2),
           ]
           for old, new, expected in replacements:
               actual = source.count(old)
