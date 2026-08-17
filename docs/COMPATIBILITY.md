@@ -106,6 +106,20 @@ A compatibility adapter is acceptable only when all of these are true:
 - user-facing RustD diagnostics and documentation continue to identify the
   running component as RustD.
 
+Source-tree compatibility libraries are validation and application-interoperability
+surfaces; the native `make install` target continues to install RustD libraries
+and executables rather than those compatibility SONAMEs. Current regression
+coverage includes:
+
+- [x] compatibility SONAME and required-symbol checks against development
+  headers;
+- [x] journal stream creation and bidirectional journal cursor traversal;
+- [x] pidfd session and owner-UID lookup with pidfd identity validation;
+- [x] device property iteration across the complete native property list;
+- [x] writable device sysattrs with bounded values, trailing newline trimming,
+  real errno propagation, no-write `NULL` behavior, and path traversal
+  rejection.
+
 ## Production-release gates
 
 Source/build readiness requires every authoritative CI and formal gate to pass
@@ -114,8 +128,8 @@ snapshot-backed or otherwise recoverable machine running RustD as PID 1.
 
 Before a release is called production-ready, the project requires:
 
-- [x] native ABI, formatting, Clippy, tests, release build, packaging, lockfile,
-  and formal-model CI gates;
+- [ ] native ABI, formatting, Clippy, tests, release build, packaging, lockfile,
+  and formal-model CI gates pass from the same candidate commit;
 - [ ] repeated clean cold boots with RustD as the sole PID 1;
 - [ ] repeated reboot, poweroff, halt, rescue, emergency, and re-exec campaigns;
 - [ ] crash-loop, timeout-escalation, signal-storm, dependency-failure, and
