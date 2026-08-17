@@ -16,7 +16,7 @@ concurrency:
 jobs:
   pid1-certification:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 55
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,6 +94,28 @@ jobs:
           RUSTD_PID1_SERIAL_LOG=pid1-reexec-serial-1.log \
             bash scripts/ci-pid1-initramfs.sh
 
+      - name: Reboot through RustD ten times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            echo "RustD PID1 reboot certification attempt ${attempt}/10"
+            RUSTD_PID1_TRANSITION=reboot \
+            RUSTD_PID1_SERIAL_LOG="pid1-reboot-serial-${attempt}.log" \
+              bash scripts/ci-pid1-machine-transition.sh
+          done
+
+      - name: Power off through RustD ten times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            echo "RustD PID1 poweroff certification attempt ${attempt}/10"
+            RUSTD_PID1_TRANSITION=poweroff \
+            RUSTD_PID1_SERIAL_LOG="pid1-poweroff-serial-${attempt}.log" \
+              bash scripts/ci-pid1-machine-transition.sh
+          done
+
       - name: Record PID1 boot evidence
         shell: bash
         run: |
@@ -113,6 +135,8 @@ jobs:
           timestamp = int(time.time())
           records = (
               ("boot.cold", 3, "three independent QEMU initramfs cold boots passed with RustD as PID 1 and the normal unit graph healthy"),
+              ("boot.reboot", 10, "ten independent QEMU boots issued rustctl reboot to RustD PID 1, observed the managed keeper ExecStop during the orderly shutdown transaction, and QEMU exited from the guest reboot with -no-reboot"),
+              ("boot.poweroff", 10, "ten independent QEMU boots issued rustctl poweroff to RustD PID 1, observed the managed keeper ExecStop during the orderly shutdown transaction, and QEMU exited from the guest poweroff"),
               ("boot.rescue", 3, "three independent QEMU kernel boots entered rescue.target with RustD as PID 1 and a live rustctl control-plane probe"),
               ("boot.emergency", 3, "three independent QEMU kernel boots entered emergency.target with RustD as PID 1 and a live rustctl control-plane probe"),
               ("boot.reexec", 100, "one QEMU PID 1 campaign completed one hundred rustctl daemon-reexec transactions; the control socket rebound after every exec and a long-running service retained the same live MainPID throughout"),
@@ -141,10 +165,17 @@ jobs:
           if stat.S_IMODE(path.stat().st_mode) != 0o600:
               raise SystemExit("PID1 evidence mode must be 0600")
           records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-          expected = {"boot.cold", "boot.rescue", "boot.emergency", "boot.reexec"}
+          expected = {"boot.cold", "boot.reboot", "boot.poweroff", "boot.rescue", "boot.emergency", "boot.reexec"}
           if {record.get("gate") for record in records} != expected:
               raise SystemExit("PID1 evidence gate set is incomplete")
-          minimums = {"boot.cold": 3, "boot.rescue": 3, "boot.emergency": 3, "boot.reexec": 100}
+          minimums = {
+              "boot.cold": 3,
+              "boot.reboot": 10,
+              "boot.poweroff": 10,
+              "boot.rescue": 3,
+              "boot.emergency": 3,
+              "boot.reexec": 100,
+          }
           for record in records:
               gate = record.get("gate")
               if record.get("status") != "pass":
@@ -155,7 +186,7 @@ jobs:
                   raise SystemExit(f"{gate}: insufficient iterations")
               if not str(record.get("detail", "")).strip():
                   raise SystemExit(f"{gate}: empty detail")
-          print("certification evidence OK: boot.cold,boot.rescue,boot.emergency,boot.reexec")
+          print("certification evidence OK: boot.cold,boot.reboot,boot.poweroff,boot.rescue,boot.emergency,boot.reexec")
           PY
 
       - name: Upload serial certificate logs
