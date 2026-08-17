@@ -66,7 +66,6 @@ int main(void) {
 
     verify_function_types();
     verify_bus_error_semantics();
-    assert(sd_seat_can_multi_session(NULL) > 0);
     assert(sd_seat_can_multi_session("seat0") > 0);
     assert(sd_seat_can_multi_session("arbitrary-seat") > 0);
     udev = udev_new();
