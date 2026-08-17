@@ -1,4 +1,4 @@
-name: Validate portable seccomp table
+name: Validate portable platform ABIs
 
 on:
   push:
@@ -28,7 +28,7 @@ jobs:
             gcc-aarch64-linux-gnu libc6-dev-arm64-cross
           rustup target add aarch64-unknown-linux-gnu
 
-      - name: Scope syscall table to target ABI
+      - name: Scope platform ABIs to the target
         shell: bash
         run: |
           set -euo pipefail
@@ -64,8 +64,25 @@ jobs:
               1,
           )
           path.write_text(source)
+
+          path = Path("src/bin/rustd-update-utmp.rs")
+          source = path.read_text()
+          old_layout = "const _: [(); 384] = [(); size_of::<libc::utmpx>()];"
+          new_layout = """#[cfg(target_arch = "x86_64")]
+const _: [(); 384] = [(); size_of::<libc::utmpx>()];
+#[cfg(target_arch = "aarch64")]
+const _: [(); 400] = [(); size_of::<libc::utmpx>()];"""
+          if source.count(old_layout) != 1:
+              raise SystemExit("utmpx layout assertion drifted")
+          source = source.replace(old_layout, new_layout, 1)
+          old_char = "c_char::try_from(source).unwrap_or(63_i8)"
+          new_char = "c_char::try_from(source).unwrap_or(b'?' as c_char)"
+          if source.count(old_char) != 1:
+              raise SystemExit("utmp c_char conversion drifted")
+          path.write_text(source.replace(old_char, new_char, 1))
           PY
 
+          cargo fmt --all -- --check
           cc -c -std=c11 -O2 -fPIC -fstack-protector-strong \
             -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -Wall -Wextra -Werror \
             -iquote ffi ffi/seccomp.c -o /tmp/seccomp-native.o
@@ -80,7 +97,7 @@ jobs:
           cargo test --locked --lib
 
           git rm -- .github/workflows/fix-seccomp-portability.yml
-          expected=$'.github/workflows/fix-seccomp-portability.yml\nffi/seccomp.c'
+          expected=$'.github/workflows/fix-seccomp-portability.yml\nffi/seccomp.c\nsrc/bin/rustd-update-utmp.rs'
           changed="$(git diff HEAD --name-only | sort)"
           if [[ "$changed" != "$expected" ]]; then
             printf 'Unexpected source changes:\n%s\n' "$changed" >&2
@@ -88,6 +105,6 @@ jobs:
           fi
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
-          git add -- ffi/seccomp.c
-          git commit -m 'Scope seccomp syscalls to target ABI'
+          git add -- ffi/seccomp.c src/bin/rustd-update-utmp.rs
+          git commit -m 'Make platform ABI checks target aware'
           git push origin HEAD:main
