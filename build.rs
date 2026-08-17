@@ -19,12 +19,54 @@ fn object(out_dir: &Path, name: &str) -> PathBuf {
     out_dir.join(format!("{name}.o"))
 }
 
+fn target_tool(variable: &str, target: &str, fallback: &str) -> OsString {
+    let normalized = target.replace(['-', '.'], "_");
+    for key in [
+        format!("{variable}_{target}"),
+        format!("{variable}_{normalized}"),
+        format!("TARGET_{variable}"),
+        variable.to_owned(),
+    ] {
+        if let Some(value) = env::var_os(&key) {
+            if !value.is_empty() {
+                return value;
+            }
+        }
+    }
+
+    if target != env::var("HOST").unwrap_or_default() {
+        let prefix = match target {
+            "aarch64-unknown-linux-gnu" => Some("aarch64-linux-gnu-"),
+            "x86_64-unknown-linux-gnu" => Some("x86_64-linux-gnu-"),
+            "armv7-unknown-linux-gnueabihf" => Some("arm-linux-gnueabihf-"),
+            "powerpc64le-unknown-linux-gnu" => Some("powerpc64le-linux-gnu-"),
+            "s390x-unknown-linux-gnu" => Some("s390x-linux-gnu-"),
+            "riscv64gc-unknown-linux-gnu" => Some("riscv64-linux-gnu-"),
+            _ => None,
+        };
+        if let Some(prefix) = prefix {
+            let executable = match variable {
+                "CC" => "gcc",
+                "AR" => "ar",
+                "FC" => "gfortran",
+                _ => fallback,
+            };
+            return OsString::from(format!("{prefix}{executable}"));
+        }
+    }
+
+    OsString::from(fallback)
+}
+
 fn compile_c(cc: &OsString, source: &str, output: &Path) {
     command(
         cc,
         &[
             OsString::from("-c"),
-            OsString::from("-std=c17"),
+            // RustD's native FFI uses C11 language features. Keeping this at C11
+            // supports a wider set of production cross toolchains without changing
+            // the ABI or the hardening flags used by the native build.
+            OsString::from("-std=c11"),
             OsString::from("-O2"),
             OsString::from("-fPIC"),
             OsString::from("-fstack-protector-strong"),
@@ -73,14 +115,25 @@ fn main() {
     println!("cargo:rerun-if-changed=ffi/capability.c");
     println!("cargo:rerun-if-changed=ffi/capability.h");
 
-    let target = env::var("CARGO_CFG_TARGET_OS").expect("target OS is set by cargo");
-    assert!(target == "linux", "rustd currently supports Linux only");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("target OS is set by cargo");
+    assert!(target_os == "linux", "rustd currently supports Linux only");
+    let target = env::var("TARGET").expect("TARGET is set by cargo");
+
+    for variable in ["CC", "AR", "FC"] {
+        println!("cargo:rerun-if-env-changed={variable}");
+        println!("cargo:rerun-if-env-changed=TARGET_{variable}");
+        println!("cargo:rerun-if-env-changed={variable}_{target}");
+        println!(
+            "cargo:rerun-if-env-changed={variable}_{}",
+            target.replace(['-', '.'], "_")
+        );
+    }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by cargo"));
     fs::create_dir_all(&out_dir).expect("create build output directory");
 
-    let cc = env::var_os("CC").unwrap_or_else(|| OsString::from("cc"));
-    let ar = env::var_os("AR").unwrap_or_else(|| OsString::from("ar"));
+    let cc = target_tool("CC", &target, "cc");
+    let ar = target_tool("AR", &target, "ar");
 
     let native_obj = object(&out_dir, "rustd_native");
     let notify_obj = object(&out_dir, "rustd_notify");
@@ -134,7 +187,7 @@ fn main() {
 
     let fortran_enabled = env::var_os("CARGO_FEATURE_FORTRAN_SCHED").is_some();
     if fortran_enabled {
-        let fc = env::var_os("FC").unwrap_or_else(|| OsString::from("gfortran"));
+        let fc = target_tool("FC", &target, "gfortran");
         let fc_available = Command::new(&fc)
             .arg("--version")
             .status()
@@ -142,8 +195,7 @@ fn main() {
             .unwrap_or(false);
         if !fc_available {
             panic!(
-                "Fortran compiler {:?} not found. \
-                 Install gfortran or set FC= to disable Fortran support.",
+                "Fortran compiler {:?} not found. Install gfortran or provide the target compiler through FC/FC_<target>.",
                 fc
             );
         }
@@ -170,7 +222,7 @@ fn main() {
     }
 
     if env::var_os("CARGO_FEATURE_KALMAN").is_some() {
-        let fc = env::var_os("FC").unwrap_or_else(|| OsString::from("gfortran"));
+        let fc = target_tool("FC", &target, "gfortran");
         let kalman_obj = object(&out_dir, "rustd_kalman_sched");
         command(
             &fc,
