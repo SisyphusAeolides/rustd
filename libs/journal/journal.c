@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -152,6 +153,8 @@ struct rustd_journal {
     char *directory;
     char **paths;
     size_t path_count;
+    /* Current entry index. SIZE_MAX is before the first entry and
+     * path_count is after the last entry. */
     size_t path_index;
     char *entry;
     size_t entry_length;
@@ -203,7 +206,7 @@ static int collect_journal_files(rustd_journal *journal) {
     fclose(stream);
     journal->paths = paths;
     journal->path_count = count;
-    journal->path_index = count; /* start at tail for seek_tail + next */
+    journal->path_index = count;
     return 0;
 }
 
@@ -228,6 +231,8 @@ int rustd_journal_open(rustd_journal **ret, const char *directory) {
         rustd_journal_unref(journal);
         return result;
     }
+    if (result == -ENOENT)
+        journal->path_index = 0;
     *ret = journal;
     return 0;
 }
@@ -243,28 +248,98 @@ void rustd_journal_unref(rustd_journal *journal) {
     free(journal);
 }
 
+static void clear_current_entry(rustd_journal *journal) {
+    free(journal->entry);
+    journal->entry = NULL;
+    journal->entry_length = 0;
+}
+
+static int load_entry(rustd_journal *journal, size_t index) {
+    char *entry;
+
+    if (index >= journal->path_count)
+        return -ERANGE;
+    entry = strdup(journal->paths[index]);
+    if (!entry)
+        return -ENOMEM;
+    clear_current_entry(journal);
+    journal->entry = entry;
+    journal->entry_length = strlen(entry);
+    journal->path_index = index;
+    return 1;
+}
+
 int rustd_journal_seek_tail(rustd_journal *journal) {
     if (!journal)
         return -EINVAL;
     journal->path_index = journal->path_count;
-    free(journal->entry);
-    journal->entry = NULL;
-    journal->entry_length = 0;
+    clear_current_entry(journal);
     return 0;
 }
 
 int rustd_journal_next(rustd_journal *journal) {
+    size_t next_index;
+
     if (!journal)
         return -EINVAL;
-    if (journal->path_index >= journal->path_count)
+    if (journal->path_count == 0)
         return 0;
-    free(journal->entry);
-    journal->entry = strdup(journal->paths[journal->path_index]);
-    if (!journal->entry)
-        return -ENOMEM;
-    journal->entry_length = strlen(journal->entry);
-    journal->path_index++;
-    return 1;
+
+    if (journal->path_index == SIZE_MAX)
+        next_index = 0;
+    else if (journal->path_index >= journal->path_count) {
+        clear_current_entry(journal);
+        return 0;
+    } else {
+        next_index = journal->path_index + 1U;
+        if (next_index >= journal->path_count) {
+            journal->path_index = journal->path_count;
+            clear_current_entry(journal);
+            return 0;
+        }
+    }
+    return load_entry(journal, next_index);
+}
+
+int rustd_journal_previous(rustd_journal *journal) {
+    size_t previous_index;
+
+    if (!journal)
+        return -EINVAL;
+    if (journal->path_count == 0)
+        return 0;
+
+    if (journal->path_index == SIZE_MAX) {
+        clear_current_entry(journal);
+        return 0;
+    }
+    if (journal->path_index >= journal->path_count)
+        previous_index = journal->path_count - 1U;
+    else if (journal->path_index == 0) {
+        journal->path_index = SIZE_MAX;
+        clear_current_entry(journal);
+        return 0;
+    } else
+        previous_index = journal->path_index - 1U;
+
+    return load_entry(journal, previous_index);
+}
+
+int rustd_journal_previous_skip(rustd_journal *journal, uint64_t skip) {
+    int moved = 0;
+
+    if (!journal)
+        return -EINVAL;
+    while (skip > 0 && moved < INT_MAX) {
+        int result = rustd_journal_previous(journal);
+        if (result < 0)
+            return result;
+        if (result == 0)
+            break;
+        moved++;
+        skip--;
+    }
+    return moved;
 }
 
 int rustd_journal_get_data(rustd_journal *journal, const char *field,
