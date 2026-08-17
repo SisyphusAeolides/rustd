@@ -4,7 +4,8 @@
 use std::collections::BTreeSet;
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::fs::symlink;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::{symlink, MetadataExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -19,6 +20,8 @@ use rustd::unit::section_install::InstallSection;
 const VERSION: &str = concat!("RustD ", env!("CARGO_PKG_VERSION"));
 const JOB_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+const REEXEC_TIMEOUT: Duration = Duration::from_secs(10);
+const REEXEC_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Scope {
@@ -112,6 +115,7 @@ fn run() -> anyhow::Result<i32> {
             units: units.iter().map(|unit| (*unit).to_owned()).collect(),
         }),
         "daemon-reload" => simple_request(IpcRequest::DaemonReload),
+        "daemon-reexec" => daemon_reexec(&options, &units),
         "isolate" => {
             let unit = exactly_one(&units, "target")?;
             simple_request(IpcRequest::Isolate {
@@ -187,6 +191,80 @@ fn checked(request: &IpcRequest) -> anyhow::Result<IpcResponse> {
 fn simple_request(request: IpcRequest) -> anyhow::Result<i32> {
     checked(&request)?;
     Ok(0)
+}
+
+fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
+    if !units.is_empty() {
+        anyhow::bail!("daemon-reexec does not accept unit names");
+    }
+    if options.root.is_some() {
+        anyhow::bail!("daemon-reexec may not be combined with --root");
+    }
+
+    let path = control_socket_path();
+    let stream = UnixStream::connect(&path)
+        .map_err(|error| anyhow::anyhow!("cannot connect to {}: {error}", path.display()))?;
+    let metadata = fs::metadata(&path)
+        .map_err(|error| anyhow::anyhow!("cannot stat {}: {error}", path.display()))?;
+    let old_identity = (metadata.dev(), metadata.ino());
+
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut credential_len: libc::socklen_t = std::mem::size_of::<libc::ucred>()
+        .try_into()
+        .expect("ucred size fits socklen_t");
+    // SAFETY: `credentials` and `credential_len` are valid writable storage for
+    // Linux SO_PEERCRED and remain alive for the duration of the syscall.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            (&raw mut credentials).cast(),
+            &raw mut credential_len,
+        )
+    };
+    if result < 0 {
+        anyhow::bail!(
+            "cannot obtain manager credentials from {}: {}",
+            path.display(),
+            std::io::Error::last_os_error()
+        );
+    }
+    let expected_len: libc::socklen_t = std::mem::size_of::<libc::ucred>()
+        .try_into()
+        .expect("ucred size fits socklen_t");
+    if credential_len != expected_len || credentials.pid <= 0 {
+        anyhow::bail!("manager control socket returned invalid peer credentials");
+    }
+    drop(stream);
+
+    // SAFETY: `credentials.pid` was supplied by the kernel for the connected
+    // manager peer and SIGUSR2 is RustD's native re-execute request.
+    if unsafe { libc::kill(credentials.pid, libc::SIGUSR2) } < 0 {
+        anyhow::bail!(
+            "failed to signal manager pid {} for re-exec: {}",
+            credentials.pid,
+            std::io::Error::last_os_error()
+        );
+    }
+
+    let deadline = Instant::now() + REEXEC_TIMEOUT;
+    loop {
+        if let Ok(current) = fs::metadata(&path) {
+            let new_identity = (current.dev(), current.ino());
+            if new_identity != old_identity && UnixStream::connect(&path).is_ok() {
+                return Ok(0);
+            }
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!(
+                "manager did not rebind {} after re-exec within {} seconds",
+                path.display(),
+                REEXEC_TIMEOUT.as_secs()
+            );
+        }
+        std::thread::sleep(REEXEC_POLL_INTERVAL);
+    }
 }
 
 fn exactly_one<'a>(values: &'a [&str], description: &str) -> anyhow::Result<&'a str> {
@@ -677,6 +755,7 @@ fn print_help() {
     println!("  isolate TARGET                     Isolate a target");
     println!("  reset-failed [UNIT...]             Clear failed state");
     println!("  daemon-reload                      Reload unit configuration");
+    println!("  daemon-reexec                      Re-execute the manager in place");
     println!("  cancel [JOB...]                    Cancel jobs");
     println!();
     println!("Options:");
