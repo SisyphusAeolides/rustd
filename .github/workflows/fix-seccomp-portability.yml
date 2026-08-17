@@ -1,0 +1,93 @@
+name: Validate portable seccomp table
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fix-seccomp-portability.yml
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Install cross compiler
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+          rustup target add aarch64-unknown-linux-gnu
+
+      - name: Scope syscall table to target ABI
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path("ffi/seccomp.c")
+          source = path.read_text()
+          start_marker = "static const syscall_entry syscall_table[] = {\n"
+          end_marker = "    { NULL, 0 }\n};"
+          start = source.index(start_marker) + len(start_marker)
+          end = source.index(end_marker, start)
+          body = source[start:end]
+
+          lines = []
+          for line in body.splitlines():
+              stripped = line.strip()
+              if stripped.startswith("#ifdef __NR_") or stripped == "#endif":
+                  continue
+              match = re.fullmatch(r'\s*\{\s*"[^"]+",\s*(__NR_[A-Za-z0-9_]+)\s*\},', line)
+              if match:
+                  macro = match.group(1)
+                  lines.extend([f"#ifdef {macro}", line, "#endif"])
+              else:
+                  lines.append(line)
+
+          rebuilt = "\n".join(lines).strip("\n") + "\n"
+          source = source[:start] + rebuilt + source[end:]
+          source = source.replace(
+              "/* Table of the most common Linux x86-64 syscall names. */",
+              "/* Common Linux syscall names, compiled only when present in the target ABI. */",
+              1,
+          )
+          path.write_text(source)
+          PY
+
+          cc -c -std=c11 -O2 -fPIC -fstack-protector-strong \
+            -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -Wall -Wextra -Werror \
+            -iquote ffi ffi/seccomp.c -o /tmp/seccomp-native.o
+          aarch64-linux-gnu-gcc -c -std=c11 -O2 -fPIC -fstack-protector-strong \
+            -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -Wall -Wextra -Werror \
+            -iquote ffi ffi/seccomp.c -o /tmp/seccomp-aarch64.o
+
+          export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
+          export AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar
+          cargo build --release --locked --target aarch64-unknown-linux-gnu
+          cargo test --locked --lib
+
+          git rm -- .github/workflows/fix-seccomp-portability.yml
+          expected=$'.github/workflows/fix-seccomp-portability.yml\nffi/seccomp.c'
+          changed="$(git diff HEAD --name-only | sort)"
+          if [[ "$changed" != "$expected" ]]; then
+            printf 'Unexpected source changes:\n%s\n' "$changed" >&2
+            exit 1
+          fi
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git add -- ffi/seccomp.c
+          git commit -m 'Scope seccomp syscalls to target ABI'
+          git push origin HEAD:main
