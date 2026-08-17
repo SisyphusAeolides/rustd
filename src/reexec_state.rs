@@ -9,18 +9,18 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::config::ManagerScope;
+use crate::manager::Manager;
+use crate::unit::loader::LoadedUnit;
+use crate::unit::section_service::{NotifyAccess, ServiceSection, ServiceType};
 use crate::unit::UnitState;
 
-pub const REEXEC_STATE_VERSION: u32 = 1;
+pub const REEXEC_STATE_VERSION: u32 = 2;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReexecState {
     pub version: u32,
     pub scope: String,
     pub units: Vec<ReexecUnitState>,
-    pub sockets: Vec<ReexecSocketState>,
-    pub reload_count: u64,
-    pub startup_finished_emitted: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,12 +50,6 @@ pub struct ReexecUnitState {
     pub invocation_id: Option<[u8; 16]>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ReexecSocketState {
-    pub name: String,
-    pub listen_fds: Vec<libc::c_int>,
-}
-
 #[must_use]
 pub fn state_path(scope: ManagerScope) -> PathBuf {
     match scope {
@@ -67,6 +61,173 @@ pub fn state_path(scope: ManagerScope) -> PathBuf {
             root.join("rustd/reexec-state.json")
         }
     }
+}
+
+pub fn save_manager_state(manager: &Manager) -> anyhow::Result<PathBuf> {
+    if !manager.job_registry.is_empty() || !manager.job_queue.is_empty() {
+        anyhow::bail!("manager has live jobs; refusing reexec state handoff");
+    }
+
+    let mut units = Vec::with_capacity(manager.units.len());
+    for (name, record) in &manager.units {
+        if matches!(record.state, UnitState::Activating | UnitState::Deactivating) {
+            anyhow::bail!("unit '{name}' is transitional during reexec handoff");
+        }
+        if record.idle_gate_fd.is_some() {
+            anyhow::bail!("unit '{name}' still owns an idle execution gate");
+        }
+        if matches!(record.state, UnitState::Active | UnitState::Failed) {
+            match &record.loaded {
+                LoadedUnit::Socket(_) | LoadedUnit::Path(_) | LoadedUnit::Timer(_) | LoadedUnit::Automount(_) => {
+                    anyhow::bail!(
+                        "active {} requires event-source adoption that is not yet supported by the reexec handoff: {name}",
+                        unit_kind(&record.loaded)
+                    );
+                }
+                LoadedUnit::Service(service) => {
+                    if service.specific.service_type == ServiceType::Forking
+                        || service.specific.exit_type == "cgroup"
+                    {
+                        anyhow::bail!(
+                            "service '{name}' requires cgroup-source adoption that is not yet supported by the reexec handoff"
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        if record.control_pid.is_some() {
+            anyhow::bail!("unit '{name}' has a live control process during reexec handoff");
+        }
+        if record.state == UnitState::Inactive && record.restart_count > 0 {
+            anyhow::bail!(
+                "inactive unit '{name}' has restart history; refusing to lose a possible pending restart timer"
+            );
+        }
+        units.push(ReexecUnitState {
+            name: name.clone(),
+            state: record.state,
+            active_pid: record.active_pid,
+            control_pid: record.control_pid,
+            stop_requested: record.stop_requested,
+            restart_count: record.restart_count,
+            last_start_ns: record.last_start_ns,
+            start_limit_window_ns: record.start_limit_window_ns,
+            start_limit_count: record.start_limit_count,
+            dynamic_uid: record.dynamic_user.as_ref().map(|identity| identity.uid),
+            status_text: record.status_text.clone(),
+            status_errno: record.status_errno,
+            watchdog_timestamp_ns: record.watchdog_timestamp_ns,
+            watchdog_timestamp_realtime_ns: record.watchdog_timestamp_realtime_ns,
+            exec_main_start_realtime_ns: record.exec_main_start_realtime_ns,
+            exec_main_start_monotonic_ns: record.exec_main_start_monotonic_ns,
+            exec_main_exit_realtime_ns: record.exec_main_exit_realtime_ns,
+            exec_main_exit_monotonic_ns: record.exec_main_exit_monotonic_ns,
+            watchdog_triggered: record.watchdog_triggered,
+            service_result: record.service_result.clone(),
+            exec_main_code: record.exec_main_code,
+            exec_main_status: record.exec_main_status,
+            invocation_id: record.invocation_id,
+        });
+    }
+    units.sort_by(|left, right| left.name.cmp(&right.name));
+
+    let state = ReexecState {
+        version: REEXEC_STATE_VERSION,
+        scope: scope_name(manager.config.scope).to_owned(),
+        units,
+    };
+    let path = state_path(manager.config.scope);
+    write_state(&path, &state)?;
+    Ok(path)
+}
+
+pub fn restore_manager_state(manager: &mut Manager, path: &Path) -> anyhow::Result<()> {
+    let state = read_state(path)?;
+    let expected_scope = scope_name(manager.config.scope);
+    if state.scope != expected_scope {
+        anyhow::bail!(
+            "reexec state scope '{}' does not match manager scope '{expected_scope}'",
+            state.scope
+        );
+    }
+    if !manager.units.is_empty() || !manager.job_registry.is_empty() {
+        anyhow::bail!("reexec restore requires a fresh manager registry");
+    }
+
+    for saved in &state.units {
+        manager.load_unit(&saved.name)?;
+        let record = manager
+            .units
+            .get_mut(&saved.name)
+            .ok_or_else(|| anyhow::anyhow!("restored unit '{}' disappeared", saved.name))?;
+        for pid in [saved.active_pid, saved.control_pid].into_iter().flatten() {
+            if !pid_is_alive(pid) {
+                anyhow::bail!("unit '{}' references dead pid {pid} in reexec state", saved.name);
+            }
+        }
+        if matches!(saved.state, UnitState::Active | UnitState::Failed) {
+            match &record.loaded {
+                LoadedUnit::Socket(_) | LoadedUnit::Path(_) | LoadedUnit::Timer(_) | LoadedUnit::Automount(_) => {
+                    anyhow::bail!(
+                        "reexec state contains unsupported active {}: {}",
+                        unit_kind(&record.loaded),
+                        saved.name
+                    );
+                }
+                LoadedUnit::Service(service) => {
+                    if service.specific.service_type == ServiceType::Forking
+                        || service.specific.exit_type == "cgroup"
+                    {
+                        anyhow::bail!(
+                            "reexec state contains service requiring unsupported cgroup adoption: {}",
+                            saved.name
+                        );
+                    }
+                }
+                _ => {}
+            }
+        }
+        record.state = saved.state;
+        record.active_pid = saved.active_pid;
+        record.control_pid = saved.control_pid;
+        record.stop_requested = saved.stop_requested;
+        record.restart_count = saved.restart_count;
+        record.last_start_ns = saved.last_start_ns;
+        record.start_limit_window_ns = saved.start_limit_window_ns;
+        record.start_limit_count = saved.start_limit_count;
+        record.dynamic_user = saved
+            .dynamic_uid
+            .map(|uid| crate::dynamic_user::DynamicUser::adopt(&saved.name, uid))
+            .transpose()?;
+        record.status_text.clone_from(&saved.status_text);
+        record.status_errno = saved.status_errno;
+        record.watchdog_timestamp_ns = saved.watchdog_timestamp_ns;
+        record.watchdog_timestamp_realtime_ns = saved.watchdog_timestamp_realtime_ns;
+        record.exec_main_start_realtime_ns = saved.exec_main_start_realtime_ns;
+        record.exec_main_start_monotonic_ns = saved.exec_main_start_monotonic_ns;
+        record.exec_main_exit_realtime_ns = saved.exec_main_exit_realtime_ns;
+        record.exec_main_exit_monotonic_ns = saved.exec_main_exit_monotonic_ns;
+        record.watchdog_triggered = saved.watchdog_triggered;
+        record.service_result.clone_from(&saved.service_result);
+        record.exec_main_code = saved.exec_main_code;
+        record.exec_main_status = saved.exec_main_status;
+        record.invocation_id = saved.invocation_id;
+    }
+
+    if let Some(notify) = manager.notify.as_ref() {
+        for (name, record) in &manager.units {
+            let (Some(pid), LoadedUnit::Service(service)) = (record.active_pid, &record.loaded) else {
+                continue;
+            };
+            if let Some(access) = effective_notify_access(&service.specific) {
+                notify.register_pid(pid, name.clone(), access);
+            }
+        }
+    }
+
+    fs::remove_file(path)?;
+    Ok(())
 }
 
 pub fn write_state(path: &Path, state: &ReexecState) -> anyhow::Result<()> {
@@ -122,5 +283,47 @@ pub fn scope_name(scope: ManagerScope) -> &'static str {
     match scope {
         ManagerScope::System => "system",
         ManagerScope::User => "user",
+    }
+}
+
+fn pid_is_alive(pid: libc::pid_t) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    if unsafe { libc::kill(pid, 0) } == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn effective_notify_access(section: &ServiceSection) -> Option<NotifyAccess> {
+    let notification_enabled = section.notify_access != NotifyAccess::None
+        || section.watchdog_sec.is_some()
+        || matches!(
+            section.service_type,
+            ServiceType::Notify | ServiceType::NotifyReload
+        );
+    if !notification_enabled {
+        return None;
+    }
+    Some(if section.notify_access == NotifyAccess::None {
+        NotifyAccess::Main
+    } else {
+        section.notify_access
+    })
+}
+
+fn unit_kind(unit: &LoadedUnit) -> &'static str {
+    match unit {
+        LoadedUnit::Service(_) => "service",
+        LoadedUnit::Socket(_) => "socket",
+        LoadedUnit::Automount(_) => "automount",
+        LoadedUnit::Timer(_) => "timer",
+        LoadedUnit::Path(_) => "path",
+        LoadedUnit::Mount(_) => "mount",
+        LoadedUnit::Swap(_) => "swap",
+        LoadedUnit::Target(_) => "target",
+        LoadedUnit::Slice(_) => "slice",
+        LoadedUnit::Scope(_) => "scope",
     }
 }
