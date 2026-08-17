@@ -65,6 +65,13 @@ pub fn state_path(scope: ManagerScope) -> PathBuf {
     }
 }
 
+/// Serialize the manager state that can safely survive an in-place exec.
+///
+/// # Errors
+///
+/// Returns an error when the manager has live jobs, transitional units, event
+/// sources or service modes that cannot yet be adopted after re-exec, or when
+/// the owner-only state file cannot be serialized and durably written.
 pub fn save_manager_state(manager: &Manager) -> anyhow::Result<PathBuf> {
     if !manager.job_registry.is_empty() || !manager.job_queue.is_empty() {
         anyhow::bail!("manager has live jobs; refusing reexec state handoff");
@@ -150,6 +157,14 @@ pub fn save_manager_state(manager: &Manager) -> anyhow::Result<PathBuf> {
     Ok(path)
 }
 
+/// Restore a validated re-exec snapshot into a fresh manager registry.
+///
+/// # Errors
+///
+/// Returns an error when the snapshot cannot be read or validated, its scope
+/// does not match the manager, the manager is not fresh, a referenced unit or
+/// process cannot be restored safely, dynamic-user adoption fails, or the
+/// consumed state file cannot be removed.
 pub fn restore_manager_state(manager: &mut Manager, path: &Path) -> anyhow::Result<()> {
     let state = read_state(path)?;
     let expected_scope = scope_name(manager.config.scope);
@@ -245,6 +260,13 @@ pub fn restore_manager_state(manager: &mut Manager, path: &Path) -> anyhow::Resu
     Ok(())
 }
 
+/// Atomically persist a re-exec snapshot with owner-only permissions.
+///
+/// # Errors
+///
+/// Returns an error if the destination has no parent, serialization fails, or
+/// the parent directory, temporary file, final rename, permission update, or
+/// durability writes fail.
 pub fn write_state(path: &Path, state: &ReexecState) -> anyhow::Result<()> {
     let parent = path
         .parent()
@@ -271,6 +293,13 @@ pub fn write_state(path: &Path, state: &ReexecState) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Read and validate an owner-only re-exec snapshot.
+///
+/// # Errors
+///
+/// Returns an error if metadata or file reads fail, the path is not a regular
+/// file owned by the effective UID with owner-only permissions, JSON decoding
+/// fails, or the serialized state version is unsupported.
 pub fn read_state(path: &Path) -> anyhow::Result<ReexecState> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() {
