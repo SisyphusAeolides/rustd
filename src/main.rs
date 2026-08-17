@@ -148,18 +148,36 @@ fn main() -> anyhow::Result<()> {
     }
 
     // 4. Start the manager and install the supervisor watchdog, if one was
-    // passed through the sd-daemon environment.
+    // passed through the sd-daemon environment. A re-executed manager adopts
+    // the exact supported live graph instead of replaying the boot transaction.
     let mut manager = Manager::new(config)?;
     if !user_mode {
         if let Some(timeout) = rustd::native::watchdog_enabled(true)? {
             rustd::native::install_watchdog(&mut manager.event_loop, timeout)?;
         }
     }
-    manager.enqueue_start(&target)?;
+    let restored = match std::env::var_os("RUSTD_REEXEC_STATE") {
+        Some(path) => {
+            let path = std::path::PathBuf::from(path);
+            rustd::reexec_state::restore_manager_state(&mut manager, &path).map_err(|error| {
+                anyhow::anyhow!("rustd: failed to restore reexec state {}: {error}", path.display())
+            })?;
+            std::env::remove_var("RUSTD_REEXEC_STATE");
+            true
+        }
+        None => false,
+    };
+    if !restored {
+        manager.enqueue_start(&target)?;
+    }
 
     // 5. Run until a terminal result.
     let result = manager.run()?;
     let exit_code = manager.exit_code();
+    if result == LoopResult::Reexecute {
+        let path = rustd::reexec_state::save_manager_state(&manager)?;
+        std::env::set_var("RUSTD_REEXEC_STATE", path);
+    }
     if result != LoopResult::Reexecute {
         if let Err(error) = rustd::native::notify_stopping() {
             eprintln!("rustd: stopping notification failed: {error}");
