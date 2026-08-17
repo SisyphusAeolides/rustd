@@ -201,14 +201,11 @@ int sd_journal_next(rustd_journal *journal) {
 }
 
 int sd_journal_previous(rustd_journal *journal) {
-    (void)journal;
-    return 0;
+    return rustd_journal_previous(journal);
 }
 
 int sd_journal_previous_skip(rustd_journal *journal, uint64_t skip) {
-    (void)journal;
-    (void)skip;
-    return 0;
+    return rustd_journal_previous_skip(journal, skip);
 }
 
 int sd_journal_get_data(
@@ -575,6 +572,7 @@ struct sd_device {
     unsigned refs;
     rustd_device_ctx *ctx;
     rustd_device *dev;
+    rustd_device_list_entry *property_cursor;
 };
 
 struct sd_device_monitor {
@@ -855,6 +853,7 @@ const char *sd_device_get_property_first(struct sd_device *device, const char **
     if (!device || !device->dev)
         return NULL;
     entry = rustd_device_get_properties_list_entry(device->dev);
+    device->property_cursor = entry;
     if (!entry)
         return NULL;
     if (value)
@@ -863,9 +862,17 @@ const char *sd_device_get_property_first(struct sd_device *device, const char **
 }
 
 const char *sd_device_get_property_next(struct sd_device *device, const char **value) {
-    (void)device;
-    (void)value;
-    return NULL;
+    rustd_device_list_entry *entry;
+
+    if (!device || !device->dev || !device->property_cursor)
+        return NULL;
+    entry = rustd_device_list_entry_get_next(device->property_cursor);
+    device->property_cursor = entry;
+    if (!entry)
+        return NULL;
+    if (value)
+        *value = rustd_device_list_entry_get_value(entry);
+    return rustd_device_list_entry_get_name(entry);
 }
 
 struct sd_device_enumerator {
