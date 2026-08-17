@@ -85,6 +85,37 @@ impl DynamicUser {
         );
     }
 
+    /// Adopt an allocation that survived an in-place manager exec.
+    ///
+    /// The old process image does not run `Drop`, so its lock file remains
+    /// authoritative. Refuse to manufacture a new identity if that exact
+    /// lock is missing or has unsafe permissions.
+    pub fn adopt(service_name: &str, uid: libc::uid_t) -> anyhow::Result<Self> {
+        if !(DYNAMIC_UID_MIN..=DYNAMIC_UID_MAX).contains(&uid) {
+            anyhow::bail!("dynamic UID {uid} is outside the allocation range");
+        }
+        let dir = PathBuf::from(dynamic_uid_dir());
+        let lock_path = dir.join(format!("{uid}-{service_name}"));
+        let metadata = fs::symlink_metadata(&lock_path)?;
+        if !metadata.file_type().is_file() {
+            anyhow::bail!(
+                "dynamic-user lock is not a regular file: {}",
+                lock_path.display()
+            );
+        }
+        if metadata.permissions().mode() & 0o077 != 0 {
+            anyhow::bail!(
+                "dynamic-user lock is group/world accessible: {}",
+                lock_path.display()
+            );
+        }
+        Ok(Self {
+            uid,
+            name: service_name.to_owned(),
+            lock_path,
+        })
+    }
+
     #[must_use]
     pub fn gid(&self) -> libc::gid_t {
         self.uid as libc::gid_t
