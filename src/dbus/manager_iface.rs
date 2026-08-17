@@ -5840,9 +5840,7 @@ fn job_method_authorization_error(error: zbus::fdo::Error) -> JobMethodError {
     JobMethodError::AccessDenied(error.to_string())
 }
 
-async fn shutdown_blocked_by_inhibitors(
-    connection: &zbus::Connection,
-) -> zbus::fdo::Result<()> {
+async fn shutdown_blocked_by_inhibitors(connection: &zbus::Connection) -> zbus::fdo::Result<()> {
     let reply = match connection
         .call_method(
             Some("org.freedesktop.login1"),
