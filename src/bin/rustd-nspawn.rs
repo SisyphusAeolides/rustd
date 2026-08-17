@@ -29,19 +29,39 @@ const VERSION_OUTPUT: &str = concat!(
     version = VERSION_OUTPUT
 )]
 struct Cli {
-    #[arg(short = 'D', long = "directory", help = "Root directory for the container")]
+    #[arg(
+        short = 'D',
+        long = "directory",
+        help = "Root directory for the container"
+    )]
     directory: Option<PathBuf>,
 
-    #[arg(short = 'i', long = "image", help = "Root image file for the container")]
+    #[arg(
+        short = 'i',
+        long = "image",
+        help = "Root image file for the container"
+    )]
     image: Option<PathBuf>,
 
-    #[arg(short = 'b', long = "boot", help = "Boot up full operating system (run init)")]
+    #[arg(
+        short = 'b',
+        long = "boot",
+        help = "Boot up full operating system (run init)"
+    )]
     boot: bool,
 
-    #[arg(short = 'u', long = "user", help = "Run the command under specified user")]
+    #[arg(
+        short = 'u',
+        long = "user",
+        help = "Run the command under specified user"
+    )]
     user: Option<String>,
 
-    #[arg(short = 'M', long = "machine", help = "Set machine name for the container")]
+    #[arg(
+        short = 'M',
+        long = "machine",
+        help = "Set machine name for the container"
+    )]
     machine: Option<String>,
 
     #[arg(long = "uuid", help = "Set container UUID")]
@@ -62,22 +82,35 @@ struct Cli {
     #[arg(long = "overlay-ro", action = clap::ArgAction::Append, help = "Read-only overlay mount directories")]
     overlay_ro: Vec<String>,
 
-    #[arg(short = 'x', long = "ephemeral", help = "Run container on temporary snapshot")]
+    #[arg(
+        short = 'x',
+        long = "ephemeral",
+        help = "Run container on temporary snapshot"
+    )]
     ephemeral: bool,
 
     #[arg(long = "volatile", help = "Run container in volatile mode")]
     volatile: Option<String>,
 
-    #[arg(long = "network-veth", help = "Add virtual ethernet link between host and container")]
+    #[arg(
+        long = "network-veth",
+        help = "Add virtual ethernet link between host and container"
+    )]
     network_veth: bool,
 
-    #[arg(long = "network-bridge", help = "Bridge a virtual ethernet link to a host interface")]
+    #[arg(
+        long = "network-bridge",
+        help = "Bridge a virtual ethernet link to a host interface"
+    )]
     network_bridge: Option<String>,
 
     #[arg(long = "network-interface", help = "Move host interface to container")]
     network_interface: Option<String>,
 
-    #[arg(long = "network-macvlan", help = "Create macvlan interface in container")]
+    #[arg(
+        long = "network-macvlan",
+        help = "Create macvlan interface in container"
+    )]
     network_macvlan: Option<String>,
 
     #[arg(long = "network-ipvlan", help = "Create ipvlan interface in container")]
@@ -160,7 +193,10 @@ fn unshare(flags: libc::c_int, description: &str) -> io::Result<()> {
     } else {
         Err(io::Error::new(
             io::Error::last_os_error().kind(),
-            format!("failed to create {description}: {}", io::Error::last_os_error()),
+            format!(
+                "failed to create {description}: {}",
+                io::Error::last_os_error()
+            ),
         ))
     }
 }
@@ -188,21 +224,30 @@ fn make_mount_namespace_private() -> io::Result<()> {
     } else {
         Err(io::Error::new(
             io::Error::last_os_error().kind(),
-            format!("failed to make mount namespace private: {}", io::Error::last_os_error()),
+            format!(
+                "failed to make mount namespace private: {}",
+                io::Error::last_os_error()
+            ),
         ))
     }
 }
 
 fn set_container_hostname(machine_name: &str) -> io::Result<()> {
     let hostname = CString::new(machine_name).map_err(|_| {
-        io::Error::new(io::ErrorKind::InvalidInput, "machine name contains an embedded NUL byte")
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "machine name contains an embedded NUL byte",
+        )
     })?;
     if unsafe { libc::sethostname(hostname.as_ptr(), machine_name.len()) } == 0 {
         Ok(())
     } else {
         Err(io::Error::new(
             io::Error::last_os_error().kind(),
-            format!("failed to set container hostname: {}", io::Error::last_os_error()),
+            format!(
+                "failed to set container hostname: {}",
+                io::Error::last_os_error()
+            ),
         ))
     }
 }
@@ -282,7 +327,10 @@ fn main() {
     } else if let Some(machine) = cli.machine.as_ref() {
         let machine_dir = PathBuf::from("/var/lib/machines").join(machine);
         if !machine_dir.is_dir() {
-            fail(format!("machine root does not exist: {}", machine_dir.display()));
+            fail(format!(
+                "machine root does not exist: {}",
+                machine_dir.display()
+            ));
         }
         machine_dir
     } else {
@@ -290,7 +338,10 @@ fn main() {
     };
 
     if !root_path.is_dir() {
-        fail(format!("container root is not a directory: {}", root_path.display()));
+        fail(format!(
+            "container root is not a directory: {}",
+            root_path.display()
+        ));
     }
     let root_path = root_path
         .canonicalize()
@@ -328,7 +379,10 @@ fn main() {
     };
 
     if !cli.quiet {
-        eprintln!("Spawning RustD container {machine_name} on {}.", root_path.display());
+        eprintln!(
+            "Spawning RustD container {machine_name} on {}.",
+            root_path.display()
+        );
         eprintln!("Operating system: {os_name}");
     }
 
@@ -346,7 +400,9 @@ fn main() {
     );
     for item in &cli.setenv {
         let Some((key, value)) = item.split_once('=') else {
-            fail(format!("invalid --setenv value (expected KEY=VALUE): {item}"));
+            fail(format!(
+                "invalid --setenv value (expected KEY=VALUE): {item}"
+            ));
         };
         if key.is_empty() {
             fail("environment variable name may not be empty");
@@ -359,7 +415,8 @@ fn main() {
         configure_user_namespace().unwrap_or_else(|error| fail(error));
     }
 
-    let mut clone_flags = libc::CLONE_NEWNS | libc::CLONE_NEWPID | libc::CLONE_NEWUTS | libc::CLONE_NEWIPC;
+    let mut clone_flags =
+        libc::CLONE_NEWNS | libc::CLONE_NEWPID | libc::CLONE_NEWUTS | libc::CLONE_NEWIPC;
     if cli.private_network {
         clone_flags |= libc::CLONE_NEWNET;
     }

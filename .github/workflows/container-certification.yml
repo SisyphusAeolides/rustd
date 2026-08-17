@@ -26,7 +26,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends busybox-static gfortran
+          sudo apt-get install --yes --no-install-recommends apparmor busybox-static gfortran
 
       - name: Install Rust 1.75.0
         shell: bash
@@ -40,12 +40,21 @@ jobs:
           set -euo pipefail
           cargo +1.75.0 build --release --locked --bin rustd-nspawn
 
+      - name: Install rootless user-namespace policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo install -Dm0755 target/release/rustd-nspawn /usr/bin/rustd-nspawn
+          sudo install -Dm0644 packaging/apparmor/usr.bin.rustd-nspawn /etc/apparmor.d/usr.bin.rustd-nspawn
+          sudo apparmor_parser -r /etc/apparmor.d/usr.bin.rustd-nspawn
+          sudo apparmor_status | grep -Fq '/usr/bin/rustd-nspawn'
+
       - name: Certify rootful and rootless isolation
         shell: bash
         run: |
           set -euo pipefail
           evidence=/tmp/rustd-container-certification.jsonl
-          bash scripts/ci-container-certification.sh target/release/rustd-nspawn "$evidence" \
+          bash scripts/ci-container-certification.sh /usr/bin/rustd-nspawn "$evidence" \
             2>&1 | tee /tmp/rustd-container-certification.log
           python3 - "$evidence" "$GITHUB_SHA" "$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)" <<'PY'
           import json
