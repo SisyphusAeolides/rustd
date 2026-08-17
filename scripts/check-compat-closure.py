@@ -16,6 +16,8 @@ FUNCTION = re.compile(
     r"(?m)^[\w\s*]+\b((?:sd_|udev_)[A-Za-z0-9_]+)\s*\([^;]*?\)\s*\{"
 )
 UNSUPPORTED_MARKERS = ("ENOSYS", "rustd_bus_enosys")
+STUB_SOURCE = Path("libs/compat/sd_bus_stubs.c")
+STUB_DATA_SYMBOLS = {"sd_bus_object_vtable_format"}
 
 
 def dynamic_symbols(path: Path, *, undefined: bool) -> set[str]:
@@ -48,17 +50,19 @@ def function_body(source: str, start: int) -> str:
     return source[start:cursor]
 
 
-def fail_closed_symbols(root: Path) -> set[str]:
-    unsupported: set[str] = set()
+def unsupported_symbols(root: Path) -> set[str]:
+    unsupported = set(STUB_DATA_SYMBOLS)
     for relative in (
         Path("libs/compat/systemd.c"),
-        Path("libs/compat/sd_bus_stubs.c"),
+        STUB_SOURCE,
         Path("libs/compat/udev.c"),
     ):
         source = (root / relative).read_text(encoding="utf-8")
         for match in FUNCTION.finditer(source):
             body = function_body(source, match.end())
-            if any(marker in body for marker in UNSUPPORTED_MARKERS):
+            if relative == STUB_SOURCE or any(
+                marker in body for marker in UNSUPPORTED_MARKERS
+            ):
                 unsupported.add(match.group(1))
     return unsupported
 
@@ -89,20 +93,20 @@ def main() -> int:
     missing = sorted(required - provided)
 
     repository_root = Path(__file__).resolve().parents[1]
-    fail_closed = fail_closed_symbols(repository_root)
+    unsupported_exports = unsupported_symbols(repository_root)
     unsupported = sorted(
-        symbol for symbol in required if unversioned(symbol) in fail_closed
+        symbol for symbol in required if unversioned(symbol) in unsupported_exports
     )
 
     print(
         f"compat closure: {len(consumers)} consumers, "
         f"{len(required)} required versioned symbols, {len(missing)} missing, "
-        f"{len(unsupported)} fail-closed"
+        f"{len(unsupported)} unsupported"
     )
     for symbol in missing:
         print(f"MISSING {symbol}")
     for symbol in unsupported:
-        print(f"FAIL_CLOSED {symbol}")
+        print(f"UNSUPPORTED {symbol}")
 
     return 1 if missing or unsupported else 0
 
