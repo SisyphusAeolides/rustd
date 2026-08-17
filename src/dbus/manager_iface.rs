@@ -3727,9 +3727,7 @@ impl ManagerInterface {
             )));
         }
         authorize_privileged_caller(connection, header).await?;
-        if let Err(error) = shutdown_blocked_by_inhibitors(connection).await {
-            return Err(error);
-        }
+        shutdown_blocked_by_inhibitors(connection).await?;
         self.shutdown_action.store(action, Ordering::Release);
         self.wake
             .wake()
