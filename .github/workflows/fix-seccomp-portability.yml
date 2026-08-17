@@ -91,6 +91,15 @@ jobs:
           if source.count(".cast::<i8>()") != 4:
               raise SystemExit("timedate C format pointer layout drifted")
           source = source.replace(".cast::<i8>()", ".cast::<libc::c_char>()")
+          long_utc = 'b"%a %Y-%m-%d %H:%M:%S UTC\\0".as_ptr().cast::<libc::c_char>(),'
+          formatted_utc = (
+              'b"%a %Y-%m-%d %H:%M:%S UTC\\0"\n'
+              '                .as_ptr()\n'
+              '                .cast::<libc::c_char>(), '
+          ).rstrip()
+          if source.count(long_utc) != 1:
+              raise SystemExit("timedate UTC format expression drifted")
+          source = source.replace(long_utc, formatted_utc, 1)
           source = source.replace(
               "// In a real implementation this would talk to systemd-timedated over D-Bus\n        // or require root privileges to modify /etc/localtime directly.",
               "// RustD applies the timezone directly here when the caller has the required privileges.",
