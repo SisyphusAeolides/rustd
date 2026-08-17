@@ -395,12 +395,12 @@ fn format_timestamp(usec: u64) -> String {
     unsafe {
         libc::localtime_r(&secs, &mut tm_local);
     }
-    let mut local_buf = [0i8; 128];
+    let mut local_buf = [0 as libc::c_char; 128];
     unsafe {
         libc::strftime(
             local_buf.as_mut_ptr(),
             local_buf.len(),
-            b"%a %Y-%m-%d %H:%M:%S %Z\0".as_ptr().cast::<i8>(),
+            b"%a %Y-%m-%d %H:%M:%S %Z\0".as_ptr().cast::<libc::c_char>(),
             &tm_local,
         );
         std::ffi::CStr::from_ptr(local_buf.as_ptr())

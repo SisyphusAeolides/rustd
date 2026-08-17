@@ -588,7 +588,7 @@ fn run(mut options: Options) -> Result<i32, ()> {
 
 #[allow(clippy::similar_names)] // PID/UID/GID are the canonical SCM_CREDENTIALS field names.
 fn action_fork(command: &[String], quiet: bool) -> Result<i32, ()> {
-    let mut notify_address = [0_i8; 128];
+    let mut notify_address = [0 as libc::c_char; 128];
     // SAFETY: the address buffer is writable and the returned descriptor is newly owned.
     let socket_fd =
         unsafe { rustd_notify_autobind(notify_address.as_mut_ptr(), notify_address.len()) };

@@ -14,7 +14,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const AUDIT_SYSTEM_BOOT: c_int = 1127;
 const AUDIT_SYSTEM_SHUTDOWN: c_int = 1128;
 const USEC_PER_SEC: u64 = 1_000_000;
+#[cfg(target_arch = "x86_64")]
 const _: [(); 384] = [(); size_of::<libc::utmpx>()];
+#[cfg(target_arch = "aarch64")]
+const _: [(); 400] = [(); size_of::<libc::utmpx>()];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Verb {
@@ -266,7 +269,7 @@ fn write_utmp_wtmp(verb: Verb, timestamp_usec: u64) -> Result<(), Vec<u8>> {
 
 fn copy_c_chars<const N: usize>(destination: &mut [c_char; N], source: &[u8]) {
     for (destination, source) in destination.iter_mut().zip(source.iter().copied()) {
-        *destination = c_char::try_from(source).unwrap_or(63_i8);
+        *destination = c_char::try_from(source).unwrap_or(b'?' as c_char);
     }
 }
 

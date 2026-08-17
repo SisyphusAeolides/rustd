@@ -20,12 +20,12 @@ fn get_tz_abbreviation() -> String {
     unsafe {
         libc::localtime_r(&now, &mut tm_local);
     }
-    let mut local_buf = [0i8; 100];
+    let mut local_buf = [0 as libc::c_char; 100];
     unsafe {
         libc::strftime(
             local_buf.as_mut_ptr(),
             local_buf.len(),
-            b"%Z\0".as_ptr().cast::<i8>(),
+            b"%Z\0".as_ptr().cast::<libc::c_char>(),
             &tm_local,
         );
     }
@@ -41,12 +41,12 @@ fn get_tz_offset() -> String {
     unsafe {
         libc::localtime_r(&now, &mut tm_local);
     }
-    let mut local_buf = [0i8; 100];
+    let mut local_buf = [0 as libc::c_char; 100];
     unsafe {
         libc::strftime(
             local_buf.as_mut_ptr(),
             local_buf.len(),
-            b"%z\0".as_ptr().cast::<i8>(),
+            b"%z\0".as_ptr().cast::<libc::c_char>(),
             &tm_local,
         );
     }
@@ -67,20 +67,22 @@ fn print_status() {
         libc::gmtime_r(&now, &mut tm_utc);
     }
 
-    let mut local_buf = [0i8; 100];
-    let mut utc_buf = [0i8; 100];
+    let mut local_buf = [0 as libc::c_char; 100];
+    let mut utc_buf = [0 as libc::c_char; 100];
 
     unsafe {
         libc::strftime(
             local_buf.as_mut_ptr(),
             local_buf.len(),
-            b"%a %Y-%m-%d %H:%M:%S %Z\0".as_ptr().cast::<i8>(),
+            b"%a %Y-%m-%d %H:%M:%S %Z\0".as_ptr().cast::<libc::c_char>(),
             &tm_local,
         );
         libc::strftime(
             utc_buf.as_mut_ptr(),
             utc_buf.len(),
-            b"%a %Y-%m-%d %H:%M:%S UTC\0".as_ptr().cast::<i8>(),
+            b"%a %Y-%m-%d %H:%M:%S UTC\0"
+                .as_ptr()
+                .cast::<libc::c_char>(),
             &tm_utc,
         );
     }
@@ -116,8 +118,7 @@ fn main() {
             eprintln!("Invalid timezone: {tz}");
             std::process::exit(1);
         }
-        // In a real implementation this would talk to systemd-timedated over D-Bus
-        // or require root privileges to modify /etc/localtime directly.
+        // RustD applies the timezone directly here when the caller has the required privileges.
         let tmp_path = "/etc/localtime.tmp.rusttimedatectl";
         if let Err(e) = symlink(&target, tmp_path) {
             eprintln!("Failed to create symlink: {e} (are you root?)");
