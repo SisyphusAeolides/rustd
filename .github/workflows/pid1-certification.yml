@@ -61,11 +61,31 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3; do
             echo "RustD PID1 cold-boot certification attempt ${attempt}/3"
-            RUSTD_PID1_SERIAL_LOG="pid1-serial-${attempt}.log" \
+            RUSTD_PID1_SERIAL_LOG="pid1-cold-serial-${attempt}.log" \
               bash scripts/ci-pid1-initramfs.sh
           done
 
-      - name: Record cold-boot evidence
+      - name: Boot rescue target three times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "RustD PID1 rescue certification attempt ${attempt}/3"
+            RUSTD_PID1_SERIAL_LOG="pid1-rescue-serial-${attempt}.log" \
+              bash scripts/ci-pid1-special-target.sh rescue
+          done
+
+      - name: Boot emergency target three times
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "RustD PID1 emergency certification attempt ${attempt}/3"
+            RUSTD_PID1_SERIAL_LOG="pid1-emergency-serial-${attempt}.log" \
+              bash scripts/ci-pid1-special-target.sh emergency
+          done
+
+      - name: Record PID1 boot evidence
         shell: bash
         run: |
           set -euo pipefail
@@ -81,18 +101,50 @@ jobs:
               f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
               f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
           )
-          print(json.dumps({
-              "gate": "boot.cold",
-              "status": "pass",
-              "detail": "three independent QEMU initramfs cold boots passed with RustD as PID 1",
-              "ts": int(time.time()),
-              "rustd_sha": rustd_sha,
-              "resolved_sha": resolved_sha,
-              "iterations": 3,
-              "source": source,
-          }, sort_keys=True, separators=(",", ":")))
+          timestamp = int(time.time())
+          records = (
+              ("boot.cold", "three independent QEMU initramfs cold boots passed with RustD as PID 1 and the normal unit graph healthy"),
+              ("boot.rescue", "three independent QEMU kernel boots entered rescue.target with RustD as PID 1 and a live rustctl control-plane probe"),
+              ("boot.emergency", "three independent QEMU kernel boots entered emergency.target with RustD as PID 1 and a live rustctl control-plane probe"),
+          )
+          for gate, detail in records:
+              print(json.dumps({
+                  "gate": gate,
+                  "status": "pass",
+                  "detail": detail,
+                  "ts": timestamp,
+                  "rustd_sha": rustd_sha,
+                  "resolved_sha": resolved_sha,
+                  "iterations": 3,
+                  "source": source,
+              }, sort_keys=True, separators=(",", ":")))
           PY
-          chmod 0644 pid1-certification-evidence.jsonl
+          chmod 0600 pid1-certification-evidence.jsonl
+          python3 - "$GITHUB_SHA" "$resolved_sha" <<'PY'
+          import json
+          import stat
+          import sys
+          from pathlib import Path
+
+          rustd_sha, resolved_sha = sys.argv[1:]
+          path = Path("pid1-certification-evidence.jsonl")
+          if stat.S_IMODE(path.stat().st_mode) != 0o600:
+              raise SystemExit("PID1 evidence mode must be 0600")
+          records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+          expected = {"boot.cold", "boot.rescue", "boot.emergency"}
+          if {record.get("gate") for record in records} != expected:
+              raise SystemExit("PID1 evidence gate set is incomplete")
+          for record in records:
+              if record.get("status") != "pass":
+                  raise SystemExit(f"{record.get('gate')}: status is not pass")
+              if record.get("rustd_sha") != rustd_sha or record.get("resolved_sha") != resolved_sha:
+                  raise SystemExit(f"{record.get('gate')}: stack SHA mismatch")
+              if int(record.get("iterations", 0)) < 3:
+                  raise SystemExit(f"{record.get('gate')}: fewer than three iterations")
+              if not str(record.get("detail", "")).strip():
+                  raise SystemExit(f"{record.get('gate')}: empty detail")
+          print("certification evidence OK: boot.cold,boot.rescue,boot.emergency")
+          PY
 
       - name: Upload serial certificate logs
         if: ${{ always() }}
@@ -100,7 +152,7 @@ jobs:
         with:
           name: rustd-pid1-serial-${{ github.sha }}
           path: |
-            pid1-serial-*.log
+            pid1-*-serial-*.log
             pid1-certification-evidence.jsonl
           if-no-files-found: error
           retention-days: 14
