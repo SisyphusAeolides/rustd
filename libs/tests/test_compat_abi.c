@@ -61,13 +61,20 @@ static void verify_bus_error_semantics(void) {
     sd_bus_error_free(&unknown);
 }
 
+static void verify_deprecated_seat_semantics(void) {
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    assert(sd_seat_can_multi_session("seat0") > 0);
+    assert(sd_seat_can_multi_session("arbitrary-seat") > 0);
+#pragma GCC diagnostic pop
+}
+
 int main(void) {
     struct udev *udev;
 
     verify_function_types();
     verify_bus_error_semantics();
-    assert(sd_seat_can_multi_session("seat0") > 0);
-    assert(sd_seat_can_multi_session("arbitrary-seat") > 0);
+    verify_deprecated_seat_semantics();
     udev = udev_new();
     assert(udev);
 
