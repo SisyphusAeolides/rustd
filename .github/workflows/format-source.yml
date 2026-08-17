@@ -1,0 +1,39 @@
+name: Format source
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/format-source.yml
+
+permissions:
+  contents: write
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Format Rust source
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --all
+          changed="$(git diff --name-only)"
+          if [[ -z "$changed" ]]; then
+            exit 0
+          fi
+          if [[ "$changed" != "src/dbus/manager_iface.rs" ]]; then
+            printf 'Unexpected rustfmt changes:\n%s\n' "$changed" >&2
+            exit 1
+          fi
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git add -- src/dbus/manager_iface.rs
+          git commit -m 'Format Rust source'
+          git push origin HEAD:main
