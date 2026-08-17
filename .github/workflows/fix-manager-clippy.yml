@@ -1,0 +1,47 @@
+name: Fix manager Clippy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fix-manager-clippy.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Apply exact manager fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/dbus/manager_iface.rs")
+          source = path.read_text()
+          old = """        if let Err(error) = shutdown_blocked_by_inhibitors(connection).await {\n            return Err(error);\n        }\n"""
+          new = """        shutdown_blocked_by_inhibitors(connection).await?;\n"""
+          if source.count(old) != 1:
+              raise SystemExit("expected exactly one manager error-propagation pattern")
+          path.write_text(source.replace(old, new, 1))
+          PY
+          cargo fmt --all -- --check
+          changed="$(git diff --name-only)"
+          if [[ "$changed" != "src/dbus/manager_iface.rs" ]]; then
+            printf 'Unexpected source changes:\n%s\n' "$changed" >&2
+            exit 1
+          fi
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git add -- src/dbus/manager_iface.rs
+          git commit -m 'Use question-mark propagation'
+          git push origin HEAD:main
