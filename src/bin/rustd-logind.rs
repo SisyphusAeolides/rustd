@@ -54,8 +54,7 @@ fn reap_inhibitors(map: &mut HashMap<u64, InhibitorEntry>) {
             )
         };
         !(result == 0
-            || (result < 0
-                && std::io::Error::last_os_error().raw_os_error() == Some(libc::EBADF)))
+            || (result < 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::EBADF)))
     });
 }
 
@@ -164,7 +163,11 @@ impl Manager {
         }
         seats
             .into_keys()
-            .filter_map(|seat| path(logind::seat_path(&seat)).ok().map(|object| (seat, object)))
+            .filter_map(|seat| {
+                path(logind::seat_path(&seat))
+                    .ok()
+                    .map(|object| (seat, object))
+            })
             .collect()
     }
 
