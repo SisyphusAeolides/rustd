@@ -2,58 +2,99 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 #
 # Installed-image certification harness for RustD.
-#
-# Exercises what can be validated on the current host and records a machine-
-# readable report for VM/bare-metal/container gates. Full 72-hour soak is
-# opt-in via RUSTD_SOAK_SECONDS (default 60s local smoke).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPORT_DIR="${RUSTD_CERT_REPORT_DIR:-$ROOT/target/certification}"
-SOAK_SECONDS="${RUSTD_SOAK_SECONDS:-60}"
-MODE=audit
+MODE=release
+EVIDENCE="${RUSTD_MACHINE_EVIDENCE:-}"
+PERFORMANCE_VOUCHER="${RUSTD_PERFORMANCE_VOUCHER:-}"
 
-case "${1:-}" in
-  "") ;;
-  --audit) MODE=audit ;;
-  --release) MODE=release ;;
-  -h|--help)
-    echo "Usage: $0 [--audit|--release]"
-    exit 0
-    ;;
-  *)
-    echo "Usage: $0 [--audit|--release]" >&2
-    exit 64
-    ;;
-esac
+usage() {
+  cat >&2 <<'EOF'
+usage: installed-certification.sh [--audit|--release] [--evidence FILE] [--performance-voucher FILE]
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --audit)
+      MODE=audit
+      shift
+      ;;
+    --release)
+      MODE=release
+      shift
+      ;;
+    --evidence)
+      [[ $# -ge 2 ]] || { usage; exit 64; }
+      EVIDENCE="$2"
+      shift 2
+      ;;
+    --performance-voucher)
+      [[ $# -ge 2 ]] || { usage; exit 64; }
+      PERFORMANCE_VOUCHER="$2"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'installed certification: unknown argument %q\n' "$1" >&2
+      usage
+      exit 64
+      ;;
+  esac
+done
+
+RUSTD_SHA="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+RESOLVED_SHA="$(tr -d '[:space:]' <"$ROOT/scripts/rustd-resolved-revision.txt")"
+if [[ ! "$RUSTD_SHA" =~ ^[0-9a-f]{40}$ || ! "$RESOLVED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "installed certification: exact RustD/resolver revisions are unavailable" >&2
+  exit 2
+fi
 
 mkdir -p "$REPORT_DIR"
 REPORT="$REPORT_DIR/installed-certification.jsonl"
 : >"$REPORT"
 
 log() {
-  local gate="$1" status="$2" detail="$3"
-  printf '{"gate":"%s","status":"%s","detail":%s,"ts":%s}\n' \
-    "$gate" "$status" "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$detail")" \
-    "$(date +%s)" | tee -a "$REPORT"
+  python3 - "$1" "$2" "$3" "$RUSTD_SHA" "$RESOLVED_SHA" <<'PY' | tee -a "$REPORT"
+import json
+import sys
+import time
+
+gate, status, detail, rustd_sha, resolved_sha = sys.argv[1:]
+print(json.dumps({
+    "gate": gate,
+    "status": status,
+    "detail": detail,
+    "ts": int(time.time()),
+    "rustd_sha": rustd_sha,
+    "resolved_sha": resolved_sha,
+}, sort_keys=True, separators=(",", ":")))
+PY
 }
 
 require_bin() {
   command -v "$1" >/dev/null 2>&1
 }
 
-# --- Package / path identity -------------------------------------------------
 if [[ -x "$ROOT/target/release/rustd" ]] || [[ -x /usr/lib/rustd/rustd ]]; then
   log paths pass "rustd binary present for certification"
+elif [[ "$MODE" == release ]]; then
+  log paths fail "rustd binary is not installed or built for certification"
 else
-  log paths skip "rustd binary not installed in this environment"
+  log paths pending "rustd binary is not installed or built in this audit environment"
 fi
 
-# --- Container profile matrix ------------------------------------------------
 if require_bin unshare && unshare --user --map-root-user true 2>/dev/null; then
   log container.user_ns pass "user namespace available for rootless profile"
+elif [[ "$MODE" == release ]]; then
+  log container.user_ns fail "user namespaces unavailable on release target"
 else
-  log container.user_ns skip "user namespaces unavailable"
+  log container.user_ns pending "user namespaces unavailable in audit environment"
 fi
 
 if [[ -f /sys/fs/cgroup/cgroup.controllers ]] || [[ -f /sys/fs/cgroup/cgroup.subtree_control ]]; then
@@ -62,59 +103,76 @@ else
   log container.cgroup_v2 fail "cgroup v2 required for delegated isolation"
 fi
 
-# --- Fault injection smokes --------------------------------------------------
-python3 - "$REPORT" <<'PY'
-import json, sys, time, pathlib
-report = pathlib.Path(sys.argv[1])
-cases = [
-    ("fault.disk_full_sim", "skip", "requires destructive installed-image fault injection"),
-    ("fault.oom_policy", "skip", "requires installed-image OOM pressure injection"),
-    ("fault.signal_storm", "skip", "requires installed-image concurrent child stress"),
-]
-with report.open("a", encoding="utf-8") as fh:
-    for gate, status, detail in cases:
-        fh.write(json.dumps({"gate": gate, "status": status, "detail": detail, "ts": int(time.time())}) + "\n")
-        print(f"{status.upper()}: {gate}: {detail}")
-PY
+required_machine_gates=(
+  fault.disk_full_sim
+  fault.oom_policy
+  fault.signal_storm
+  soak.72h
+  boot.cold
+  boot.reboot
+  boot.poweroff
+  boot.rescue
+  boot.emergency
+  boot.reexec
+  boot.rollback
+  container.rootful
+  container.rootless
+)
 
-# --- Soak --------------------------------------------------------------------
-if [[ "$MODE" == release && "$SOAK_SECONDS" -lt 259200 ]]; then
-  log soak.duration fail "release certification requires at least 259200 seconds (72 hours)"
+if [[ -n "$EVIDENCE" ]]; then
+  normalized="$(mktemp)"
+  trap 'rm -f "$normalized"' EXIT
+  python3 "$ROOT/scripts/validate-certification-evidence.py" \
+    "$EVIDENCE" \
+    --expected-rustd-sha "$RUSTD_SHA" \
+    --expected-resolved-sha "$RESOLVED_SHA" >"$normalized"
+  cat "$normalized" | tee -a "$REPORT"
+  rm -f "$normalized"
+  trap - EXIT
 else
-  log soak.duration pass "configured soak duration is ${SOAK_SECONDS}s"
+  for gate in "${required_machine_gates[@]}"; do
+    log "$gate" pending "requires SHA-bound installed-image campaign evidence"
+  done
 fi
-log soak.start pass "running ${SOAK_SECONDS}s soak"
-start=$(date +%s)
-deadline=$((start + SOAK_SECONDS))
-samples=0
-while (( $(date +%s) < deadline )); do
-  # Lightweight control-plane liveness probe: spawn helper stress binary when present.
-  if [[ -x "$ROOT/build/test_spawn" ]]; then
-    "$ROOT/build/test_spawn" >/dev/null
-  else
-    sleep 1
-  fi
-  samples=$((samples + 1))
-done
-log soak.complete pass "completed ${samples} soak iterations over ${SOAK_SECONDS}s"
 
-# --- Boot/reboot matrix placeholders for VM/bare-metal runners ---------------
-for gate in boot.cold boot.reboot boot.poweroff boot.rescue boot.emergency boot.reexec \
-            boot.rollback container.rootful container.rootless; do
-  log "$gate" pending "requires snapshot-backed CachyOS VM or bare-metal runner"
-done
+if [[ -n "$PERFORMANCE_VOUCHER" ]]; then
+  normalized="$(mktemp)"
+  trap 'rm -f "$normalized"' EXIT
+  python3 "$ROOT/scripts/validate-performance-evidence.py" \
+    "$PERFORMANCE_VOUCHER" \
+    --expected-rustd-sha "$RUSTD_SHA" \
+    --expected-resolved-sha "$RESOLVED_SHA" \
+    --reference "${RUSTD_SYSTEMD_REF:-systemd 261}" \
+    --require-promote >"$normalized"
+  log performance.stack pass "comparative performance voucher matches exact RustD stack revisions"
+  rm -f "$normalized"
+  trap - EXIT
+else
+  log performance.stack pending "requires exact-SHA comparative performance promotion voucher"
+fi
 
 echo "Certification report: $REPORT"
-if grep -q '"status":"fail"' "$REPORT"; then
-  echo "One or more certification gates failed" >&2
-  exit 1
+
+if [[ "$MODE" == audit ]]; then
+  echo "Audit complete; release promotion requires all installed-image and performance evidence."
+  exit 0
 fi
-if grep -Eq '"status":"(pending|skip)"' "$REPORT"; then
-  echo "Certification is incomplete; pending or skipped gates cannot be promoted." >&2
-  exit 2
-fi
-if [[ "$MODE" != release ]]; then
-  echo "Audit complete; production certification requires an explicit --release run." >&2
-  exit 2
-fi
-echo "PRODUCTION GREEN: every installed-image certification gate passed."
+
+python3 - "$REPORT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+failures = []
+for raw in path.read_text(encoding="utf-8").splitlines():
+    if not raw.strip():
+        continue
+    record = json.loads(raw)
+    if record.get("status") != "pass":
+        failures.append(f"{record.get('gate', '<unknown>')}={record.get('status', '<missing>')}")
+if failures:
+    raise SystemExit("release certification incomplete: " + ", ".join(failures))
+PY
+
+echo "PRODUCTION GREEN: every installed-image and performance certification gate passed."

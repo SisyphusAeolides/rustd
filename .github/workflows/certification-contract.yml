@@ -1,0 +1,47 @@
+name: Certification contract
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: certification-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Check certification scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/installed-certification.sh
+          bash -n scripts/performance-promotion.sh
+          bash -n scripts/exclusive-cutover-gate.sh
+          python3 -m py_compile scripts/validate-certification-evidence.py scripts/validate-performance-evidence.py
+
+      - name: Check fail-closed promotion defaults
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/performance-promotion.sh --audit
+          scripts/installed-certification.sh --audit
+          if scripts/performance-promotion.sh --release; then
+            echo "release performance promotion passed without evidence" >&2
+            exit 1
+          fi
+          if scripts/installed-certification.sh --release; then
+            echo "installed release certification passed without evidence" >&2
+            exit 1
+          fi
