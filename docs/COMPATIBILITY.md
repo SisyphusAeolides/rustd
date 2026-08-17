@@ -28,6 +28,8 @@ protocols. Upstream implementation parity is not a RustD release criterion.
 - [x] Stable `rustfmt` is an authoritative CI gate.
 - [x] Rust 1.75 Clippy, all-target/all-feature tests, release builds, native ABI,
   packaging, and lockfile reproducibility are authoritative CI gates.
+- [x] The `rustd-logind` D-Bus compatibility target is covered by the same
+  strict stable-Clippy source policy as the manager.
 - [x] Idris and Agda models are checked by the formal-verification workflow.
 - [x] GitHub Actions used by the production CI are pinned to immutable commits.
 
