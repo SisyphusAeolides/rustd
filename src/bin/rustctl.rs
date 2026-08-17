@@ -262,6 +262,14 @@ fn signal_manager(pid: libc::pid_t, signal: libc::c_int, operation: &str) -> any
     Ok(())
 }
 
+fn loaded_unit_names() -> anyhow::Result<BTreeSet<String>> {
+    let response = checked(&IpcRequest::ListUnits)?;
+    let Some(IpcData::Units(units)) = response.data else {
+        anyhow::bail!("manager returned an invalid list-units response");
+    };
+    Ok(units.into_iter().map(|unit| unit.name).collect())
+}
+
 fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
     if !units.is_empty() {
         anyhow::bail!("daemon-reexec does not accept unit names");
@@ -270,6 +278,7 @@ fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
         anyhow::bail!("daemon-reexec may not be combined with --root");
     }
 
+    let expected_units = loaded_unit_names()?;
     let path = control_socket_path();
     let stream = UnixStream::connect(&path)
         .map_err(|error| anyhow::anyhow!("cannot connect to {}: {error}", path.display()))?;
@@ -284,13 +293,23 @@ fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
     loop {
         if let Ok(current) = fs::metadata(&path) {
             let new_identity = (current.dev(), current.ino());
-            if new_identity != old_identity && UnixStream::connect(&path).is_ok() {
-                return Ok(0);
+            if new_identity != old_identity {
+                if let Ok(stream) = UnixStream::connect(&path) {
+                    let same_manager = manager_peer_pid(&stream, &path).ok() == Some(pid);
+                    drop(stream);
+                    if same_manager {
+                        if let Ok(restored_units) = loaded_unit_names() {
+                            if expected_units.is_subset(&restored_units) {
+                                return Ok(0);
+                            }
+                        }
+                    }
+                }
             }
         }
         if Instant::now() >= deadline {
             anyhow::bail!(
-                "manager did not rebind {} after re-exec within {} seconds",
+                "manager did not restore its control state on {} after re-exec within {} seconds",
                 path.display(),
                 REEXEC_TIMEOUT.as_secs()
             );
