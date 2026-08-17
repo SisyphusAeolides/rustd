@@ -92,7 +92,7 @@ jobs:
           RUSTD_PID1_REEXEC_CYCLES=100 \
           RUSTD_PID1_QEMU_TIMEOUT=180s \
           RUSTD_PID1_SERIAL_LOG=pid1-reexec-serial-1.log \
-            bash scripts/ci-pid1-initramfs.sh
+            bash scripts/ci-pid1-reexec-cert.sh
 
       - name: Deliver one thousand queued realtime signals to RustD PID1
         shell: bash
@@ -149,7 +149,7 @@ jobs:
               ("boot.poweroff", 10, "ten independent QEMU boots issued rustctl poweroff to RustD PID 1, observed the managed keeper ExecStop during the orderly shutdown transaction, and QEMU exited from the guest poweroff"),
               ("boot.rescue", 3, "three independent QEMU kernel boots entered rescue.target with RustD as PID 1 and a live rustctl control-plane probe"),
               ("boot.emergency", 3, "three independent QEMU kernel boots entered emergency.target with RustD as PID 1 and a live rustctl control-plane probe"),
-              ("boot.reexec", 100, "one QEMU PID 1 campaign completed one hundred rustctl daemon-reexec transactions; the control socket rebound after every exec and a long-running service retained the same live MainPID throughout"),
+              ("boot.reexec", 100, "one QEMU PID 1 campaign completed one hundred rustctl daemon-reexec transactions; the restored unit graph became query-ready after every exec and a long-running service retained the same live MainPID throughout"),
           )
           for gate, iterations, detail in records:
               print(json.dumps({
