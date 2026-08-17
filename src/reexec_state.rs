@@ -57,7 +57,9 @@ pub fn state_path(scope: ManagerScope) -> PathBuf {
         ManagerScope::User => {
             let root = std::env::var_os("XDG_RUNTIME_DIR")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })));
+                .unwrap_or_else(|| {
+                    PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }))
+                });
             root.join("rustd/reexec-state.json")
         }
     }
@@ -70,7 +72,10 @@ pub fn save_manager_state(manager: &Manager) -> anyhow::Result<PathBuf> {
 
     let mut units = Vec::with_capacity(manager.units.len());
     for (name, record) in &manager.units {
-        if matches!(record.state, UnitState::Activating | UnitState::Deactivating) {
+        if matches!(
+            record.state,
+            UnitState::Activating | UnitState::Deactivating
+        ) {
             anyhow::bail!("unit '{name}' is transitional during reexec handoff");
         }
         if record.idle_gate_fd.is_some() {
@@ -78,7 +83,10 @@ pub fn save_manager_state(manager: &Manager) -> anyhow::Result<PathBuf> {
         }
         if matches!(record.state, UnitState::Active | UnitState::Failed) {
             match &record.loaded {
-                LoadedUnit::Socket(_) | LoadedUnit::Path(_) | LoadedUnit::Timer(_) | LoadedUnit::Automount(_) => {
+                LoadedUnit::Socket(_)
+                | LoadedUnit::Path(_)
+                | LoadedUnit::Timer(_)
+                | LoadedUnit::Automount(_) => {
                     anyhow::bail!(
                         "active {} requires event-source adoption that is not yet supported by the reexec handoff: {name}",
                         unit_kind(&record.loaded)
@@ -163,12 +171,18 @@ pub fn restore_manager_state(manager: &mut Manager, path: &Path) -> anyhow::Resu
             .ok_or_else(|| anyhow::anyhow!("restored unit '{}' disappeared", saved.name))?;
         for pid in [saved.active_pid, saved.control_pid].into_iter().flatten() {
             if !pid_is_alive(pid) {
-                anyhow::bail!("unit '{}' references dead pid {pid} in reexec state", saved.name);
+                anyhow::bail!(
+                    "unit '{}' references dead pid {pid} in reexec state",
+                    saved.name
+                );
             }
         }
         if matches!(saved.state, UnitState::Active | UnitState::Failed) {
             match &record.loaded {
-                LoadedUnit::Socket(_) | LoadedUnit::Path(_) | LoadedUnit::Timer(_) | LoadedUnit::Automount(_) => {
+                LoadedUnit::Socket(_)
+                | LoadedUnit::Path(_)
+                | LoadedUnit::Timer(_)
+                | LoadedUnit::Automount(_) => {
                     anyhow::bail!(
                         "reexec state contains unsupported active {}: {}",
                         unit_kind(&record.loaded),
@@ -217,7 +231,8 @@ pub fn restore_manager_state(manager: &mut Manager, path: &Path) -> anyhow::Resu
 
     if let Some(notify) = manager.notify.as_ref() {
         for (name, record) in &manager.units {
-            let (Some(pid), LoadedUnit::Service(service)) = (record.active_pid, &record.loaded) else {
+            let (Some(pid), LoadedUnit::Service(service)) = (record.active_pid, &record.loaded)
+            else {
                 continue;
             };
             if let Some(access) = effective_notify_access(&service.specific) {
