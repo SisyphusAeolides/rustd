@@ -160,7 +160,10 @@ fn main() -> anyhow::Result<()> {
         Some(path) => {
             let path = std::path::PathBuf::from(path);
             rustd::reexec_state::restore_manager_state(&mut manager, &path).map_err(|error| {
-                anyhow::anyhow!("rustd: failed to restore reexec state {}: {error}", path.display())
+                anyhow::anyhow!(
+                    "rustd: failed to restore reexec state {}: {error}",
+                    path.display()
+                )
             })?;
             std::env::remove_var("RUSTD_REEXEC_STATE");
             true
