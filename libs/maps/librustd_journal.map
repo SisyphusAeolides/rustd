@@ -7,6 +7,8 @@ RUSTD_JOURNAL_1.0 {
     rustd_journal_unref;
     rustd_journal_seek_tail;
     rustd_journal_next;
+    rustd_journal_previous;
+    rustd_journal_previous_skip;
     rustd_journal_get_data;
     rustd_journal_get_realtime_usec;
   local:
