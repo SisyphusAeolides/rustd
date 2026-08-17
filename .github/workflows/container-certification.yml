@@ -28,6 +28,13 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends apparmor busybox-static gfortran
 
+      - name: Check AppArmor packaging contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/install-rustd-names.sh scripts/check-apparmor-packaging.sh
+          bash scripts/check-apparmor-packaging.sh
+
       - name: Install Rust 1.75.0
         shell: bash
         run: |
