@@ -18,6 +18,17 @@ FUNCTION = re.compile(
 UNSUPPORTED_MARKERS = ("ENOSYS", "rustd_bus_enosys")
 STUB_SOURCE = Path("libs/compat/sd_bus_stubs.c")
 STUB_DATA_SYMBOLS = {"sd_bus_object_vtable_format"}
+SEMANTIC_PLACEHOLDERS = {
+    "sd_journal_add_match",
+    "sd_journal_add_disjunction",
+    "sd_journal_flush_matches",
+    "sd_journal_send_with_location",
+    "sd_journal_print_with_location",
+    "sd_journal_printv_with_location",
+    "sd_device_monitor_start",
+    "sd_device_monitor_get_event",
+    "sd_seat_can_multi_session",
+}
 
 
 def dynamic_symbols(path: Path, *, undefined: bool) -> set[str]:
@@ -52,6 +63,7 @@ def function_body(source: str, start: int) -> str:
 
 def unsupported_symbols(root: Path) -> set[str]:
     unsupported = set(STUB_DATA_SYMBOLS)
+    unsupported.update(SEMANTIC_PLACEHOLDERS)
     for relative in (
         Path("libs/compat/systemd.c"),
         STUB_SOURCE,

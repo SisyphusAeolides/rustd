@@ -1,0 +1,51 @@
+name: Compatibility ABI
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compatibility-abi-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install ABI headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends libsystemd-dev libudev-dev
+
+      - name: Build and exercise compatibility libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          make check-compat
+
+      - name: Record behavioral closure progress
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check-compat-source-readiness.py \
+            --report target/compat-readiness.json
+
+      - name: Upload compatibility evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustd-compat-readiness-${{ github.sha }}
+          path: target/compat-readiness.json
+          if-no-files-found: error
+          retention-days: 14
