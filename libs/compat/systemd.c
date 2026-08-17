@@ -8,8 +8,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/uio.h>
 #include <unistd.h>
 
@@ -234,11 +236,84 @@ void sd_journal_flush_matches(rustd_journal *journal) {
     (void)journal;
 }
 
+static int write_full(int fd, const void *data, size_t size) {
+    const uint8_t *cursor = data;
+
+    while (size > 0U) {
+        ssize_t written = write(fd, cursor, size);
+        if (written < 0) {
+            if (errno == EINTR)
+                continue;
+            return -errno;
+        }
+        if (written == 0)
+            return -EIO;
+        cursor += (size_t)written;
+        size -= (size_t)written;
+    }
+    return 0;
+}
+
 int sd_journal_stream_fd(const char *identifier, int priority, int level_prefix) {
-    (void)identifier;
-    (void)priority;
-    (void)level_prefix;
-    return -ENOSYS;
+    static const char path[] = "/run/rustd/journal/stdout";
+    struct sockaddr_un address;
+    char header_tail[12];
+    int fd;
+    int result;
+    int send_buffer = 8 * 1024 * 1024;
+    size_t identifier_length;
+
+    if (priority < 0 || priority > 7)
+        return -EINVAL;
+    if (!identifier)
+        identifier = "";
+
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    if (sizeof(path) > sizeof(address.sun_path))
+        return -ENAMETOOLONG;
+    memcpy(address.sun_path, path, sizeof(path));
+
+    fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0)
+        return -errno;
+    if (connect(fd, (const struct sockaddr *)&address, sizeof(address)) < 0) {
+        result = -errno;
+        close(fd);
+        return result;
+    }
+    if (shutdown(fd, SHUT_RD) < 0) {
+        result = -errno;
+        close(fd);
+        return result;
+    }
+    (void)setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &send_buffer, sizeof(send_buffer));
+
+    identifier_length = strlen(identifier);
+    result = write_full(fd, identifier, identifier_length);
+    if (result < 0) {
+        close(fd);
+        return result;
+    }
+
+    header_tail[0] = '\n';
+    header_tail[1] = '\n';
+    header_tail[2] = (char)('0' + priority);
+    header_tail[3] = '\n';
+    header_tail[4] = level_prefix ? '1' : '0';
+    header_tail[5] = '\n';
+    header_tail[6] = '0';
+    header_tail[7] = '\n';
+    header_tail[8] = '0';
+    header_tail[9] = '\n';
+    header_tail[10] = '0';
+    header_tail[11] = '\n';
+    result = write_full(fd, header_tail, sizeof(header_tail));
+    if (result < 0) {
+        close(fd);
+        return result;
+    }
+    return fd;
 }
 
 /* --- login --- */
@@ -380,16 +455,94 @@ int sd_pid_get_machine_name(pid_t pid, char **machine) {
     return rustd_pid_get_machine_name(pid, machine);
 }
 
+static int pidfd_get_target_pid(int pidfd, pid_t *pid) {
+    char path[64];
+    char line[128];
+    FILE *file;
+    long value;
+
+    if (pidfd < 0 || !pid)
+        return -EBADF;
+    if (fcntl(pidfd, F_GETFD) < 0)
+        return -errno;
+    if (snprintf(path, sizeof(path), "/proc/self/fdinfo/%d", pidfd) >= (int)sizeof(path))
+        return -EOVERFLOW;
+
+    file = fopen(path, "re");
+    if (!file)
+        return -errno;
+    while (fgets(line, sizeof(line), file)) {
+        char *end = NULL;
+        if (strncmp(line, "Pid:", 4) != 0)
+            continue;
+        errno = 0;
+        value = strtol(line + 4, &end, 10);
+        if (errno != 0 || end == line + 4) {
+            fclose(file);
+            return -EIO;
+        }
+        fclose(file);
+        if (value <= 0 || value > INT32_MAX)
+            return -ESRCH;
+        *pid = (pid_t)value;
+        return 0;
+    }
+    fclose(file);
+    return -EBADF;
+}
+
+static int pidfd_verify_target_pid(int pidfd, pid_t pid) {
+    pid_t current;
+    int result = pidfd_get_target_pid(pidfd, &current);
+    if (result < 0)
+        return result;
+    return current == pid ? 0 : -ESRCH;
+}
+
 int sd_pidfd_get_session(int pidfd, char **session) {
-    (void)pidfd;
-    (void)session;
-    return -ENOSYS;
+    char *resolved = NULL;
+    pid_t pid;
+    int result;
+
+    if (pidfd < 0)
+        return -EBADF;
+    result = pidfd_get_target_pid(pidfd, &pid);
+    if (result < 0)
+        return result;
+    result = rustd_pid_get_session(pid, &resolved);
+    if (result < 0)
+        return result;
+    result = pidfd_verify_target_pid(pidfd, pid);
+    if (result < 0) {
+        free(resolved);
+        return result;
+    }
+    if (session)
+        *session = resolved;
+    else
+        free(resolved);
+    return 0;
 }
 
 int sd_pidfd_get_owner_uid(int pidfd, uid_t *uid) {
-    (void)pidfd;
-    (void)uid;
-    return -ENOSYS;
+    uid_t resolved;
+    pid_t pid;
+    int result;
+
+    if (pidfd < 0)
+        return -EBADF;
+    result = pidfd_get_target_pid(pidfd, &pid);
+    if (result < 0)
+        return result;
+    result = rustd_pid_get_owner_uid(pid, &resolved);
+    if (result < 0)
+        return result;
+    result = pidfd_verify_target_pid(pidfd, pid);
+    if (result < 0)
+        return result;
+    if (uid)
+        *uid = resolved;
+    return 0;
 }
 
 int sd_seat_can_multi_session(const char *seat) {
