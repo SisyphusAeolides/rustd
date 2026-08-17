@@ -219,8 +219,8 @@ fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
             stream.as_raw_fd(),
             libc::SOL_SOCKET,
             libc::SO_PEERCRED,
-            (&raw mut credentials).cast(),
-            &raw mut credential_len,
+            std::ptr::addr_of_mut!(credentials).cast(),
+            std::ptr::addr_of_mut!(credential_len),
         )
     };
     if result < 0 {
