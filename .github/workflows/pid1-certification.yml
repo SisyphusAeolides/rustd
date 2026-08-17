@@ -85,6 +85,15 @@ jobs:
               bash scripts/ci-pid1-special-target.sh emergency
           done
 
+      - name: Re-exec RustD as PID1 one hundred times
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUSTD_PID1_REEXEC_CYCLES=100 \
+          RUSTD_PID1_QEMU_TIMEOUT=180s \
+          RUSTD_PID1_SERIAL_LOG=pid1-reexec-serial-1.log \
+            bash scripts/ci-pid1-initramfs.sh
+
       - name: Record PID1 boot evidence
         shell: bash
         run: |
@@ -103,11 +112,12 @@ jobs:
           )
           timestamp = int(time.time())
           records = (
-              ("boot.cold", "three independent QEMU initramfs cold boots passed with RustD as PID 1 and the normal unit graph healthy"),
-              ("boot.rescue", "three independent QEMU kernel boots entered rescue.target with RustD as PID 1 and a live rustctl control-plane probe"),
-              ("boot.emergency", "three independent QEMU kernel boots entered emergency.target with RustD as PID 1 and a live rustctl control-plane probe"),
+              ("boot.cold", 3, "three independent QEMU initramfs cold boots passed with RustD as PID 1 and the normal unit graph healthy"),
+              ("boot.rescue", 3, "three independent QEMU kernel boots entered rescue.target with RustD as PID 1 and a live rustctl control-plane probe"),
+              ("boot.emergency", 3, "three independent QEMU kernel boots entered emergency.target with RustD as PID 1 and a live rustctl control-plane probe"),
+              ("boot.reexec", 100, "one QEMU PID 1 campaign completed one hundred rustctl daemon-reexec transactions; the control socket rebound after every exec and a long-running service retained the same live MainPID throughout"),
           )
-          for gate, detail in records:
+          for gate, iterations, detail in records:
               print(json.dumps({
                   "gate": gate,
                   "status": "pass",
@@ -115,7 +125,7 @@ jobs:
                   "ts": timestamp,
                   "rustd_sha": rustd_sha,
                   "resolved_sha": resolved_sha,
-                  "iterations": 3,
+                  "iterations": iterations,
                   "source": source,
               }, sort_keys=True, separators=(",", ":")))
           PY
@@ -131,19 +141,21 @@ jobs:
           if stat.S_IMODE(path.stat().st_mode) != 0o600:
               raise SystemExit("PID1 evidence mode must be 0600")
           records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-          expected = {"boot.cold", "boot.rescue", "boot.emergency"}
+          expected = {"boot.cold", "boot.rescue", "boot.emergency", "boot.reexec"}
           if {record.get("gate") for record in records} != expected:
               raise SystemExit("PID1 evidence gate set is incomplete")
+          minimums = {"boot.cold": 3, "boot.rescue": 3, "boot.emergency": 3, "boot.reexec": 100}
           for record in records:
+              gate = record.get("gate")
               if record.get("status") != "pass":
-                  raise SystemExit(f"{record.get('gate')}: status is not pass")
+                  raise SystemExit(f"{gate}: status is not pass")
               if record.get("rustd_sha") != rustd_sha or record.get("resolved_sha") != resolved_sha:
-                  raise SystemExit(f"{record.get('gate')}: stack SHA mismatch")
-              if int(record.get("iterations", 0)) < 3:
-                  raise SystemExit(f"{record.get('gate')}: fewer than three iterations")
+                  raise SystemExit(f"{gate}: stack SHA mismatch")
+              if int(record.get("iterations", 0)) < minimums[gate]:
+                  raise SystemExit(f"{gate}: insufficient iterations")
               if not str(record.get("detail", "")).strip():
-                  raise SystemExit(f"{record.get('gate')}: empty detail")
-          print("certification evidence OK: boot.cold,boot.rescue,boot.emergency")
+                  raise SystemExit(f"{gate}: empty detail")
+          print("certification evidence OK: boot.cold,boot.rescue,boot.emergency,boot.reexec")
           PY
 
       - name: Upload serial certificate logs
