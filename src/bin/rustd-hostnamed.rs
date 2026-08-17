@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! `org.freedesktop.hostname1` service compatible with systemd v261.
+//! `io.rustd.Hostname1` service compatible with systemd v261.
 
 #![allow(clippy::unused_self)]
 
@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 
 use zbus::interface;
 
-const BUS_NAME: &str = "org.freedesktop.hostname1";
-const OBJECT_PATH: &str = "/org/freedesktop/hostname1";
+const BUS_NAME: &str = "io.rustd.Hostname1";
+const OBJECT_PATH: &str = "/io/rustd/Hostname1";
 
 fn hostname_path() -> PathBuf {
     std::env::var_os("SYSTEMD_ETC_HOSTNAME")
@@ -337,7 +337,7 @@ fn io_to_dbus(error: io::Error) -> zbus::fdo::Error {
 #[derive(Default)]
 struct HostnameService;
 
-#[interface(name = "org.freedesktop.hostname1")]
+#[interface(name = "io.rustd.Hostname1")]
 impl HostnameService {
     async fn set_hostname(
         &self,
@@ -349,7 +349,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.set-hostname",
+            "io.rustd.Hostname1.set-hostname",
             interactive,
         )
         .await?;
@@ -366,7 +366,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.set-static-hostname",
+            "io.rustd.Hostname1.set-static-hostname",
             interactive,
         )
         .await?;
@@ -384,7 +384,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.set-machine-info",
+            "io.rustd.Hostname1.set-machine-info",
             interactive,
         )
         .await?;
@@ -401,7 +401,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.set-machine-info",
+            "io.rustd.Hostname1.set-machine-info",
             interactive,
         )
         .await?;
@@ -418,7 +418,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.set-machine-info",
+            "io.rustd.Hostname1.set-machine-info",
             interactive,
         )
         .await?;
@@ -435,7 +435,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.set-machine-info",
+            "io.rustd.Hostname1.set-machine-info",
             interactive,
         )
         .await?;
@@ -452,7 +452,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.set-machine-info",
+            "io.rustd.Hostname1.set-machine-info",
             interactive,
         )
         .await?;
@@ -468,7 +468,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.set-machine-info",
+            "io.rustd.Hostname1.set-machine-info",
             false,
         )
         .await?;
@@ -484,7 +484,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.get-product-uuid",
+            "io.rustd.Hostname1.get-product-uuid",
             interactive,
         )
         .await?;
@@ -499,7 +499,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.get-hardware-serial",
+            "io.rustd.Hostname1.get-hardware-serial",
             false,
         )
         .await?;
@@ -514,7 +514,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.get-description",
+            "io.rustd.Hostname1.get-description",
             false,
         )
         .await?;
@@ -545,7 +545,7 @@ impl HostnameService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.hostname1.get-description",
+            "io.rustd.Hostname1.get-description",
             false,
         )
         .await?;

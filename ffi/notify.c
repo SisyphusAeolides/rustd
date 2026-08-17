@@ -72,7 +72,9 @@ int rustd_notify_send(pid_t pid, const char *state, const int *fds, size_t n_fds
         return -EINVAL;
     if (n_fds > NOTIFY_MAX_FDS)
         return -E2BIG;
-    path = getenv("NOTIFY_SOCKET");
+    path = getenv("RUSTD_NOTIFY_SOCKET");
+    if (!path)
+        path = getenv("NOTIFY_SOCKET");
     if (!path)
         return 0;
     result = notify_address(path, &address, &address_length);

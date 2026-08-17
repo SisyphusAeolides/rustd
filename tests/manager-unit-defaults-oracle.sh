@@ -116,7 +116,7 @@ XDG_RUNTIME_DIR="$host_runtime_dir" DBUS_SESSION_BUS_ADDRESS="$host_bus_address"
     --setenv="XDG_RUNTIME_DIR=$runtime_dir" \
     --setenv="DBUS_SESSION_BUS_ADDRESS=$private_bus_address" \
     /usr/bin/env -u MANAGERPID -u MANAGERPIDFDID -u INVOCATION_ID -u JOURNAL_STREAM \
-    -u SYSTEMD_EXEC_PID -u NOTIFY_SOCKET -u SYSTEMD_UNIT_PATH \
+    -u SYSTEMD_EXEC_PID -u RUSTD_NOTIFY_SOCKET -u SYSTEMD_UNIT_PATH \
     /usr/lib/systemd/systemd --user >"$runtime_dir/manager.out" \
     2>"$runtime_dir/manager.err" &
 manager_pid=$!

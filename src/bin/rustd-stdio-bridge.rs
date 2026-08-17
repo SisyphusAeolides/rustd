@@ -49,7 +49,10 @@ fn run(cli: Cli) -> anyhow::Result<()> {
     let socket_path = resolve_socket_path(&cli)?;
 
     let mut stream = UnixStream::connect(&socket_path).map_err(|e| {
-        anyhow::anyhow!("Failed to connect to bus socket at '{socket_path:?}': {e}")
+        anyhow::anyhow!(
+            "Failed to connect to bus socket at '{}': {e}",
+            socket_path.display()
+        )
     })?;
 
     let mut stream_write = stream
@@ -115,7 +118,9 @@ fn resolve_socket_path(cli: &Cli) -> anyhow::Result<PathBuf> {
             return Ok(candidate2);
         }
         anyhow::bail!(
-            "Machine bus socket for '{machine}' not found at {candidate1:?} or {candidate2:?}"
+            "Machine bus socket for '{machine}' not found at {} or {}",
+            candidate1.display(),
+            candidate2.display()
         );
     }
 

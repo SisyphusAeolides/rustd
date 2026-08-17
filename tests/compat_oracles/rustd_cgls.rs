@@ -16,6 +16,26 @@ fn host_is_pinned_v261() -> bool {
             .is_ok_and(|output| output.stdout.starts_with(b"systemd 261 "))
 }
 
+fn rustd_manager_available() -> bool {
+    Command::new("busctl")
+        .args([
+            "get-property",
+            "io.rustd.Manager1",
+            "/io/rustd/Manager1",
+            "io.rustd.Manager1.Manager",
+            "Version",
+        ])
+        .output()
+        .is_ok_and(|output| output.status.success())
+}
+
+fn live_oracle_supported() -> bool {
+    // Live byte-for-byte oracles require both a pinned systemd v261 reference
+    // binary and a running RustD manager. On a systemd PID1 host the RustD
+    // D-Bus unit surfaces are intentionally unavailable.
+    host_is_pinned_v261() && rustd_manager_available()
+}
+
 fn command(binary: &str) -> Command {
     let mut command = Command::new(binary);
     command
@@ -46,8 +66,10 @@ fn assert_same(host: &Output, candidate: &Output, context: &str) {
 
 #[test]
 fn complete_cli_error_and_live_unit_surface_matches_v261() {
-    if !host_is_pinned_v261() {
-        eprintln!("skipping live comparison: systemd package is not v261");
+    if !live_oracle_supported() {
+        eprintln!(
+            "skipping live comparison: requires systemd v261 reference and live RustD manager"
+        );
         return;
     }
     let candidate = env!("CARGO_BIN_EXE_systemd-cgls");
@@ -157,8 +179,10 @@ fn fixture_candidate(root: &Path, arguments: &[&str], locale: &str, columns: &st
 
 #[test]
 fn isolated_hierarchy_display_matches_v261_exactly() {
-    if !host_is_pinned_v261() {
-        eprintln!("skipping live comparison: systemd package is not v261");
+    if !live_oracle_supported() {
+        eprintln!(
+            "skipping live comparison: requires systemd v261 reference and live RustD manager"
+        );
         return;
     }
     let temporary = tempfile::tempdir().expect("create hierarchy fixture");

@@ -241,7 +241,7 @@ fn parse_key_value_file(path: &Path) -> BTreeMap<String, String> {
     map
 }
 
-/// Prefer RustD's logind state.  The systemd location remains a read-only
+/// Prefer `RustD`'s logind state.  The systemd location remains a read-only
 /// transition fallback so the CLI is usable while upgrading a running host.
 fn records_dir(kind: &str) -> std::path::PathBuf {
     let rustd = Path::new("/run/rustd").join(kind);

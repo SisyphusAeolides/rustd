@@ -145,19 +145,32 @@ pub struct ParsedUnit<T> {
 }
 
 fn standard_unit_search_dirs() -> Vec<PathBuf> {
-    // Native RustD roots win on name collision. Distro packages still ship
-    // units under /usr/lib/systemd/{system,user}; exclusive replacement must
-    // execute those files without claiming to be a systemd drop-in.
     vec![
         PathBuf::from("/etc/rustd/system"),
-        PathBuf::from("/etc/systemd/system"),
         PathBuf::from("/run/rustd/system"),
-        PathBuf::from("/run/systemd/system"),
         PathBuf::from("/usr/local/lib/rustd/system"),
-        PathBuf::from("/usr/local/lib/systemd/system"),
         PathBuf::from("/usr/lib/rustd/system"),
-        PathBuf::from("/usr/lib/systemd/system"),
     ]
+}
+
+/// Collect unit names enabled under `<dir>/<unit_name>.<kind>/`.
+fn collect_dependency_links(directory: &Path, unit_name: &str, kind: &str, into: &mut Vec<String>) {
+    let wants_dir = directory.join(format!("{unit_name}.{kind}"));
+    let Ok(entries) = std::fs::read_dir(&wants_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.is_empty() || name.starts_with('.') {
+            continue;
+        }
+        if !into.iter().any(|existing| existing == name) {
+            into.push(name.to_owned());
+        }
+    }
 }
 
 fn unit_control_dirs() -> Vec<PathBuf> {
@@ -227,45 +240,28 @@ fn standard_user_unit_search_dirs() -> Vec<PathBuf> {
         paths.push(runtime.join("rustd/generator.early"));
     }
     paths.push(config_home.join("rustd/user"));
-    paths.push(config_home.join("systemd/user"));
     paths.push(config_home.join("rustd/user.attached"));
     paths.extend(xdg_search_dirs("XDG_CONFIG_DIRS", "/etc/xdg", "rustd/user"));
-    paths.extend(xdg_search_dirs(
-        "XDG_CONFIG_DIRS",
-        "/etc/xdg",
-        "systemd/user",
-    ));
     paths.push(PathBuf::from("/etc/rustd/user"));
-    paths.push(PathBuf::from("/etc/systemd/user"));
     if let Some(runtime) = &runtime {
         paths.push(runtime.join("rustd/user"));
-        paths.push(runtime.join("systemd/user"));
         paths.push(runtime.join("rustd/user.attached"));
     }
     paths.push(PathBuf::from("/run/rustd/user"));
-    paths.push(PathBuf::from("/run/systemd/user"));
     if let Some(runtime) = &runtime {
         paths.push(runtime.join("rustd/generator"));
     }
     paths.push(data_home.join("rustd/user"));
-    paths.push(data_home.join("systemd/user"));
     paths.extend(xdg_search_dirs(
         "XDG_DATA_DIRS",
         "/usr/local/share:/usr/share",
         "rustd/user",
     ));
-    paths.extend(xdg_search_dirs(
-        "XDG_DATA_DIRS",
-        "/usr/local/share:/usr/share",
-        "systemd/user",
-    ));
     paths.extend([
         PathBuf::from("/usr/local/lib/rustd/user"),
         PathBuf::from("/usr/local/share/rustd/user"),
-        PathBuf::from("/usr/local/lib/systemd/user"),
         PathBuf::from("/usr/lib/rustd/user"),
         PathBuf::from("/usr/share/rustd/user"),
-        PathBuf::from("/usr/lib/systemd/user"),
     ]);
     if let Some(runtime) = runtime {
         paths.push(runtime.join("rustd/generator.late"));
@@ -404,7 +400,36 @@ impl UnitLoader {
                     )
                 })?;
         }
-        Ok(loaded)
+        Ok(self.apply_dependency_directories(unit_name, loaded))
+    }
+
+    /// Merge units enabled via `*.wants/` and `*.requires/` into the loaded unit.
+    ///
+    /// `RustD` packages install enablement symlinks in the native search roots.
+    fn apply_dependency_directories(&self, unit_name: &str, mut loaded: LoadedUnit) -> LoadedUnit {
+        let mut wants = Vec::new();
+        let mut requires = Vec::new();
+        for directory in &self.search_dirs {
+            collect_dependency_links(directory, unit_name, "wants", &mut wants);
+            collect_dependency_links(directory, unit_name, "requires", &mut requires);
+        }
+
+        if wants.is_empty() && requires.is_empty() {
+            return loaded;
+        }
+
+        let section = loaded.unit_section_mut();
+        for name in wants {
+            if !section.wants.iter().any(|existing| existing == &name) {
+                section.wants.push(name);
+            }
+        }
+        for name in requires {
+            if !section.requires.iter().any(|existing| existing == &name) {
+                section.requires.push(name);
+            }
+        }
+        loaded
     }
 
     fn find_unit_file(&self, unit_name: &str) -> anyhow::Result<(PathBuf, Option<String>)> {
@@ -569,6 +594,7 @@ impl UnitLoader {
                         "service '{unit_name}' has ExitType=cgroup, which is not allowed for Type=oneshot"
                     ));
                 }
+                expand_service_specifiers(&mut specific, ctx);
                 LoadedUnit::Service(Box::new(ParsedUnit {
                     name,
                     source_path,
@@ -577,7 +603,20 @@ impl UnitLoader {
                     specific,
                 }))
             }
-            "socket" => make_unit!(Socket, SocketSection, "Socket"),
+            "socket" => {
+                let mut specific = SocketSection::default();
+                for e in entries.iter().filter(|e| e.section == "Socket") {
+                    specific.apply(&e.key, &e.value);
+                }
+                expand_socket_specifiers(&mut specific, ctx);
+                LoadedUnit::Socket(Box::new(ParsedUnit {
+                    name,
+                    source_path,
+                    unit: unit_sec,
+                    install: install_sec,
+                    specific,
+                }))
+            }
             "automount" => {
                 let mut specific = AutomountSection::default();
                 for e in entries.iter().filter(|e| e.section == "Automount") {
@@ -594,7 +633,23 @@ impl UnitLoader {
                 }))
             }
             "timer" => make_unit!(Timer, TimerSection, "Timer"),
-            "path" => make_unit!(Path, PathSection, "Path"),
+            "path" => {
+                let mut specific = PathSection::default();
+                for entry in entries.iter().filter(|entry| entry.section == "Path") {
+                    specific.apply(&entry.key, &entry.value);
+                }
+                for watch in &mut specific.watches {
+                    watch.path = crate::unit::specifier::expand(&watch.path, ctx);
+                }
+                specific.unit = crate::unit::specifier::expand(&specific.unit, ctx);
+                LoadedUnit::Path(Box::new(ParsedUnit {
+                    name,
+                    source_path,
+                    unit: unit_sec,
+                    install: install_sec,
+                    specific,
+                }))
+            }
             "mount" => make_unit!(Mount, MountSection, "Mount"),
             "swap" => make_unit!(Swap, SwapSection, "Swap"),
             "target" | "slice" | "scope" => match suffix {
@@ -733,6 +788,62 @@ fn escape_path_for_unit(path: &str, suffix: &str) -> anyhow::Result<String> {
     }
     name.push_str(suffix);
     Ok(name)
+}
+
+fn expand_exec_command(
+    command: &mut crate::unit::section_service::ExecCommand,
+    ctx: &SpecifierContext,
+) {
+    command.path = crate::unit::specifier::expand(&command.path, ctx);
+    for arg in &mut command.argv {
+        *arg = crate::unit::specifier::expand(arg, ctx);
+    }
+}
+
+fn expand_exec_list(
+    commands: &mut [crate::unit::section_service::ExecCommand],
+    ctx: &SpecifierContext,
+) {
+    for command in commands {
+        expand_exec_command(command, ctx);
+    }
+}
+
+fn expand_service_specifiers(service: &mut ServiceSection, ctx: &SpecifierContext) {
+    expand_exec_list(&mut service.exec_condition, ctx);
+    expand_exec_list(&mut service.exec_start_pre, ctx);
+    expand_exec_list(&mut service.exec_start, ctx);
+    expand_exec_list(&mut service.exec_start_post, ctx);
+    expand_exec_list(&mut service.exec_reload, ctx);
+    expand_exec_list(&mut service.exec_stop, ctx);
+    expand_exec_list(&mut service.exec_stop_post, ctx);
+    service.working_directory = crate::unit::specifier::expand(&service.working_directory, ctx);
+    service.root_directory = crate::unit::specifier::expand(&service.root_directory, ctx);
+    service.tty_path = crate::unit::specifier::expand(&service.tty_path, ctx);
+    service.pid_file = crate::unit::specifier::expand(&service.pid_file, ctx);
+    service.bus_name = crate::unit::specifier::expand(&service.bus_name, ctx);
+    for value in &mut service.environment {
+        *value = crate::unit::specifier::expand(value, ctx);
+    }
+}
+
+fn expand_socket_specifiers(socket: &mut SocketSection, ctx: &SpecifierContext) {
+    for listen in &mut socket.listen {
+        listen.address = crate::unit::specifier::expand(&listen.address, ctx);
+    }
+    for command in &mut socket.exec_start_pre {
+        *command = crate::unit::specifier::expand(command, ctx);
+    }
+    for command in &mut socket.exec_start_post {
+        *command = crate::unit::specifier::expand(command, ctx);
+    }
+    for command in &mut socket.exec_stop_pre {
+        *command = crate::unit::specifier::expand(command, ctx);
+    }
+    for command in &mut socket.exec_stop_post {
+        *command = crate::unit::specifier::expand(command, ctx);
+    }
+    socket.service = crate::unit::specifier::expand(&socket.service, ctx);
 }
 
 fn finalize_automount(
@@ -930,6 +1041,37 @@ mod tests {
                 None => std::env::remove_var(key),
             }
         }
+    }
+
+    #[test]
+    fn expands_template_specifiers_in_exec_and_listen() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("getty@.service"),
+            "[Service]\nExecStart=/usr/bin/agetty --noclear %I linux\nTTYPath=/dev/%I\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("agent@.socket"),
+            "[Socket]\nListenStream=%f/S.agent\n",
+        )
+        .unwrap();
+        let loader = UnitLoader::with_dirs(vec![dir.path().to_path_buf()]);
+        let LoadedUnit::Service(svc) = loader.load("getty@tty1.service").unwrap() else {
+            panic!("expected service");
+        };
+        assert_eq!(svc.specific.exec_start[0].argv[1], "--noclear");
+        assert_eq!(svc.specific.exec_start[0].argv[2], "tty1");
+        assert_eq!(svc.specific.tty_path, "/dev/tty1");
+
+        let LoadedUnit::Socket(sock) = loader.load("agent@etc-pacman.d-gnupg.socket").unwrap()
+        else {
+            panic!("expected socket");
+        };
+        assert_eq!(
+            sock.specific.listen[0].address,
+            "/etc/pacman.d/gnupg/S.agent"
+        );
     }
 
     #[test]

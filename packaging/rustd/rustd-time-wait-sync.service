@@ -15,4 +15,4 @@ TimeoutStartSec=infinity
 RemainAfterExit=yes
 
 [Install]
-WantedBy=sysinit.target
+WantedBy=time-sync.target

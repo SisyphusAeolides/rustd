@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -1189,15 +1190,22 @@ int rustd_journal_file_open(const char *path) {
         if (fd < 0)
             return -errno;
 
+        /*
+         * Exclusive ownership detects a live journald. A previous crash leaves
+         * the header ONLINE without a holder; reclaiming that file is required
+         * for Restart= to bring logging back.
+         */
+        if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
+            int error = errno;
+            close(fd);
+            return error == EWOULDBLOCK ? -EBUSY : -error;
+        }
+
         JournalFileHeader existing;
         int r = header_read(fd, &existing);
         if (r < 0) {
             close(fd);
             return r;
-        }
-        if (existing.state != STATE_OFFLINE) {
-            close(fd);
-            return -EBUSY;
         }
         uint8_t machine[16];
         int machine_r = read_id128_file("/etc/machine-id", machine);
@@ -1212,6 +1220,13 @@ int rustd_journal_file_open(const char *path) {
             return r;
         }
         return fd;
+    }
+
+    if (flock(fd, LOCK_EX | LOCK_NB) < 0) {
+        int error = errno;
+        close(fd);
+        unlink(path);
+        return error == EWOULDBLOCK ? -EBUSY : -error;
     }
 
     JournalFileHeader header = {0};

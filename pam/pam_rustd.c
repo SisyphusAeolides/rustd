@@ -30,8 +30,8 @@ static int call_terminate(const char *id) {
     DBusConnection *bus = system_bus();
     if (!bus) return PAM_SESSION_ERR;
     DBusMessage *message = dbus_message_new_method_call(
-        "org.freedesktop.login1", "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager", "TerminateSession");
+        "io.rustd.Login1", "/io/rustd/Login1",
+        "io.rustd.Login1.Manager", "TerminateSession");
     if (!message) return PAM_BUF_ERR;
     if (!dbus_message_append_args(message, DBUS_TYPE_STRING, &id, DBUS_TYPE_INVALID)) {
         dbus_message_unref(message);
@@ -60,8 +60,8 @@ static int create_session(pam_handle_t *pamh, const char *user, const struct pas
     DBusConnection *bus = system_bus();
     if (!bus) return PAM_SESSION_ERR;
     DBusMessage *message = dbus_message_new_method_call(
-        "org.freedesktop.login1", "/org/freedesktop/login1",
-        "org.freedesktop.login1.Manager", "CreateSession");
+        "io.rustd.Login1", "/io/rustd/Login1",
+        "io.rustd.Login1.Manager", "CreateSession");
     if (!message) return PAM_BUF_ERR;
     dbus_uint32_t uid = pwd->pw_uid, pid = getpid(), vtnr = 0;
     dbus_bool_t remote = FALSE;

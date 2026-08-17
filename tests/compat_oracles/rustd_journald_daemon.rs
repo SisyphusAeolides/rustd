@@ -147,12 +147,11 @@ fn wait_for_file_bytes(path: &Path, expected: &[u8]) {
     let deadline = Instant::now() + WAIT;
     while Instant::now() < deadline {
         if std::fs::read(path)
-            .map(|contents| {
+            .is_ok_and(|contents| {
                 contents
                     .windows(expected.len())
                     .any(|window| window == expected)
             })
-            .unwrap_or(false)
         {
             return;
         }

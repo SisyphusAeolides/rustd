@@ -27,6 +27,12 @@ fn run_fixture(binary: &Path, arguments: &[&str], sysfs: &Path) -> Output {
         .expect("execute candidate systemd-ac-power")
 }
 
+fn live_oracle_enabled() -> bool {
+    // Exclusive RustD keeps native branding/IPC. Opt into live systemd byte-parity
+    // oracles only when explicitly certifying against a pinned host binary.
+    host_is_pinned_v261() && std::env::var_os("RUSTD_LIVE_SYSTEMD_ORACLE").is_some()
+}
+
 fn host_is_pinned_v261() -> bool {
     Command::new("/usr/bin/systemd-ac-power")
         .arg("--version")
@@ -42,7 +48,7 @@ fn assert_same(host: &Output, candidate: &Output, arguments: &[&str]) {
 
 #[test]
 fn option_and_output_contracts_match_the_live_pinned_host() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: /usr/bin/systemd-ac-power is not v261");
         return;
     }

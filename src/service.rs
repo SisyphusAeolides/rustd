@@ -55,8 +55,12 @@ pub struct UnitRecord {
     /// Number of times this unit has been restarted since last success.
     pub restart_count: u32,
     /// Monotonic timestamp (ns) of the most recent start attempt, for
-    /// start-limit burst detection.
+    /// runtime reporting.
     pub last_start_ns: i64,
+    /// Monotonic beginning of the current start-rate-limit window.
+    pub start_limit_window_ns: i64,
+    /// Start attempts observed in the current rate-limit window.
+    pub start_limit_count: u32,
     /// Allocated dynamic UID (held alive for the lifetime of the service).
     pub dynamic_user: Option<DynamicUser>,
     /// Most recent human-readable `STATUS=` notification.
@@ -102,6 +106,8 @@ impl UnitRecord {
             idle_gate_fd: None,
             restart_count: 0,
             last_start_ns: 0,
+            start_limit_window_ns: 0,
+            start_limit_count: 0,
             dynamic_user: None,
             status_text: None,
             status_errno: None,
@@ -1342,6 +1348,19 @@ fn compile_rlimits(section: &ServiceSection) -> Vec<SdSpawnRlimit> {
     limits
 }
 
+fn open_dev_null(flags: libc::c_int) -> anyhow::Result<libc::c_int> {
+    let path = CString::new("/dev/null").expect("/dev/null is a valid CString");
+    // Safety: path is a valid NUL-terminated C string.
+    let fd = unsafe { libc::open(path.as_ptr(), flags | libc::O_CLOEXEC) };
+    if fd < 0 {
+        return Err(anyhow!(
+            "failed to open /dev/null: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(fd)
+}
+
 fn is_journal_daemon(unit_name: &str) -> bool {
     unit_name == "rustd-journald.service" || unit_name.ends_with("-journald.service")
 }
@@ -1536,29 +1555,32 @@ fn spawn_command(
         section.syslog_identifier.as_str()
     };
     let journal_path = std::env::var_os("RUSTD_JOURNAL_STDOUT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_STDOUT_PATH));
+        .map_or_else(|| PathBuf::from(DEFAULT_STDOUT_PATH), PathBuf::from);
     let mut stdout_stream = None;
     let mut stderr_stream = None;
     let route_journal = !is_journal_daemon(unit_name);
     let stdout_fd = if route_journal && wants_journal_stdio(&section.standard_output) {
-        let stream = connect_service_stream_with_limits(
+        match connect_service_stream_with_limits(
             &journal_path,
             identifier,
             unit_name,
             6,
             section.log_rate_limit_interval_sec,
             section.log_rate_limit_burst,
-        )
-        .map_err(|error| {
-            anyhow!(
-                "failed to connect {unit_name} StandardOutput to journal {}: {error}",
-                journal_path.display()
-            )
-        })?;
-        let fd = stream.as_raw_fd();
-        stdout_stream = Some(stream);
-        fd
+        ) {
+            Ok(stream) => {
+                let fd = stream.as_raw_fd();
+                stdout_stream = Some(stream);
+                fd
+            }
+            Err(error) => {
+                eprintln!(
+                    "rustd: {unit_name} StandardOutput=journal unavailable at {}: {error}; using /dev/null",
+                    journal_path.display()
+                );
+                open_dev_null(libc::O_WRONLY)?
+            }
+        }
     } else {
         -1
     };
@@ -1570,23 +1592,27 @@ fn spawn_command(
         section.standard_error.as_str()
     };
     let stderr_fd = if route_journal && wants_journal_stdio(stderr_mode) {
-        let stream = connect_service_stream_with_limits(
+        match connect_service_stream_with_limits(
             &journal_path,
             identifier,
             unit_name,
             3,
             section.log_rate_limit_interval_sec,
             section.log_rate_limit_burst,
-        )
-        .map_err(|error| {
-            anyhow!(
-                "failed to connect {unit_name} StandardError to journal {}: {error}",
-                journal_path.display()
-            )
-        })?;
-        let fd = stream.as_raw_fd();
-        stderr_stream = Some(stream);
-        fd
+        ) {
+            Ok(stream) => {
+                let fd = stream.as_raw_fd();
+                stderr_stream = Some(stream);
+                fd
+            }
+            Err(error) => {
+                eprintln!(
+                    "rustd: {unit_name} StandardError=journal unavailable at {}: {error}; using /dev/null",
+                    journal_path.display()
+                );
+                open_dev_null(libc::O_WRONLY)?
+            }
+        }
     } else {
         -1
     };
@@ -2010,7 +2036,7 @@ mod tests {
     }
 
     #[test]
-    fn journal_stdio_connect_failure_fails_activation() {
+    fn journal_stdio_connect_failure_falls_back_to_dev_null() {
         let mut section = ServiceSection {
             service_type: ServiceType::Simple,
             standard_output: "journal".into(),
@@ -2023,13 +2049,13 @@ mod tests {
             "RUSTD_JOURNAL_STDOUT",
             "/tmp/rustd-journal-stdout-definitely-missing",
         );
-        let error = activate(&mut record, &[]).unwrap_err();
+        let result = activate(&mut record, &[]);
         std::env::remove_var("RUSTD_JOURNAL_STDOUT");
-        assert!(
-            error.to_string().contains("failed to connect"),
-            "unexpected error: {error}"
-        );
-        assert_eq!(record.state, UnitState::Failed);
+        result.expect("a missing journal stream must not prevent service activation");
+        assert_eq!(record.state, UnitState::Active);
+        if let Some(pid) = record.active_pid {
+            unsafe { libc::kill(pid, libc::SIGKILL) };
+        }
     }
 
     #[test]

@@ -1,22 +1,26 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Socket unit lifecycle — open listener fds, activate triggered service.
+//! Socket unit lifecycle — open listener fds for socket activation.
 //!
-//! A `.socket` unit listens on one or more addresses and, when a connection
-//! arrives (or immediately for `Accept=no`), triggers its associated
-//! `.service` unit, passing the open listener fds via the `RUSTD_LISTEN_FDS`
-//! protocol.
+//! A `.socket` unit listens on one or more addresses. Matching upstream
+//! `Accept=no` behaviour, activating the socket only binds the listeners; the
+//! companion `.service` is started when explicitly pulled in (or later by
+//! connection-based activation), receiving open fds via `RUSTD_LISTEN_FDS`.
 //!
 //! Lifecycle:
-//!   `Inactive → Activating → Active`  (fds open, service triggered)
+//!   `Inactive → Activating → Active`  (fds open)
 //!   `Active → Deactivating → Inactive`  (fds closed, paths unlinked)
 //!
 //! Upstream reference: `src/core/socket.c` (v261)
 
 use std::ffi::CString;
 use std::os::unix::io::RawFd;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
 
+use crate::event::loop_::{EventLoop, IoHandler};
+use crate::event::source::SourceId;
 use crate::ffi::socket_activation::{
     rustd_socket_listen_datagram, rustd_socket_listen_inet_datagram,
     rustd_socket_listen_inet_stream, rustd_socket_listen_seqpacket, rustd_socket_listen_stream,
@@ -70,6 +74,21 @@ pub fn open_listen_fds(specs: &[ListenSpec], pass_cred: bool) -> anyhow::Result<
 
 /// Open a single listener fd for one `ListenSpec`.
 fn open_one(spec: &ListenSpec) -> anyhow::Result<RawFd> {
+    // Absolute UNIX paths need their parent directories, which early boot often
+    // has not created yet (for example `/run/dbus` before dbus.socket binds).
+    if spec.address.starts_with('/') {
+        if let Some(parent) = Path::new(&spec.address).parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).map_err(|error| {
+                    anyhow!(
+                        "failed to create listen directory {}: {error}",
+                        parent.display()
+                    )
+                })?;
+            }
+        }
+    }
+
     let addr = CString::new(spec.address.as_str()).map_err(|e| anyhow!("address NUL: {e}"))?;
 
     let fd = unsafe {
@@ -151,6 +170,8 @@ pub fn apply_socket_opts(fds: &[RawFd], recv_buf: Option<u64>, send_buf: Option<
 pub struct SocketRecord {
     /// The open listener file descriptors (empty when `Inactive`).
     pub listen_fds: Vec<RawFd>,
+    /// Event-loop registrations which trigger the companion service.
+    pub source_ids: Vec<SourceId>,
 }
 
 impl Drop for SocketRecord {
@@ -165,8 +186,12 @@ impl Drop for SocketRecord {
 
 /// Activate a socket unit: open listener fds and transition to `Active`.
 ///
-/// Enqueues a `Start` job for the triggered service so the manager picks it
-/// up on the next loop iteration and passes the fds via `RUSTD_LISTEN_FDS`.
+/// Matching upstream socket units with `Accept=no`, this only binds the
+/// listeners. The associated service is started when it is pulled in by a
+/// target/`Wants=` edge or later by connection-based activation — not as a
+/// side effect of opening the socket. Prematurely starting every derived
+/// `*.service` breaks sockets whose companion unit is missing or differently
+/// named (for example `polkit-agent-helper.socket`).
 ///
 /// # Errors
 /// Returns an error if the unit is not a `Socket` or if any fd cannot be
@@ -174,7 +199,8 @@ impl Drop for SocketRecord {
 pub fn activate_socket(
     record: &mut UnitRecord,
     sock_rec: &mut SocketRecord,
-    queue: &mut JobQueue,
+    event_loop: &mut EventLoop,
+    queue: &Arc<Mutex<JobQueue>>,
 ) -> anyhow::Result<()> {
     let LoadedUnit::Socket(ref sock) = record.loaded else {
         return Err(anyhow!(
@@ -190,24 +216,66 @@ pub fn activate_socket(
         sock.specific.send_buffer,
     );
 
-    sock_rec.listen_fds = fds;
-    record.state = UnitState::Active;
+    let service_name = triggered_service_name(record.loaded.name(), &sock.specific.service);
+    let mut source_ids = Vec::with_capacity(fds.len());
+    for &fd in &fds {
+        match event_loop.add_io(
+            fd,
+            libc::EPOLLIN as u32,
+            Box::new(SocketReadableHandler {
+                service_name: service_name.clone(),
+                queue: Arc::clone(queue),
+            }),
+        ) {
+            Ok(source_id) => source_ids.push(source_id),
+            Err(error) => {
+                for source_id in source_ids {
+                    let _ = event_loop.remove_io(source_id);
+                }
+                close_listen_fds(&fds, &sock.specific.listen);
+                return Err(error);
+            }
+        }
+    }
 
-    // Derive the triggered service name.
-    let svc_name = triggered_service_name(record.loaded.name(), &sock.specific.service);
-    queue.enqueue(JobKind::Start, svc_name);
+    sock_rec.listen_fds = fds;
+    sock_rec.source_ids = source_ids;
+    record.state = UnitState::Active;
 
     Ok(())
 }
 
 /// Deactivate a socket unit: close listener fds and transition to `Inactive`.
-pub fn deactivate_socket(record: &mut UnitRecord, sock_rec: &mut SocketRecord) {
+pub fn deactivate_socket(
+    record: &mut UnitRecord,
+    sock_rec: &mut SocketRecord,
+    event_loop: &mut EventLoop,
+) {
     let LoadedUnit::Socket(ref sock) = record.loaded else {
         return;
     };
+    for source_id in sock_rec.source_ids.drain(..) {
+        let _ = event_loop.remove_io(source_id);
+    }
     close_listen_fds(&sock_rec.listen_fds, &sock.specific.listen);
     sock_rec.listen_fds.clear();
     record.state = UnitState::Inactive;
+}
+
+struct SocketReadableHandler {
+    service_name: String,
+    queue: Arc<Mutex<JobQueue>>,
+}
+
+impl IoHandler for SocketReadableHandler {
+    fn on_io(&mut self, _fd: i32, events: u32) {
+        if events & libc::EPOLLIN as u32 == 0 {
+            return;
+        }
+        if let Ok(mut queue) = self.queue.lock() {
+            queue.enqueue(JobKind::Start, self.service_name.clone());
+        }
+    }
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────
@@ -234,6 +302,11 @@ pub fn triggered_service_name(socket_name: &str, explicit_service: &str) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::unit::loader::{LoadedUnit, ParsedUnit};
+    use crate::unit::section_install::InstallSection;
+    use crate::unit::section_socket::{ListenSpec, SocketSection};
+    use crate::unit::section_unit::UnitSection;
+    use std::path::PathBuf;
 
     #[test]
     fn triggered_service_name_strips_suffix() {
@@ -257,5 +330,38 @@ mod tests {
     fn socket_record_default_empty() {
         let r = SocketRecord::default();
         assert_eq!(r.listen_fds.len(), 0);
+    }
+
+    #[test]
+    fn listener_starts_companion_only_after_traffic() {
+        let root = tempfile::tempdir().unwrap();
+        let socket_path = root.path().join("trigger.sock");
+        let loaded = LoadedUnit::Socket(Box::new(ParsedUnit {
+            name: "trigger.socket".to_owned(),
+            source_path: PathBuf::from("/fake/trigger.socket"),
+            unit: UnitSection::default(),
+            install: InstallSection::default(),
+            specific: SocketSection {
+                listen: vec![ListenSpec {
+                    kind: "Stream".to_owned(),
+                    address: socket_path.display().to_string(),
+                }],
+                ..Default::default()
+            },
+        }));
+        let mut record = UnitRecord::new(loaded);
+        let mut socket_record = SocketRecord::default();
+        let mut event_loop = EventLoop::new().unwrap();
+        let queue = Arc::new(Mutex::new(JobQueue::default()));
+
+        activate_socket(&mut record, &mut socket_record, &mut event_loop, &queue).unwrap();
+        assert!(queue.lock().unwrap().is_empty());
+
+        let _connection = std::os::unix::net::UnixStream::connect(&socket_path).unwrap();
+        event_loop.run_once_timeout(100).unwrap();
+        let job = queue.lock().unwrap().pop_front().unwrap();
+        assert_eq!(job.unit_name, "trigger.service");
+
+        deactivate_socket(&mut record, &mut socket_record, &mut event_loop);
     }
 }

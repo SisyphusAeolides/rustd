@@ -1,0 +1,17 @@
+RUSTD_SERVICE_1.0 {
+  global:
+    rustd_service_abi_version;
+    rustd_notify_ready;
+    rustd_notify_stopping;
+    rustd_notify_watchdog;
+    rustd_notify_status;
+    rustd_watchdog_enabled;
+    rustd_listen_fds;
+    rustd_is_socket;
+    rustd_current_uid;
+    rustd_peer_uid;
+    rustd_peer_pid;
+    rustd_notify_send;
+  local:
+    *;
+};

@@ -120,7 +120,7 @@ mod tests {
         let (commands, success, failure) = parse_cmdline(
             "systemd.run=/usr/bin/false systemd.run_success_action=reboot systemd.run_failure_action=poweroff",
         );
-        assert!(commands.is_empty());
+        assert_eq!(commands, [] as [std::string::String; 0]);
         assert!(success.is_none());
         assert!(failure.is_none());
     }

@@ -402,6 +402,10 @@ name = "rustd-factory-reset-generator"
 path = "src/bin/rustd-factory-reset-generator.rs"
 
 [[bin]]
+name = "rustd-fstab-generator"
+path = "src/bin/rustd-fstab-generator.rs"
+
+[[bin]]
 name = "rustd-getty-generator"
 path = "src/bin/rustd-getty-generator.rs"
 
@@ -533,6 +537,20 @@ collapsible_match = "allow"
 cast_ptr_alignment = "allow"
 ptr_as_ptr = "allow"
 match_on_vec_items = "allow"
+# Pedantic test/style noise that does not affect runtime correctness.
+assert_is_empty = "allow"
+format_push_string = "allow"
+assigning_clones = "allow"
+default_trait_access = "allow"
+needless_continue = "allow"
+obfuscated_if_else = "allow"
+doc_markdown = "allow"
+unnecessary_debug_formatting = "allow"
+unnecessary_sort_by = "allow"
+large_stack_arrays = "allow"
+redundant_else = "allow"
+type_complexity = "allow"
+too_many_arguments = "allow"
 
 [dev-dependencies]
 tempfile = "=3.10.1"

@@ -54,6 +54,6 @@ fn rustd_owned_runtime_identity_is_native() {
     let notify =
         fs::read_to_string(manifest.join("src/notify.rs")).expect("notify source must exist");
     let spawn = fs::read_to_string(manifest.join("ffi/spawn.c")).expect("spawn source must exist");
-    assert!(notify.contains("pub const NOTIFY_SOCKET_PATH: &str = \"@rustd/notify\";"));
+    assert!(notify.contains("pub const RUSTD_NOTIFY_SOCKET_PATH: &str = \"@rustd/notify\";"));
     assert!(spawn.contains("notify_socket = \"@rustd/notify\";"));
 }

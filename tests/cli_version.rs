@@ -14,7 +14,7 @@ fn assert_version(binary: &str, extra_arg: Option<&str>) {
 
     assert!(output.status.success());
     assert_eq!(output.stdout, VERSION_OUTPUT.as_bytes());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
 }
 
 #[test]

@@ -1,9 +1,10 @@
 [Unit]
 Description=Display Manager
-Documentation=man:systemd.special(7)
-# Distro packages (sddm, gdm, lightdm) create Alias=display-manager.service
-# under /etc/systemd/system (or /etc/rustd/system). Those paths are searched
-# before /usr/lib/rustd/system, so an enabled DM replaces this placeholder.
+# Distro packages (sddm, gdm, lightdm, plasmalogin) create Alias=display-manager.service
+# under /etc/rustd/system. That root is searched before /usr/lib/rustd/system,
+# so an enabled display manager replaces this placeholder.
+# Host profile: packaging ships plasmalogin.service with Alias=display-manager.service;
+# enable it with: rustctl enable plasmalogin.service
 # Until then this unit satisfies Wants=display-manager.service on graphical.target.
 After=multi-user.target rustd-logind.service dbus.service
 Wants=dbus.service rustd-logind.service

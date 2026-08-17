@@ -59,7 +59,7 @@ static void test_filesystem_notifications(void) {
     const socklen_t length =
         (socklen_t)(offsetof(struct sockaddr_un, sun_path) + strlen(path) + 1);
     assert(bind(receiver, (const struct sockaddr *)&address, length) == 0);
-    assert(setenv("NOTIFY_SOCKET", path, 1) == 0);
+    assert(setenv("RUSTD_NOTIFY_SOCKET", path, 1) == 0);
 
     expect_notification(receiver, rustd_notify_ready, "READY=1\n");
     expect_notification(receiver, rustd_notify_stopping, "STOPPING=1\n");
@@ -92,62 +92,62 @@ static void test_abstract_notifications(void) {
     const socklen_t length =
         (socklen_t)(offsetof(struct sockaddr_un, sun_path) + strlen(socket_name));
     assert(bind(receiver, (const struct sockaddr *)&address, length) == 0);
-    assert(setenv("NOTIFY_SOCKET", socket_name, 1) == 0);
+    assert(setenv("RUSTD_NOTIFY_SOCKET", socket_name, 1) == 0);
 
     expect_notification(receiver, rustd_notify_ready, "READY=1\n");
     close(receiver);
 }
 
 static void test_notify_messages(void) {
-    assert(unsetenv("NOTIFY_SOCKET") == 0);
+    assert(unsetenv("RUSTD_NOTIFY_SOCKET") == 0);
     assert(rustd_notify_ready() == 0);
 
     test_filesystem_notifications();
     test_abstract_notifications();
 
-    assert(setenv("NOTIFY_SOCKET", "relative-name", 1) == 0);
+    assert(setenv("RUSTD_NOTIFY_SOCKET", "relative-name", 1) == 0);
     assert(rustd_notify_ready() == -EINVAL);
-    assert(unsetenv("NOTIFY_SOCKET") == 0);
+    assert(unsetenv("RUSTD_NOTIFY_SOCKET") == 0);
 }
 
 static void test_watchdog_environment(void) {
-    assert(unsetenv("WATCHDOG_USEC") == 0);
-    assert(unsetenv("WATCHDOG_PID") == 0);
+    assert(unsetenv("RUSTD_WATCHDOG_USEC") == 0);
+    assert(unsetenv("RUSTD_WATCHDOG_PID") == 0);
 
     uint64_t usec = UINT64_MAX;
     assert(rustd_watchdog_enabled(0, &usec) == 0);
     assert(usec == UINT64_MAX);
 
-    assert(setenv("WATCHDOG_USEC", "2500000", 1) == 0);
+    assert(setenv("RUSTD_WATCHDOG_USEC", "2500000", 1) == 0);
     usec = 0;
     assert(rustd_watchdog_enabled(0, &usec) == 1);
     assert(usec == UINT64_C(2500000));
 
     char pid[32];
     assert(snprintf(pid, sizeof(pid), "%ld", (long)getpid()) > 0);
-    assert(setenv("WATCHDOG_PID", pid, 1) == 0);
+    assert(setenv("RUSTD_WATCHDOG_PID", pid, 1) == 0);
     assert(rustd_watchdog_enabled(0, NULL) == 1);
 
     assert(snprintf(pid, sizeof(pid), "%ld", (long)getpid() + 1L) > 0);
-    assert(setenv("WATCHDOG_PID", pid, 1) == 0);
+    assert(setenv("RUSTD_WATCHDOG_PID", pid, 1) == 0);
     assert(rustd_watchdog_enabled(0, NULL) == 0);
 
-    assert(setenv("WATCHDOG_PID", "not-a-pid", 1) == 0);
+    assert(setenv("RUSTD_WATCHDOG_PID", "not-a-pid", 1) == 0);
     assert(rustd_watchdog_enabled(0, NULL) == -EINVAL);
-    assert(setenv("WATCHDOG_PID", "", 1) == 0);
-    assert(rustd_watchdog_enabled(0, NULL) == -EINVAL);
-
-    assert(unsetenv("WATCHDOG_PID") == 0);
-    assert(setenv("WATCHDOG_USEC", "0", 1) == 0);
-    assert(rustd_watchdog_enabled(0, NULL) == -EINVAL);
-    assert(setenv("WATCHDOG_USEC", "12x", 1) == 0);
+    assert(setenv("RUSTD_WATCHDOG_PID", "", 1) == 0);
     assert(rustd_watchdog_enabled(0, NULL) == -EINVAL);
 
-    assert(setenv("WATCHDOG_USEC", "1000000", 1) == 0);
-    assert(setenv("WATCHDOG_PID", "1", 1) == 0);
+    assert(unsetenv("RUSTD_WATCHDOG_PID") == 0);
+    assert(setenv("RUSTD_WATCHDOG_USEC", "0", 1) == 0);
+    assert(rustd_watchdog_enabled(0, NULL) == -EINVAL);
+    assert(setenv("RUSTD_WATCHDOG_USEC", "12x", 1) == 0);
+    assert(rustd_watchdog_enabled(0, NULL) == -EINVAL);
+
+    assert(setenv("RUSTD_WATCHDOG_USEC", "1000000", 1) == 0);
+    assert(setenv("RUSTD_WATCHDOG_PID", "1", 1) == 0);
     assert(rustd_watchdog_enabled(1, NULL) == 0);
-    assert(getenv("WATCHDOG_USEC") == NULL);
-    assert(getenv("WATCHDOG_PID") == NULL);
+    assert(getenv("RUSTD_WATCHDOG_USEC") == NULL);
+    assert(getenv("RUSTD_WATCHDOG_PID") == NULL);
 }
 
 static void install_activation_descriptors(void) {
@@ -184,51 +184,51 @@ static void set_matching_pidfd_id(void) {
         "%llu",
         (unsigned long long)pidfd_stat.st_ino);
     assert(written > 0 && (size_t)written < sizeof(inode));
-    assert(setenv("LISTEN_PIDFDID", inode, 1) == 0);
+    assert(setenv("RUSTD_LISTEN_PIDFDID", inode, 1) == 0);
 #endif
 }
 
 static void test_listen_fds(void) {
-    assert(unsetenv("LISTEN_PID") == 0);
-    assert(unsetenv("LISTEN_PIDFDID") == 0);
-    assert(unsetenv("LISTEN_FDS") == 0);
-    assert(unsetenv("LISTEN_FDNAMES") == 0);
+    assert(unsetenv("RUSTD_LISTEN_PID") == 0);
+    assert(unsetenv("RUSTD_LISTEN_PIDFDID") == 0);
+    assert(unsetenv("RUSTD_LISTEN_FDS") == 0);
+    assert(unsetenv("RUSTD_LISTEN_FDNAMES") == 0);
     assert(rustd_listen_fds(0) == 0);
 
     char pid[32];
     assert(snprintf(pid, sizeof(pid), "%ld", (long)getpid() + 1L) > 0);
-    assert(setenv("LISTEN_PID", pid, 1) == 0);
-    assert(setenv("LISTEN_FDS", "1", 1) == 0);
+    assert(setenv("RUSTD_LISTEN_PID", pid, 1) == 0);
+    assert(setenv("RUSTD_LISTEN_FDS", "1", 1) == 0);
     assert(rustd_listen_fds(1) == 0);
-    assert(getenv("LISTEN_PID") == NULL);
-    assert(getenv("LISTEN_FDS") == NULL);
+    assert(getenv("RUSTD_LISTEN_PID") == NULL);
+    assert(getenv("RUSTD_LISTEN_FDS") == NULL);
 
     install_activation_descriptors();
     assert(snprintf(pid, sizeof(pid), "%ld", (long)getpid()) > 0);
-    assert(setenv("LISTEN_PID", pid, 1) == 0);
+    assert(setenv("RUSTD_LISTEN_PID", pid, 1) == 0);
     set_matching_pidfd_id();
-    assert(setenv("LISTEN_FDS", "2", 1) == 0);
-    assert(setenv("LISTEN_FDNAMES", "read:write", 1) == 0);
+    assert(setenv("RUSTD_LISTEN_FDS", "2", 1) == 0);
+    assert(setenv("RUSTD_LISTEN_FDNAMES", "read:write", 1) == 0);
     assert(rustd_listen_fds(1) == 2);
     assert((fcntl(3, F_GETFD) & FD_CLOEXEC) != 0);
     assert((fcntl(4, F_GETFD) & FD_CLOEXEC) != 0);
-    assert(getenv("LISTEN_PID") == NULL);
-    assert(getenv("LISTEN_PIDFDID") == NULL);
-    assert(getenv("LISTEN_FDS") == NULL);
-    assert(getenv("LISTEN_FDNAMES") == NULL);
+    assert(getenv("RUSTD_LISTEN_PID") == NULL);
+    assert(getenv("RUSTD_LISTEN_PIDFDID") == NULL);
+    assert(getenv("RUSTD_LISTEN_FDS") == NULL);
+    assert(getenv("RUSTD_LISTEN_FDNAMES") == NULL);
     close(3);
     close(4);
 
-    assert(setenv("LISTEN_PID", pid, 1) == 0);
-    assert(setenv("LISTEN_PIDFDID", "invalid", 1) == 0);
-    assert(setenv("LISTEN_FDS", "1", 1) == 0);
+    assert(setenv("RUSTD_LISTEN_PID", pid, 1) == 0);
+    assert(setenv("RUSTD_LISTEN_PIDFDID", "invalid", 1) == 0);
+    assert(setenv("RUSTD_LISTEN_FDS", "1", 1) == 0);
     assert(rustd_listen_fds(1) == -EINVAL);
-    assert(getenv("LISTEN_PID") == NULL);
-    assert(getenv("LISTEN_PIDFDID") == NULL);
-    assert(getenv("LISTEN_FDS") == NULL);
+    assert(getenv("RUSTD_LISTEN_PID") == NULL);
+    assert(getenv("RUSTD_LISTEN_PIDFDID") == NULL);
+    assert(getenv("RUSTD_LISTEN_FDS") == NULL);
 
-    assert(setenv("LISTEN_PID", pid, 1) == 0);
-    assert(setenv("LISTEN_FDS", "invalid", 1) == 0);
+    assert(setenv("RUSTD_LISTEN_PID", pid, 1) == 0);
+    assert(setenv("RUSTD_LISTEN_FDS", "invalid", 1) == 0);
     assert(rustd_listen_fds(1) == -EINVAL);
 }
 

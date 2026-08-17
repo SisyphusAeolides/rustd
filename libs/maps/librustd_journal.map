@@ -1,0 +1,14 @@
+RUSTD_JOURNAL_1.0 {
+  global:
+    rustd_journal_abi_version;
+    rustd_journal_sendv;
+    rustd_journal_print;
+    rustd_journal_open;
+    rustd_journal_unref;
+    rustd_journal_seek_tail;
+    rustd_journal_next;
+    rustd_journal_get_data;
+    rustd_journal_get_realtime_usec;
+  local:
+    *;
+};

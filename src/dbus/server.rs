@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! D-Bus server lifecycle for the native RustD manager API.
+//! D-Bus server lifecycle for the native `RustD` manager API.
 //!
 //! Spawns a single-threaded tokio runtime on a dedicated OS thread.  The
 //! runtime hosts the zbus `Connection` and serves all D-Bus calls without
@@ -33,7 +33,7 @@ use crate::ipc::UnitInfo;
 use crate::ipc_server::ResetFailedRequests;
 use crate::job::{JobInfo, JobQueue, JobRegistry};
 
-/// Well-known bus name for the RustD manager.
+/// Well-known bus name for the `RustD` manager.
 pub const RUSTD_BUS_NAME: &str = "io.rustd.Manager1";
 /// Root object path.
 pub const RUSTD_OBJECT_PATH: &str = "/io/rustd/Manager1";
@@ -110,6 +110,8 @@ impl DbusServer {
             .name("rustd-dbus".into())
             .spawn(move || {
                 rt.block_on(async move {
+                    let fatal_exit_requested = Arc::clone(&exit_requested);
+                    let fatal_wake = wake.clone();
                     if let Err(e) = run_server(
                         scope,
                         cgroup,
@@ -151,8 +153,14 @@ impl DbusServer {
                     )
                     .await
                     {
-                        // Non-fatal: D-Bus may not be available in all environments.
                         eprintln!("dbus: server error: {e}");
+                        if scope == ManagerScope::System && std::process::id() == 1 {
+                            // A system manager without its native API is not
+                            // operational. Stop PID 1 rather than continuing in
+                            // a deceptively degraded state.
+                            fatal_exit_requested.store(true, std::sync::atomic::Ordering::Release);
+                            let _ = fatal_wake.wake();
+                        }
                     }
                 });
             })
@@ -223,7 +231,6 @@ async fn run_server(
     let subscribers = Arc::new(Mutex::new(HashSet::<String>::new()));
     let unit_references: UnitReferences = Arc::new(Mutex::new(std::collections::HashMap::new()));
 
-    // Register the Manager interface.
     let manager = ManagerInterface {
         scope,
         cgroup,
@@ -429,7 +436,7 @@ async fn poll_dbus_service_readiness(
     }
 }
 
-/// Register the native RustD unit and service interfaces
+/// Register the native `RustD` unit and service interfaces
 /// objects for the current snapshot.
 async fn register_unit_objects(
     scope: ManagerScope,
@@ -515,7 +522,7 @@ async fn register_unit_object_at(
             scope,
             unit_defaults: Arc::clone(unit_defaults),
         };
-        let _ = conn.object_server().at(path, service_iface).await;
+        let _ = conn.object_server().at(path.clone(), service_iface).await;
     }
 }
 

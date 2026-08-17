@@ -11,6 +11,22 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPORT_DIR="${RUSTD_CERT_REPORT_DIR:-$ROOT/target/certification}"
 SOAK_SECONDS="${RUSTD_SOAK_SECONDS:-60}"
+MODE=audit
+
+case "${1:-}" in
+  "") ;;
+  --audit) MODE=audit ;;
+  --release) MODE=release ;;
+  -h|--help)
+    echo "Usage: $0 [--audit|--release]"
+    exit 0
+    ;;
+  *)
+    echo "Usage: $0 [--audit|--release]" >&2
+    exit 64
+    ;;
+esac
+
 mkdir -p "$REPORT_DIR"
 REPORT="$REPORT_DIR/installed-certification.jsonl"
 : >"$REPORT"
@@ -47,13 +63,13 @@ else
 fi
 
 # --- Fault injection smokes --------------------------------------------------
-python3 - <<'PY' || true
-import json, os, time, pathlib
-report = pathlib.Path(os.environ.get("RUSTD_CERT_REPORT_DIR", "target/certification")) / "installed-certification.jsonl"
+python3 - "$REPORT" <<'PY'
+import json, sys, time, pathlib
+report = pathlib.Path(sys.argv[1])
 cases = [
-    ("fault.disk_full_sim", "pass", "simulated ENOSPC path covered by journal certification tests"),
-    ("fault.oom_policy", "pass", "service OOM / restart policy covered by unit tests"),
-    ("fault.signal_storm", "pass", "spawn helper 10k stress covers concurrent child lifecycle"),
+    ("fault.disk_full_sim", "skip", "requires destructive installed-image fault injection"),
+    ("fault.oom_policy", "skip", "requires installed-image OOM pressure injection"),
+    ("fault.signal_storm", "skip", "requires installed-image concurrent child stress"),
 ]
 with report.open("a", encoding="utf-8") as fh:
     for gate, status, detail in cases:
@@ -62,7 +78,12 @@ with report.open("a", encoding="utf-8") as fh:
 PY
 
 # --- Soak --------------------------------------------------------------------
-log soak.start pass "running ${SOAK_SECONDS}s local soak (override with RUSTD_SOAK_SECONDS)"
+if [[ "$MODE" == release && "$SOAK_SECONDS" -lt 259200 ]]; then
+  log soak.duration fail "release certification requires at least 259200 seconds (72 hours)"
+else
+  log soak.duration pass "configured soak duration is ${SOAK_SECONDS}s"
+fi
+log soak.start pass "running ${SOAK_SECONDS}s soak"
 start=$(date +%s)
 deadline=$((start + SOAK_SECONDS))
 samples=0
@@ -84,8 +105,16 @@ for gate in boot.cold boot.reboot boot.poweroff boot.rescue boot.emergency boot.
 done
 
 echo "Certification report: $REPORT"
-# Fail only on explicit fail status.
 if grep -q '"status":"fail"' "$REPORT"; then
   echo "One or more certification gates failed" >&2
   exit 1
 fi
+if grep -Eq '"status":"(pending|skip)"' "$REPORT"; then
+  echo "Certification is incomplete; pending or skipped gates cannot be promoted." >&2
+  exit 2
+fi
+if [[ "$MODE" != release ]]; then
+  echo "Audit complete; production certification requires an explicit --release run." >&2
+  exit 2
+fi
+echo "PRODUCTION GREEN: every installed-image certification gate passed."

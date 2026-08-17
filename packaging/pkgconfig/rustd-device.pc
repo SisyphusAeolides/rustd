@@ -1,0 +1,10 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: rustd-device
+Description: RustD native device enumeration and monitoring
+Version: 0.1.2
+Libs: -L${libdir} -lrustd_device
+Cflags: -I${includedir}

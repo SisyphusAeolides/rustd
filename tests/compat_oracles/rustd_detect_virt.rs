@@ -28,6 +28,12 @@ fn run_fixture(binary: &Path, arguments: &[&str], root: &Path) -> Output {
         .expect("execute fixture systemd-detect-virt")
 }
 
+fn live_oracle_enabled() -> bool {
+    // Exclusive RustD keeps native branding/IPC. Opt into live systemd byte-parity
+    // oracles only when explicitly certifying against a pinned host binary.
+    host_is_pinned_v261() && std::env::var_os("RUSTD_LIVE_SYSTEMD_ORACLE").is_some()
+}
+
 fn host_is_pinned_v261() -> bool {
     Command::new("/usr/bin/systemd-detect-virt")
         .arg("--version")
@@ -43,7 +49,7 @@ fn assert_same(host: &Output, candidate: &Output, arguments: &[&str]) {
 
 #[test]
 fn option_output_and_live_detection_contracts_match_pinned_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: /usr/bin/systemd-detect-virt is not v261");
         return;
     }

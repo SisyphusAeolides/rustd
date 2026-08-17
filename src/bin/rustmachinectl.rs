@@ -3014,7 +3014,7 @@ mod tests {
         assert_eq!(host.leader, 1);
         assert_eq!(host.root_directory, "/");
         assert_eq!(host.state, "running");
-        assert!(!host.id.is_empty());
+        assert_ne!(host.id, "");
     }
 
     #[test]

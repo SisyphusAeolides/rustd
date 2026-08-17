@@ -3,7 +3,7 @@
 //!
 //! These gates keep stdout admission control and reserved-metadata rejection
 //! within explicit bounds so a flood cannot grow the in-memory ring without
-//! bound, and service stdio defaults continue to target the RustD journal.
+//! bound, and service stdio defaults continue to target the `RustD` journal.
 
 use std::collections::HashMap;
 use std::io::Write as _;
@@ -139,7 +139,7 @@ fn connect_service_stream_reaches_live_stdout_server() {
     let mut server = server;
     for _ in 0..50 {
         server.on_io(server.raw_fd(), libc::EPOLLIN as u32);
-        if ring.lock().unwrap().len() > 0 {
+        if !ring.lock().unwrap().is_empty() {
             break;
         }
         std::thread::sleep(Duration::from_millis(10));

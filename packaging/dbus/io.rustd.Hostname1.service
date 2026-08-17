@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 [D-BUS Service]
-Name=org.freedesktop.locale1
+Name=io.rustd.Hostname1
 Exec=/bin/false
 User=root
-SystemdService=dbus-org.freedesktop.locale1.service

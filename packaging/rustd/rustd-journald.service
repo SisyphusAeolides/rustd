@@ -10,7 +10,9 @@ StandardOutput=null
 StandardError=null
 ExecStart=/usr/lib/rustd/rustd-journald --runtime-directory /run/rustd/journal
 Restart=always
-RestartSec=0
+RestartSec=1s
+StartLimitIntervalSec=30
+StartLimitBurst=5
 
 [Install]
 WantedBy=sysinit.target

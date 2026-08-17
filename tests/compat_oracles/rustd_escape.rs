@@ -10,6 +10,9 @@ fn run(binary: &str, args: &[&str]) -> Output {
 }
 
 fn pinned_host_available() -> bool {
+    if std::env::var_os("RUSTD_LIVE_SYSTEMD_ORACLE").is_none() {
+        return false;
+    }
     let output = run("/usr/bin/systemd-escape", &["--version"]);
     output.status.success() && output.stdout.starts_with(b"systemd 261 (261.2-1-arch)\n")
 }

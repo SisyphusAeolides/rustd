@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::Write;
 use std::os::unix::fs::MetadataExt;
@@ -823,49 +823,12 @@ fn export_udev_db(args: &InfoArgs) -> anyhow::Result<()> {
 
 fn handle_trigger(args: &TriggerArgs) -> anyhow::Result<()> {
     let action_str = format!("{}\n", args.action);
-    let mut count = 0;
 
-    let search_root = Path::new("/sys/devices");
-    if !search_root.exists() {
-        eprintln!("sysfs devices not found at /sys/devices");
-        return Ok(());
-    }
-
-    let mut dirs_to_visit = vec![search_root.to_path_buf()];
-    let mut visited = HashSet::new();
-
-    while let Some(current_dir) = dirs_to_visit.pop() {
-        if !visited.insert(current_dir.clone()) {
-            continue;
-        }
-
-        let uevent_file = current_dir.join("uevent");
-        if uevent_file.exists() && matches_trigger_filters(&current_dir, args) {
-            if args.verbose {
-                println!("{}", current_dir.display());
-            }
-            if !args.dry_run {
-                if let Ok(mut f) = fs::OpenOptions::new().write(true).open(&uevent_file) {
-                    let _ = f.write_all(action_str.as_bytes());
-                }
-            }
-            count += 1;
-        }
-
-        if let Ok(entries) = fs::read_dir(&current_dir) {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    let name = entry.file_name();
-                    let name_str = name.to_string_lossy();
-                    if !name_str.starts_with('.') && name_str != "power" && name_str != "subsystem"
-                    {
-                        dirs_to_visit.push(p);
-                    }
-                }
-            }
-        }
-    }
+    let count = match args.trigger_type.as_str() {
+        "subsystems" => trigger_subsystems(args, &action_str),
+        "all" => trigger_subsystems(args, &action_str) + trigger_devices(args, &action_str),
+        _ => trigger_devices(args, &action_str),
+    };
 
     if args.verbose {
         println!("Triggered {count} devices.");
@@ -881,6 +844,80 @@ fn handle_trigger(args: &TriggerArgs) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn trigger_devices(args: &TriggerArgs, action: &str) -> usize {
+    let search_root = Path::new("/sys/devices");
+    if !search_root.exists() {
+        eprintln!("sysfs devices not found at /sys/devices");
+        return 0;
+    }
+
+    let mut count = 0;
+    let mut dirs_to_visit = vec![search_root.to_path_buf()];
+
+    while let Some(current_dir) = dirs_to_visit.pop() {
+        if trigger_one(&current_dir, args, action) {
+            count += 1;
+        }
+
+        let Ok(entries) = fs::read_dir(&current_dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            // Descend into real directories only: sysfs symlinks such as
+            // "driver" and "device" point back into the tree and form cycles.
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if !file_type.is_dir() {
+                continue;
+            }
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name.starts_with('.') || name == "power" {
+                continue;
+            }
+            dirs_to_visit.push(entry.path());
+        }
+    }
+
+    count
+}
+
+fn trigger_subsystems(args: &TriggerArgs, action: &str) -> usize {
+    let mut count = 0;
+
+    for root in ["/sys/subsystem", "/sys/bus", "/sys/class"] {
+        let Ok(entries) = fs::read_dir(root) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            if trigger_one(&entry.path(), args, action) {
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
+
+fn trigger_one(devpath: &Path, args: &TriggerArgs, action: &str) -> bool {
+    let uevent_file = devpath.join("uevent");
+    if !uevent_file.is_file() || !matches_trigger_filters(devpath, args) {
+        return false;
+    }
+
+    if args.verbose {
+        println!("{}", devpath.display());
+    }
+    if !args.dry_run {
+        if let Ok(mut f) = fs::OpenOptions::new().write(true).open(&uevent_file) {
+            let _ = f.write_all(action.as_bytes());
+        }
+    }
+
+    true
 }
 
 fn matches_trigger_filters(devpath: &Path, args: &TriggerArgs) -> bool {

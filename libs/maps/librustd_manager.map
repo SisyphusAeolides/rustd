@@ -1,0 +1,6 @@
+RUSTD_MANAGER_1.0 {
+  global:
+    rustd_manager_*;
+  local:
+    *;
+};

@@ -21,7 +21,7 @@ use std::sync::OnceLock;
 use rustd::ffi::native::rustd_listen_fds;
 use rustd::ffi::notify::rustd_notify_send;
 
-const LISTEN_FDS_START: RawFd = 3;
+const RUSTD_LISTEN_FDS_START: RawFd = 3;
 const FDNAME_MAX: usize = 255;
 
 const VERSION_OUTPUT: &[u8] = concat!(
@@ -601,7 +601,7 @@ fn run(options: &Options) -> Result<(), Failure> {
             return exec_process(
                 options,
                 &sockets.listeners,
-                LISTEN_FDS_START,
+                RUSTD_LISTEN_FDS_START,
                 sockets.listeners.len(),
             );
         }
@@ -623,7 +623,7 @@ fn open_sockets(options: &Options) -> Result<OpenSockets, Failure> {
 
     let mut listeners = Vec::new();
     for offset in 0..inherited {
-        let fd = LISTEN_FDS_START + offset;
+        let fd = RUSTD_LISTEN_FDS_START + offset;
         set_cloexec(fd, options.accept)
             .map_err(|errno| Failure::with_errno(errno_text(errno).into_bytes(), errno))?;
         // SAFETY: rustd_listen_fds() verified that each descriptor is open, and
@@ -637,7 +637,7 @@ fn open_sockets(options: &Options) -> Result<OpenSockets, Failure> {
     }
 
     for raw in &options.listen {
-        let expected = LISTEN_FDS_START
+        let expected = RUSTD_LISTEN_FDS_START
             + i32::try_from(listeners.len()).map_err(|_| Failure::fixed(b"Too many sockets."))?;
         let opened = open_address(raw.as_os_str(), options.socket_type, options.accept)?;
         let opened = move_to_fd(opened, expected, options.accept)?;
@@ -695,7 +695,7 @@ fn open_sockets(options: &Options) -> Result<OpenSockets, Failure> {
 fn close_other_fds(preserved: &[RawFd]) {
     let mut preserved = preserved.to_vec();
     preserved.sort_unstable();
-    let mut first = LISTEN_FDS_START;
+    let mut first = RUSTD_LISTEN_FDS_START;
     for fd in preserved {
         if fd < first {
             continue;
@@ -1669,12 +1669,12 @@ fn exec_process(
             ));
         }
         rearrange_inetd_stdio(start_fd)?;
-    } else if start_fd != LISTEN_FDS_START {
+    } else if start_fd != RUSTD_LISTEN_FDS_START {
         if descriptor_count != 1 {
             return Err(Failure::fixed(b"Invalid activation descriptor layout."));
         }
         // SAFETY: start_fd is open and fd 3 is the protocol destination.
-        if unsafe { libc::dup2(start_fd, LISTEN_FDS_START) } < 0 {
+        if unsafe { libc::dup2(start_fd, RUSTD_LISTEN_FDS_START) } < 0 {
             return Err(last_errno_failure(b"Failed to dup connection: "));
         }
         // SAFETY: the source is no longer needed after dup2.
@@ -1689,16 +1689,16 @@ fn exec_process(
     }
     if !options.inetd {
         child_environment.push((
-            OsString::from("LISTEN_FDS"),
+            OsString::from("RUSTD_LISTEN_FDS"),
             OsString::from(descriptor_count.to_string()),
         ));
         child_environment.push((
-            OsString::from("LISTEN_PID"),
+            OsString::from("RUSTD_LISTEN_PID"),
             OsString::from(std::process::id().to_string()),
         ));
         if let Some(identifier) = own_pidfd_inode() {
             child_environment.push((
-                OsString::from("LISTEN_PIDFDID"),
+                OsString::from("RUSTD_LISTEN_PIDFDID"),
                 OsString::from(identifier.to_string()),
             ));
         }
@@ -1715,7 +1715,10 @@ fn exec_process(
                 }
                 joined.extend_from_slice(name.as_os_str().as_bytes());
             }
-            child_environment.push((OsString::from("LISTEN_FDNAMES"), OsString::from_vec(joined)));
+            child_environment.push((
+                OsString::from("RUSTD_LISTEN_FDNAMES"),
+                OsString::from_vec(joined),
+            ));
         }
     }
     for (name, value) in &options.environment {

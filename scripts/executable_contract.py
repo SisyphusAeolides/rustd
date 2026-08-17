@@ -35,6 +35,7 @@ NATIVE_EXECUTABLES = frozenset(
         "rustd-escape",
         "rustd-firstboot",
         "rustd-factory-reset-generator",
+        "rustd-fstab-generator",
         "rustd-fsck",
         "rustd-home-fallback-shell",
         "rustd-hostnamed",
@@ -127,6 +128,18 @@ NATIVE_BUILD_ALIASES = {
 }
 NATIVE_BUILD_EXECUTABLES = frozenset(NATIVE_EXECUTABLES - NATIVE_BUILD_ALIASES.keys())
 
+NATIVE_GENERATORS = frozenset(
+    {
+        "rustd-bless-boot-generator",
+        "rustd-debug-generator",
+        "rustd-factory-reset-generator",
+        "rustd-fstab-generator",
+        "rustd-getty-generator",
+        "rustd-run-generator",
+        "rustd-system-update-generator",
+    }
+)
+
 NATIVE_LIBEXEC = frozenset(
     {
         "rustd",
@@ -136,6 +149,8 @@ NATIVE_LIBEXEC = frozenset(
         "rustd-bless-boot-generator",
         "rustd-binfmt",
         "rustd-debug-generator",
+        "rustd-factory-reset-generator",
+        "rustd-fstab-generator",
         "rustd-getty-generator",
         "rustd-boot-check-no-failures",
         "rustd-fsck",
@@ -168,9 +183,26 @@ NATIVE_LIBEXEC = frozenset(
 
 EXPECTED_EXECUTABLE_COUNT = len(NATIVE_EXECUTABLES)
 EXPECTED_BUILD_EXECUTABLE_COUNT = len(NATIVE_BUILD_EXECUTABLES)
+FORBIDDEN_COMPATIBILITY_EXECUTABLES = frozenset(
+    {
+        "systemctl",
+        "journalctl",
+        "udevadm",
+        "loginctl",
+        "hostnamectl",
+        "localectl",
+        "timedatectl",
+        "networkctl",
+        "busctl",
+        "run0",
+    }
+)
 
-assert len(NATIVE_EXECUTABLES) == 109
-assert EXPECTED_EXECUTABLE_COUNT == 109
-assert len(NATIVE_BUILD_EXECUTABLES) == 106
-assert EXPECTED_BUILD_EXECUTABLE_COUNT == 106
+assert len(NATIVE_EXECUTABLES) == 110
+assert EXPECTED_EXECUTABLE_COUNT == 110
+assert len(NATIVE_BUILD_EXECUTABLES) == 107
+assert EXPECTED_BUILD_EXECUTABLE_COUNT == 107
 assert NATIVE_LIBEXEC <= NATIVE_EXECUTABLES
+assert NATIVE_GENERATORS <= NATIVE_LIBEXEC
+assert NATIVE_EXECUTABLES.isdisjoint(FORBIDDEN_COMPATIBILITY_EXECUTABLES)
+assert all("systemd" not in name for name in NATIVE_EXECUTABLES)

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Native uevent daemon for RustD.
+//! Native uevent daemon for `RustD`.
 
 use clap::Parser;
 use rustd::udev::{apply_rules, load_rules, persist_device, Device, Rule};
@@ -15,7 +15,7 @@ const CONTROL_SOCKET: &str = "/run/udev/control";
 #[derive(Parser)]
 #[command(name = "rustd-udevd", about = "RustD device event daemon")]
 struct Arguments {
-    /// Do not daemonize; RustD services always use this mode.
+    /// Do not daemonize; `RustD` services always use this mode.
     #[arg(long)]
     daemon: bool,
     /// Do not create nodes or execute RUN rules.
@@ -70,7 +70,7 @@ fn main() -> anyhow::Result<()> {
                     buffer.as_mut_ptr().cast(),
                     buffer.len(),
                     0,
-                    (&mut sender as *mut libc::sockaddr_nl).cast(),
+                    std::ptr::addr_of_mut!(sender).cast(),
                     &mut sender_len,
                 )
             };
@@ -125,7 +125,7 @@ fn open_uevent_socket() -> io::Result<OwnedFd> {
     let result = unsafe {
         libc::bind(
             fd,
-            (&address as *const libc::sockaddr_nl).cast(),
+            std::ptr::addr_of!(address).cast(),
             mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t,
         )
     };

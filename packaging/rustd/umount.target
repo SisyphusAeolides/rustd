@@ -1,2 +1,6 @@
 [Unit]
 Description=RustD Filesystem Unmount
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=shutdown.target
+After=final.target

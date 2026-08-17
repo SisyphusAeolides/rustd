@@ -1,2 +1,8 @@
 [Unit]
 Description=RustD Shutdown
+DefaultDependencies=no
+AllowIsolate=yes
+Requires=umount.target
+After=umount.target
+Conflicts=rescue.target emergency.target
+Before=final.target

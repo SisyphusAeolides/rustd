@@ -5,7 +5,7 @@
 //! `org.freedesktop.DBus.GetConnectionUnixUser` and fail closed when the bus
 //! cannot provide credentials. Root callers are allowed directly; other
 //! callers are authorized through `PolicyKit` using the same system-bus-name
-//! subject form used by the RustD manager.
+//! subject form used by the `RustD` manager.
 //!
 //! Upstream reference: `src/shared/bus-polkit.c` and `src/core/dbus-util.c`
 //! (v261).

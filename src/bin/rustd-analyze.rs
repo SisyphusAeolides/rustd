@@ -213,7 +213,7 @@ fn cmd_blame(user: bool) -> anyhow::Result<i32> {
         ("systemd-udev-settle.service", 1750),
         ("systemd-journal-flush.service", 1230),
         ("systemd-sysctl.service", 890),
-        ("systemd-udevd.service", 820),
+        ("rustd-udevd.service", 820),
         ("systemd-logind.service", 640),
         ("systemd-tmpfiles-setup.service", 450),
         ("systemd-modules-load.service", 380),
@@ -277,14 +277,14 @@ fn cmd_critical_chain(units: &[String], _user: bool) -> anyhow::Result<i32> {
         println!("      └─sockets.target @2.465s");
         println!("        └─dbus.socket @2.460s");
         println!("          └─sysinit.target @2.450s");
-        println!("            └─systemd-udevd.service @1.630s +820ms");
+        println!("            └─rustd-udevd.service @1.630s +820ms");
         println!("              └─systemd-tmpfiles-setup-dev.service @1.420s +190ms");
         println!("                └─kmod-static-nodes.service @1.310s +95ms");
     } else {
         println!("{target} @2.480s +638ms");
         println!("└─basic.target @2.470s");
         println!("  └─sysinit.target @2.450s");
-        println!("    └─systemd-udevd.service @1.630s +820ms");
+        println!("    └─rustd-udevd.service @1.630s +820ms");
     }
 
     Ok(0)

@@ -109,6 +109,11 @@ fn main() -> anyhow::Result<()> {
         } else {
             "bare-metal"
         };
+        // A container manager inherits its API mounts from the runtime; on
+        // bare metal PID 1 establishes them itself before anything reads them.
+        if !running_in_container() {
+            rustd::mount_setup::mount_api_filesystems()?;
+        }
         rustd::cgroup::CgroupManager::for_scope(ManagerScope::System)
             .setup_delegated_root()
             .map_err(|error| {
@@ -134,6 +139,13 @@ fn main() -> anyhow::Result<()> {
     // Install the spawn helper before Manager::new starts IPC / D-Bus threads.
     // After this point rustd_spawn never forks the manager process.
     rustd::ffi::spawn::configure_spawn_helper_from_self()?;
+
+    // Materialize transient units before the loader snapshots the boot graph.
+    // Generators are system-manager only; user managers have a separate
+    // lifecycle and must not rewrite the machine boot transaction.
+    if !user_mode {
+        rustd::generator::run_system_generators()?;
+    }
 
     // 4. Start the manager and install the supervisor watchdog, if one was
     // passed through the sd-daemon environment.
@@ -414,7 +426,7 @@ mod tests {
         ] {
             let mut backend = RecordingBackend::default();
             handle_result_with_backend(result, true, &mut backend);
-            assert!(backend.transitions.is_empty());
+            assert_eq!(backend.transitions, [] as [tests::RecordedTransition; 0]);
         }
     }
 
@@ -423,7 +435,7 @@ mod tests {
         for result in [LoopResult::Continue, LoopResult::Exit] {
             let mut backend = RecordingBackend::default();
             handle_result_with_backend(result, false, &mut backend);
-            assert!(backend.transitions.is_empty());
+            assert_eq!(backend.transitions, [] as [tests::RecordedTransition; 0]);
         }
     }
 }

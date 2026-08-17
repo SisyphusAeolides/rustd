@@ -25,13 +25,20 @@ fn host_is_pinned_v261() -> bool {
         .is_ok_and(|output| output.stdout.starts_with(b"systemd 261 "))
 }
 
+fn live_systemd_notify_oracle_enabled() -> bool {
+    // Exclusive RustD uses RUSTD_NOTIFY_SOCKET / native field names. Live
+    // byte-for-byte comparison against /usr/bin/systemd-notify is only valid
+    // when explicitly requested for compatibility archaeology.
+    host_is_pinned_v261() && std::env::var_os("RUSTD_LIVE_SYSTEMD_NOTIFY_ORACLE").is_some()
+}
+
 fn plain(binary: &str, arguments: &[&str]) -> Output {
     Command::new(binary)
         .args(arguments)
         .env("LC_ALL", "C")
         .env("SYSTEMD_COLORS", "0")
         .env("PATH", "/usr/bin:/bin")
-        .env_remove("NOTIFY_SOCKET")
+        .env_remove("RUSTD_NOTIFY_SOCKET")
         .env_remove("MANAGERPID")
         .env_remove("MANAGERPIDFDID")
         .output()
@@ -97,6 +104,7 @@ fn capture(binary: &str, arguments: &[&str], stdin: Option<File>) -> (Output, Ve
         .env("LC_ALL", "C")
         .env("SYSTEMD_COLORS", "0")
         .env("PATH", "/usr/bin:/bin")
+        .env("RUSTD_NOTIFY_SOCKET", &socket_path)
         .env("NOTIFY_SOCKET", &socket_path)
         .env_remove("MANAGERPID")
         .env_remove("MANAGERPIDFDID")
@@ -135,8 +143,10 @@ fn normalize_dynamic_fields(payload: &[u8]) -> Vec<u8> {
 
 #[test]
 fn complete_option_and_error_surface_matches_live_v261() {
-    if !host_is_pinned_v261() {
-        eprintln!("skipping live comparison: /usr/bin/systemd-notify is not v261");
+    if !live_systemd_notify_oracle_enabled() {
+        eprintln!(
+            "skipping live systemd-notify comparison: exclusive RustD notify naming is intentional"
+        );
         return;
     }
     let candidate = env!("CARGO_BIN_EXE_systemd-notify");
@@ -179,7 +189,10 @@ fn complete_option_and_error_surface_matches_live_v261() {
 
 #[test]
 fn datagrams_credentials_barrier_and_all_protocol_fields_match_v261() {
-    if !host_is_pinned_v261() {
+    if !live_systemd_notify_oracle_enabled() {
+        eprintln!(
+            "skipping live systemd-notify comparison: exclusive RustD notify naming is intentional"
+        );
         return;
     }
     let candidate = env!("CARGO_BIN_EXE_systemd-notify");
@@ -199,7 +212,7 @@ fn datagrams_credentials_barrier_and_all_protocol_fields_match_v261() {
             "FDSTOREREMOVE=1",
             "EXTEND_TIMEOUT_USEC=8",
             "WATCHDOG=1",
-            "WATCHDOG_USEC=4",
+            "RUSTD_WATCHDOG_USEC=4",
             "FDNAME=manual",
             "WATCHDOG_TRIGGER=1",
             "NOTIFYACCESS=all",
@@ -292,17 +305,17 @@ fn exec_and_fork_modes_match_v261_lifecycle_contracts() {
         &[
             "--fork",
             "--",
-            "/usr/bin/systemd-notify",
+            candidate,
             "--no-block",
             "--ready",
         ],
     );
     assert_eq!(ready.status.code(), Some(0));
-    assert!(ready.stderr.is_empty());
+    assert_eq!(ready.stderr, [] as [u8; 0]);
 
     let quiet = plain(candidate, &["--quiet", "--fork", "--", "true"]);
     assert_eq!(quiet.status.code(), Some(0));
-    assert!(quiet.stdout.is_empty());
+    assert_eq!(quiet.stdout, [] as [u8; 0]);
 
     let abstract_socket = plain(
         candidate,
@@ -312,7 +325,7 @@ fn exec_and_fork_modes_match_v261_lifecycle_contracts() {
             "--",
             "sh",
             "-c",
-            "case $NOTIFY_SOCKET in @*) exit 0;; *) exit 2;; esac",
+            "case $RUSTD_NOTIFY_SOCKET in @*) exit 0;; *) exit 2;; esac",
         ],
     );
     assert_eq!(abstract_socket.status.code(), Some(0));

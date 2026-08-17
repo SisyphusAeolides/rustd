@@ -1,0 +1,10 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: rustd-login
+Description: RustD native login and session queries
+Version: 0.1.2
+Libs: -L${libdir} -lrustd_login
+Cflags: -I${includedir}

@@ -2,17 +2,16 @@
 Description=RustD Device Event Manager
 Documentation=man:rustd-udevd(8)
 DefaultDependencies=no
-After=systemd-sysusers.service systemd-tmpfiles-setup-dev.service
+After=rustd-sysusers.service rustd-tmpfiles-setup-dev.service
 Before=sysinit.target
 ConditionPathIsReadWrite=/sys
 
 [Service]
 Type=simple
-ExecStart=/usr/lib/rustd/rustd-udevd --daemon
+ExecStart=/usr/lib/rustd/rustd-udevd
 Restart=always
 RestartSec=1s
 KillMode=mixed
 
 [Install]
 WantedBy=sysinit.target
-Alias=systemd-udevd.service

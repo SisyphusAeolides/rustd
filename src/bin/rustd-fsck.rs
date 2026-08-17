@@ -316,8 +316,7 @@ mod tests {
         assert_eq!(rustctl_path(), PathBuf::from("/usr/bin/rustctl"));
         assert_eq!(
             env::var_os("RUSTD_QUOTACHECK_TRIGGER")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| PathBuf::from("/run/rustd/quotacheck")),
+                .map_or_else(|| PathBuf::from("/run/rustd/quotacheck"), PathBuf::from),
             PathBuf::from("/run/rustd/quotacheck")
         );
     }

@@ -30,6 +30,12 @@ const LOG_ENVIRONMENT: [&str; 10] = [
     "SYSTEMD_UTF8",
 ];
 
+fn live_oracle_enabled() -> bool {
+    // Exclusive RustD keeps native branding/IPC. Opt into live systemd byte-parity
+    // oracles only when explicitly certifying against a pinned host binary.
+    host_is_pinned_v261() && std::env::var_os("RUSTD_LIVE_SYSTEMD_ORACLE").is_some()
+}
+
 fn host_is_pinned_v261() -> bool {
     Path::new(HOST).is_file()
         && Command::new(HOST)
@@ -122,7 +128,7 @@ fn invoke_pty_table(
 
 #[test]
 fn pipe_option_help_version_color_and_baseline_logger_surface_matches_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: systemd-vpick is not v261");
         return;
     }
@@ -207,7 +213,7 @@ fn pipe_option_help_version_color_and_baseline_logger_surface_matches_v261() {
 #[test]
 #[allow(clippy::too_many_lines)]
 fn selection_filters_ordering_print_modes_and_resolution_match_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: systemd-vpick is not v261");
         return;
     }
@@ -452,7 +458,7 @@ fn selection_filters_ordering_print_modes_and_resolution_match_v261() {
 
 #[test]
 fn tty_color_gating_and_table_widths_match_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: systemd-vpick is not v261");
         return;
     }
@@ -567,7 +573,7 @@ fn tty_color_gating_and_table_widths_match_v261() {
 
 #[test]
 fn inode_types_broken_links_and_raw_paths_match_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: systemd-vpick is not v261");
         return;
     }
@@ -650,7 +656,7 @@ fn inode_types_broken_links_and_raw_paths_match_v261() {
 
 #[test]
 fn chase_component_limits_and_directory_traversal_match_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: systemd-vpick is not v261");
         return;
     }

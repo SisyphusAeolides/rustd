@@ -2,9 +2,9 @@
 //! FFI binding for `ffi/spawn.c` — async-signal-safe process spawning.
 //!
 //! The manager never forks after threads exist.  It `posix_spawn`s a fresh
-//! RustD image in helper mode, and that helper applies the spawn parameters
+//! `RustD` image in helper mode, and that helper applies the spawn parameters
 //! before `execve`.  Call [`configure_spawn_helper`] with an absolute path to
-//! the RustD executable before creating any manager threads.
+//! the `RustD` executable before creating any manager threads.
 //!
 //! Upstream reference: `src/core/execute.c exec_child()` (v261)
 
@@ -188,7 +188,7 @@ extern "C" {
 /// Install the helper image that [`rustd_spawn`] launches for child setup.
 ///
 /// Must be called before the manager creates any thread.  Production entry
-/// points pass `/proc/self/exe` (or an equivalent absolute path to the RustD
+/// points pass `/proc/self/exe` (or an equivalent absolute path to the `RustD`
 /// binary).  Returns `Ok(())` on success.
 ///
 /// # Errors

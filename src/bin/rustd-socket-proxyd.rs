@@ -537,7 +537,7 @@ fn forward_bidirectional(server: File, client: File) -> Result<(), String> {
 }
 
 fn copy_and_shutdown(source: &mut File, destination_fd: RawFd) -> Result<(), String> {
-    let mut buffer = [0u8; 64 * 1024];
+    let mut buffer = vec![0u8; 64 * 1024].into_boxed_slice();
     loop {
         let length = source
             .read(&mut buffer)

@@ -79,18 +79,18 @@ static void unset_listen_environment(int unset_environment) {
     if (!unset_environment)
         return;
 
-    (void)unsetenv("LISTEN_PID");
-    (void)unsetenv("LISTEN_PIDFDID");
-    (void)unsetenv("LISTEN_FDS");
-    (void)unsetenv("LISTEN_FDNAMES");
+    (void)unsetenv("RUSTD_LISTEN_PID");
+    (void)unsetenv("RUSTD_LISTEN_PIDFDID");
+    (void)unsetenv("RUSTD_LISTEN_FDS");
+    (void)unsetenv("RUSTD_LISTEN_FDNAMES");
 }
 
 static void unset_watchdog_environment(int unset_environment) {
     if (!unset_environment)
         return;
 
-    (void)unsetenv("WATCHDOG_USEC");
-    (void)unsetenv("WATCHDOG_PID");
+    (void)unsetenv("RUSTD_WATCHDOG_USEC");
+    (void)unsetenv("RUSTD_WATCHDOG_PID");
 }
 
 static int notify_address(
@@ -129,7 +129,7 @@ static int notify_message(const char *message) {
     if (!message)
         return -EINVAL;
 
-    const char *socket_path = getenv("NOTIFY_SOCKET");
+    const char *socket_path = getenv("RUSTD_NOTIFY_SOCKET");
     if (!socket_path)
         return 0;
 
@@ -190,7 +190,7 @@ int rustd_notify_watchdog(void) {
 }
 
 int rustd_watchdog_enabled(int unset_environment, uint64_t *usec) {
-    const char *watchdog_usec = getenv("WATCHDOG_USEC");
+    const char *watchdog_usec = getenv("RUSTD_WATCHDOG_USEC");
     int result = 0;
 
     if (!watchdog_usec)
@@ -205,7 +205,7 @@ int rustd_watchdog_enabled(int unset_environment, uint64_t *usec) {
         goto finish;
     }
 
-    const char *watchdog_pid = getenv("WATCHDOG_PID");
+    const char *watchdog_pid = getenv("RUSTD_WATCHDOG_PID");
     if (watchdog_pid) {
         pid_t parsed_pid = 0;
         result = parse_pid_decimal(watchdog_pid, &parsed_pid);
@@ -265,7 +265,7 @@ int rustd_peer_pid(int fd, pid_t *pid_out) {
 }
 
 int rustd_listen_fds(int unset_environment) {
-    const char *listen_pid = getenv("LISTEN_PID");
+    const char *listen_pid = getenv("RUSTD_LISTEN_PID");
     int result = 0;
 
     if (!listen_pid)
@@ -280,7 +280,7 @@ int rustd_listen_fds(int unset_environment) {
         goto finish;
     }
 
-    const char *listen_pidfd_id = getenv("LISTEN_PIDFDID");
+    const char *listen_pidfd_id = getenv("RUSTD_LISTEN_PIDFDID");
     if (listen_pidfd_id) {
         uint64_t expected_inode = 0;
         result = parse_u64_decimal(listen_pidfd_id, &expected_inode);
@@ -294,7 +294,7 @@ int rustd_listen_fds(int unset_environment) {
         }
     }
 
-    const char *listen_fds = getenv("LISTEN_FDS");
+    const char *listen_fds = getenv("RUSTD_LISTEN_FDS");
     if (!listen_fds) {
         result = 0;
         goto finish;

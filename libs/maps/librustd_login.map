@@ -1,0 +1,10 @@
+RUSTD_LOGIN_1.0 {
+  global:
+    rustd_login_*;
+    rustd_get_sessions;
+    rustd_uid_*;
+    rustd_session_*;
+    rustd_pid_*;
+  local:
+    *;
+};

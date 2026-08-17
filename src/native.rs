@@ -25,9 +25,9 @@ pub fn install_signal_handlers() -> anyhow::Result<()> {
     )
 }
 
-/// Send `READY=1` to the socket named by `NOTIFY_SOCKET`.
+/// Send `READY=1` to the socket named by `RUSTD_NOTIFY_SOCKET`.
 ///
-/// Returns `false` when `NOTIFY_SOCKET` is not set.
+/// Returns `false` when `RUSTD_NOTIFY_SOCKET` is not set.
 ///
 /// # Errors
 /// Returns an error when the socket address is invalid or the datagram cannot
@@ -35,14 +35,14 @@ pub fn install_signal_handlers() -> anyhow::Result<()> {
 pub fn notify_ready() -> anyhow::Result<bool> {
     notification_result(
         "sending READY notification",
-        // Safety: the native helper reads `NOTIFY_SOCKET` and sends one datagram.
+        // Safety: the native helper reads `RUSTD_NOTIFY_SOCKET` and sends one datagram.
         unsafe { crate::ffi::native::rustd_notify_ready() },
     )
 }
 
-/// Send `STOPPING=1` to the socket named by `NOTIFY_SOCKET`.
+/// Send `STOPPING=1` to the socket named by `RUSTD_NOTIFY_SOCKET`.
 ///
-/// Returns `false` when `NOTIFY_SOCKET` is not set.
+/// Returns `false` when `RUSTD_NOTIFY_SOCKET` is not set.
 ///
 /// # Errors
 /// Returns an error when the socket address is invalid or the datagram cannot
@@ -50,14 +50,14 @@ pub fn notify_ready() -> anyhow::Result<bool> {
 pub fn notify_stopping() -> anyhow::Result<bool> {
     notification_result(
         "sending STOPPING notification",
-        // Safety: the native helper reads `NOTIFY_SOCKET` and sends one datagram.
+        // Safety: the native helper reads `RUSTD_NOTIFY_SOCKET` and sends one datagram.
         unsafe { crate::ffi::native::rustd_notify_stopping() },
     )
 }
 
-/// Send `WATCHDOG=1` to the socket named by `NOTIFY_SOCKET`.
+/// Send `WATCHDOG=1` to the socket named by `RUSTD_NOTIFY_SOCKET`.
 ///
-/// Returns `false` when `NOTIFY_SOCKET` is not set.
+/// Returns `false` when `RUSTD_NOTIFY_SOCKET` is not set.
 ///
 /// # Errors
 /// Returns an error when the socket address is invalid or the datagram cannot
@@ -65,14 +65,14 @@ pub fn notify_stopping() -> anyhow::Result<bool> {
 pub fn notify_watchdog() -> anyhow::Result<bool> {
     notification_result(
         "sending watchdog notification",
-        // Safety: the native helper reads `NOTIFY_SOCKET` and sends one datagram.
+        // Safety: the native helper reads `RUSTD_NOTIFY_SOCKET` and sends one datagram.
         unsafe { crate::ffi::native::rustd_notify_watchdog() },
     )
 }
 
-/// Parse `WATCHDOG_USEC` and `WATCHDOG_PID` for the current process.
+/// Parse `RUSTD_WATCHDOG_USEC` and `RUSTD_WATCHDOG_PID` for the current process.
 ///
-/// Returns `None` when no watchdog is configured or when `WATCHDOG_PID` names
+/// Returns `None` when no watchdog is configured or when `RUSTD_WATCHDOG_PID` names
 /// a different process. When `unset_environment` is true, both watchdog
 /// variables are removed before the function returns.
 ///

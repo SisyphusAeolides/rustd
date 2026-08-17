@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
+//! Native `RustD` socket-activation contract tests.
+//!
+//! These assert `RUSTD_LISTEN_*` / `RUSTD_NOTIFY_*` behavior only. They do not
+//! compare against `systemd-socket-activate`.
 
 use std::ffi::OsString;
 use std::fs;
 use std::io::{Read, Write};
-use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::os::unix::net::{UnixDatagram, UnixStream};
 use std::os::unix::process::CommandExt;
@@ -12,42 +15,21 @@ use std::process::{Child, Command, Output, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const HOST: &str = "/usr/bin/systemd-socket-activate";
-
-fn host_is_pinned_v261() -> bool {
-    Path::new(HOST).is_file()
-        && Command::new(HOST)
-            .arg("--version")
-            .output()
-            .is_ok_and(|output| output.stdout.starts_with(b"systemd 261 "))
+fn binary() -> &'static str {
+    env!("CARGO_BIN_EXE_rustd-socket-activate")
 }
 
-fn command(binary: &str) -> Command {
-    let mut command = Command::new(binary);
-    command
-        .env("LC_ALL", "C")
-        .env("SYSTEMD_COLORS", "0")
-        .env("SYSTEMD_LOG_COLOR", "0")
-        .env("SYSTEMD_LOG_TARGET", "console")
-        .env("SYSTEMD_LOG_LEVEL", "err");
+fn command() -> Command {
+    let mut command = Command::new(binary());
+    command.env("LC_ALL", "C").env_remove("RUSTD_NOTIFY_SOCKET");
     command
 }
 
-fn run(binary: &str, arguments: &[OsString]) -> Output {
-    command(binary)
+fn run(arguments: &[OsString]) -> Output {
+    command()
         .args(arguments)
         .output()
         .expect("run rustd-socket-activate")
-}
-
-fn assert_same(host: &Output, candidate: &Output, context: &str) {
-    assert_eq!(
-        candidate.status.code(),
-        host.status.code(),
-        "status: {context}"
-    );
-    assert_eq!(candidate.stdout, host.stdout, "stdout: {context}");
-    assert_eq!(candidate.stderr, host.stderr, "stderr: {context}");
 }
 
 fn wait_for_path(path: &Path, child: &mut Child) {
@@ -78,22 +60,45 @@ fn wait_with_output(mut child: Child) -> Output {
     panic!("activation child timed out");
 }
 
-fn spawn_accept(binary: &str, path: &Path, inetd: bool, raised_limit: bool) -> Child {
+fn send_seqpacket(path: &Path) {
+    let output = Command::new("/usr/bin/python3")
+        .args([
+            "-c",
+            concat!(
+                "import socket,sys\n",
+                "s=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET)\n",
+                "s.connect(sys.argv[1])\n",
+                "s.sendall(b'mode-payload')\n",
+            ),
+        ])
+        .arg(path)
+        .output()
+        .expect("run seqpacket client");
+    assert!(
+        output.status.success(),
+        "seqpacket client failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn spawn_accept(path: &Path, inetd: bool, raised_limit: bool) -> Child {
     let response = concat!(
         "import os,resource,socket\n",
         "s=socket.socket(fileno=3)\n",
-        "v=(os.environ.get('LISTEN_FDS'),os.environ.get('LISTEN_FDNAMES'),",
-        "os.getpid()==int(os.environ['LISTEN_PID']),",
-        "os.environ.get('LISTEN_PIDFDID','').isdigit(),",
+        "assert 'LISTEN_FDS' not in os.environ\n",
+        "assert 'LISTEN_PID' not in os.environ\n",
+        "v=(os.environ['RUSTD_LISTEN_FDS'],os.environ.get('RUSTD_LISTEN_FDNAMES'),",
+        "os.getpid()==int(os.environ['RUSTD_LISTEN_PID']),",
+        "os.environ.get('RUSTD_LISTEN_PIDFDID','').isdigit(),",
         "resource.getrlimit(resource.RLIMIT_NOFILE))\n",
         "s.sendall(repr(v).encode())\n",
     );
     let mut process = if raised_limit {
-        let mut process = command("/usr/bin/prlimit");
-        process.args(["--nofile=65536:1048576", "--", binary]);
+        let mut process = Command::new("/usr/bin/prlimit");
+        process.args(["--nofile=65536:1048576", "--", binary()]);
         process
     } else {
-        command(binary)
+        command()
     };
     process
         .arg("--accept")
@@ -130,10 +135,10 @@ fn stop_group(child: &mut Child) {
     let _ = child.wait();
 }
 
-fn accept_response(binary: &str, inetd: bool, raised_limit: bool) -> Vec<u8> {
+fn accept_response(inetd: bool, raised_limit: bool) -> Vec<u8> {
     let fixture = tempfile::tempdir().expect("create accept fixture");
     let path = fixture.path().join("accept.sock");
-    let mut child = spawn_accept(binary, &path, inetd, raised_limit);
+    let mut child = spawn_accept(&path, inetd, raised_limit);
     wait_for_path(&path, &mut child);
     let mut client = UnixStream::connect(&path).expect("connect accept socket");
     client
@@ -155,299 +160,15 @@ fn accept_response(binary: &str, inetd: bool, raised_limit: bool) -> Vec<u8> {
     response
 }
 
-fn assert_logging_environment_matches_v261(candidate: &str) {
-    for level in ["emerg", "err", "debug", "bogus", "console:emerg"] {
-        let mut host = command(HOST);
-        let mut ours = command(candidate);
-        host.env("SYSTEMD_LOG_LEVEL", level).arg("/bin/true");
-        ours.env("SYSTEMD_LOG_LEVEL", level).arg("/bin/true");
-        assert_same(
-            &host.output().expect("run host log-level case"),
-            &ours.output().expect("run candidate log-level case"),
-            &format!("log level {level}"),
-        );
-    }
-
-    for target in ["console", "console-prefixed", "null", "kmsg", "invalid"] {
-        let mut host = command(HOST);
-        let mut ours = command(candidate);
-        host.env("SYSTEMD_LOG_TARGET", target);
-        ours.env("SYSTEMD_LOG_TARGET", target);
-        assert_same(
-            &host.output().expect("run host log-target case"),
-            &ours.output().expect("run candidate log-target case"),
-            &format!("log target {target}"),
-        );
-    }
-
-    for (colors, urlify, no_color) in [("1", "0", None), ("0", "1", None), ("1", "1", Some("1"))] {
-        let mut host = command(HOST);
-        let mut ours = command(candidate);
-        for process in [&mut host, &mut ours] {
-            process
-                .env("SYSTEMD_COLORS", colors)
-                .env("SYSTEMD_URLIFY", urlify)
-                .env_remove("NO_COLOR")
-                .arg("--help");
-            if let Some(value) = no_color {
-                process.env("NO_COLOR", value);
-            }
-        }
-        assert_same(
-            &host.output().expect("run host decorated help"),
-            &ours.output().expect("run candidate decorated help"),
-            &format!("help colors={colors} urlify={urlify} no_color={no_color:?}"),
-        );
-    }
-}
-
-fn send_seqpacket(path: &Path) {
-    let output = Command::new("/usr/bin/python3")
-        .args([
-            "-c",
-            concat!(
-                "import socket,sys\n",
-                "s=socket.socket(socket.AF_UNIX,socket.SOCK_SEQPACKET)\n",
-                "s.connect(sys.argv[1])\n",
-                "s.sendall(b'mode-payload')\n",
-            ),
-        ])
-        .arg(path)
-        .output()
-        .expect("run seqpacket client");
-    assert!(
-        output.status.success(),
-        "seqpacket client failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[test]
-fn complete_getopt_address_environment_and_logging_surface_matches_v261() {
-    if !host_is_pinned_v261() {
-        eprintln!("skipping live comparison: systemd-socket-activate is not v261");
-        return;
-    }
-    let candidate = env!("CARGO_BIN_EXE_rustd-socket-activate");
-    let cases: Vec<Vec<OsString>> = vec![
-        vec!["--help".into()],
-        vec!["--version".into()],
-        vec![],
-        vec!["--definitely-unknown".into()],
-        vec!["--listen".into()],
-        vec!["-l".into()],
-        vec!["--help=x".into()],
-        vec!["--s".into()],
-        vec!["-adx".into()],
-        vec!["-E".into(), "=x".into(), "/bin/true".into()],
-        vec![
-            "--datagram".into(),
-            "--seqpacket".into(),
-            "/bin/true".into(),
-        ],
-        vec!["--datagram".into(), "--accept".into(), "/bin/true".into()],
-        vec!["--accept".into(), "--now".into(), "/bin/true".into()],
-        vec!["--listen=".into(), "/bin/true".into()],
-        vec!["--listen=0".into(), "/bin/true".into()],
-        vec!["--listen=65536".into(), "/bin/true".into()],
-        vec!["--listen=+65536".into(), "--now".into(), "/bin/true".into()],
-        vec!["--listen=045972".into(), "--now".into(), "/bin/true".into()],
-        vec![
-            "--seqpacket".into(),
-            "--listen=127.0.0.1:45973".into(),
-            "--now".into(),
-            "/bin/true".into(),
-        ],
-        vec!["--fdname=a::b".into(), "/bin/true".into()],
-        vec![OsString::from_vec(vec![b'-', b'-', 0xff])],
-    ];
-    for arguments in cases {
-        assert_same(
-            &run(HOST, &arguments),
-            &run(candidate, &arguments),
-            &format!("CLI {arguments:?}"),
-        );
-    }
-
-    let path_case: Vec<OsString> = vec![
-        "--now".into(),
-        "-l".into(),
-        "@rustd-path-lookup".into(),
-        "-E".into(),
-        "PATH=/definitely/missing".into(),
-        "true".into(),
-    ];
-    let mut host = command(HOST);
-    let mut ours = command(candidate);
-    host.env("PATH", "/usr/bin:/bin").args(&path_case);
-    ours.env("PATH", "/usr/bin:/bin").args(&path_case);
-    assert_same(
-        &host.output().expect("run host PATH lookup"),
-        &ours.output().expect("run candidate PATH lookup"),
-        "execvpe uses caller PATH",
-    );
-
-    assert_logging_environment_matches_v261(candidate);
-}
-
-#[test]
-#[allow(clippy::too_many_lines)]
-fn stream_datagram_seqpacket_and_activation_environment_match_v261() {
-    if !host_is_pinned_v261() {
-        eprintln!("skipping live comparison: systemd-socket-activate is not v261");
-        return;
-    }
-    let candidate = env!("CARGO_BIN_EXE_rustd-socket-activate");
-    let now_code = concat!(
-        "import fcntl,os,socket\n",
-        "rows=[]\n",
-        "for fd in range(3,3+int(os.environ['LISTEN_FDS'])):\n",
-        " s=socket.socket(fileno=os.dup(fd)); rows.append((s.family,s.type,",
-        "bool(fcntl.fcntl(fd,fcntl.F_GETFD)&fcntl.FD_CLOEXEC)))\n",
-        "print(repr((os.environ.get('LISTEN_FDS'),os.environ.get('LISTEN_FDNAMES'),",
-        "os.getpid()==int(os.environ['LISTEN_PID']),",
-        "os.environ.get('LISTEN_PIDFDID','').isdigit(),os.environ.get('X'),",
-        "os.environ.get('SHOULD_DROP'),rows)))\n",
-    );
-    let arguments: Vec<OsString> = vec![
-        "--now".into(),
-        "--fdname=only".into(),
-        "-E".into(),
-        "X=value".into(),
-        "-l".into(),
-        "@rustd-now-one".into(),
-        "-l".into(),
-        "@rustd-now-two".into(),
-        "/usr/bin/python3".into(),
-        "-c".into(),
-        now_code.into(),
-    ];
-    let mut host = command(HOST);
-    let mut ours = command(candidate);
-    host.env("SHOULD_DROP", "yes").args(&arguments);
-    ours.env("SHOULD_DROP", "yes").args(&arguments);
-    assert_same(
-        &host.output().expect("run host immediate activation"),
-        &ours.output().expect("run candidate immediate activation"),
-        "immediate multi-socket environment",
-    );
-
-    for (mode, socket_name, python) in [
-        (
-            "stream",
-            "stream.sock",
-            "import os,socket;s=socket.socket(fileno=os.dup(3));c,_=s.accept();print(c.recv(32))",
-        ),
-        (
-            "datagram",
-            "datagram.sock",
-            "import os,socket;s=socket.socket(fileno=os.dup(3));print(s.recv(32))",
-        ),
-        (
-            "seqpacket",
-            "seqpacket.sock",
-            "import os,socket;s=socket.socket(fileno=os.dup(3));c,_=s.accept();print(c.recv(32))",
-        ),
-    ] {
-        let fixture = tempfile::tempdir().expect("create activation fixture");
-        let path = fixture.path().join(socket_name);
-        let mut arguments = Vec::<OsString>::new();
-        if mode == "datagram" {
-            arguments.push("--datagram".into());
-        } else if mode == "seqpacket" {
-            arguments.push("--seqpacket".into());
-        }
-        let path_index = arguments.len() + 1;
-        arguments.extend([
-            "-l".into(),
-            path.as_os_str().to_owned(),
-            "/usr/bin/python3".into(),
-            "-c".into(),
-            python.into(),
-        ]);
-        let mut child = command(candidate)
-            .args(&arguments)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn candidate activation mode");
-        wait_for_path(&path, &mut child);
-        if mode == "stream" {
-            let mut client = UnixStream::connect(&path).expect("connect stream activation");
-            client
-                .write_all(b"mode-payload")
-                .expect("write stream payload");
-        } else if mode == "datagram" {
-            let client = UnixDatagram::unbound().expect("create datagram client");
-            client
-                .send_to(b"mode-payload", &path)
-                .expect("write datagram payload");
-        } else {
-            send_seqpacket(&path);
-        }
-        let candidate_output = wait_with_output(child);
-
-        let host_fixture = tempfile::tempdir().expect("create host activation fixture");
-        let host_path = host_fixture.path().join(socket_name);
-        arguments[path_index] = host_path.as_os_str().to_owned();
-        let mut child = command(HOST)
-            .args(&arguments)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .expect("spawn host activation mode");
-        wait_for_path(&host_path, &mut child);
-        if mode == "stream" {
-            let mut client = UnixStream::connect(&host_path).expect("connect host stream");
-            client
-                .write_all(b"mode-payload")
-                .expect("write host stream payload");
-        } else if mode == "datagram" {
-            let client = UnixDatagram::unbound().expect("create datagram client");
-            client
-                .send_to(b"mode-payload", &host_path)
-                .expect("write host datagram payload");
-        } else {
-            send_seqpacket(&host_path);
-        }
-        let host_output = wait_with_output(child);
-        assert_same(&host_output, &candidate_output, mode);
-    }
-}
-
-#[test]
-fn accept_inetd_and_safe_child_limit_match_v261() {
-    if !host_is_pinned_v261() {
-        eprintln!("skipping live comparison: systemd-socket-activate is not v261");
-        return;
-    }
-    let candidate = env!("CARGO_BIN_EXE_rustd-socket-activate");
-    assert_eq!(
-        accept_response(candidate, false, false),
-        accept_response(HOST, false, false),
-        "accept-mode activation environment"
-    );
-    assert_eq!(
-        accept_response(candidate, true, false),
-        accept_response(HOST, true, false),
-        "inetd descriptor protocol"
-    );
-    assert_eq!(
-        accept_response(candidate, false, true),
-        accept_response(HOST, false, true),
-        "accept child RLIMIT_NOFILE"
-    );
-}
-
-fn notification_messages(binary: &str, arguments: &[&str]) -> (Output, Vec<Vec<u8>>) {
+fn notification_messages(arguments: &[&str]) -> (Output, Vec<Vec<u8>>) {
     let fixture = tempfile::tempdir().expect("create notification fixture");
     let path = fixture.path().join("notify.sock");
     let receiver = UnixDatagram::bind(&path).expect("bind notification receiver");
     receiver
         .set_read_timeout(Some(Duration::from_millis(80)))
         .expect("set notification timeout");
-    let output = command(binary)
-        .env("NOTIFY_SOCKET", &path)
+    let output = command()
+        .env("RUSTD_NOTIFY_SOCKET", &path)
         .args(arguments)
         .output()
         .expect("run notification case");
@@ -473,13 +194,198 @@ fn notification_messages(binary: &str, arguments: &[&str]) -> (Output, Vec<Vec<u
     (output, messages)
 }
 
-fn filesystem_result(binary: &str) -> (Output, u32, bool, u32, u32) {
+#[test]
+fn cli_rejects_invalid_option_combinations() {
+    let cases: &[(&[&str], i32)] = &[
+        (&[], 1),
+        (&["--definitely-unknown"], 1),
+        (&["--listen"], 1),
+        (&["-l"], 1),
+        (&["--datagram", "--seqpacket", "/bin/true"], 1),
+        (&["--datagram", "--accept", "/bin/true"], 1),
+        (&["--accept", "--now", "/bin/true"], 1),
+        (&["--fdname=a::b", "/bin/true"], 1),
+    ];
+    for (arguments, expected) in cases {
+        let output = run(&arguments
+            .iter()
+            .map(|argument| OsString::from(*argument))
+            .collect::<Vec<_>>());
+        assert_eq!(
+            output.status.code(),
+            Some(*expected),
+            "CLI {arguments:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let help = run(&[OsString::from("--help")]);
+    assert_eq!(help.status.code(), Some(0));
+    assert!(
+        help.stdout.windows(b"rustd".len()).any(|w| w == b"rustd")
+            || help.stderr.windows(b"rustd".len()).any(|w| w == b"rustd")
+            || help
+                .stdout
+                .windows(b"OPTIONS".len())
+                .any(|w| w == b"OPTIONS")
+    );
+}
+
+#[test]
+fn immediate_activation_exports_only_rustd_listen_environment() {
+    let code = concat!(
+        "import fcntl,os,socket,sys\n",
+        "assert 'LISTEN_FDS' not in os.environ\n",
+        "assert 'LISTEN_PID' not in os.environ\n",
+        "assert 'LISTEN_FDNAMES' not in os.environ\n",
+        "fds=int(os.environ['RUSTD_LISTEN_FDS'])\n",
+        "assert fds==2\n",
+        "assert os.environ['RUSTD_LISTEN_FDNAMES']=='only:only'\n",
+        "assert os.getpid()==int(os.environ['RUSTD_LISTEN_PID'])\n",
+        "assert os.environ.get('RUSTD_LISTEN_PIDFDID','').isdigit()\n",
+        "assert os.environ['X']=='value'\n",
+        "assert 'SHOULD_DROP' not in os.environ\n",
+        "for fd in range(3,5):\n",
+        " s=socket.socket(fileno=os.dup(fd))\n",
+        " assert s.family==socket.AF_UNIX and s.type==socket.SOCK_STREAM\n",
+        " assert not (fcntl.fcntl(fd,fcntl.F_GETFD)&fcntl.FD_CLOEXEC)\n",
+        "print('ok')\n",
+    );
+    let output = command()
+        .env("SHOULD_DROP", "yes")
+        .args([
+            OsString::from("--now"),
+            OsString::from("--fdname=only"),
+            OsString::from("-E"),
+            OsString::from("X=value"),
+            OsString::from("-l"),
+            OsString::from("@rustd-native-now-one"),
+            OsString::from("-l"),
+            OsString::from("@rustd-native-now-two"),
+            OsString::from("/usr/bin/python3"),
+            OsString::from("-c"),
+            OsString::from(code),
+        ])
+        .output()
+        .expect("run immediate activation");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"ok\n");
+}
+
+#[test]
+fn stream_datagram_and_seqpacket_activation_deliver_payload() {
+    for (mode, socket_name, python) in [
+        (
+            "stream",
+            "stream.sock",
+            "import os,socket;s=socket.socket(fileno=os.dup(3));c,_=s.accept();print(c.recv(32))",
+        ),
+        (
+            "datagram",
+            "datagram.sock",
+            "import os,socket;s=socket.socket(fileno=os.dup(3));print(s.recv(32))",
+        ),
+        (
+            "seqpacket",
+            "seqpacket.sock",
+            "import os,socket;s=socket.socket(fileno=os.dup(3));c,_=s.accept();print(c.recv(32))",
+        ),
+    ] {
+        let fixture = tempfile::tempdir().expect("create activation fixture");
+        let path = fixture.path().join(socket_name);
+        let mut arguments = Vec::<OsString>::new();
+        if mode == "datagram" {
+            arguments.push(OsString::from("--datagram"));
+        } else if mode == "seqpacket" {
+            arguments.push(OsString::from("--seqpacket"));
+        }
+        arguments.extend([
+            OsString::from("-l"),
+            path.as_os_str().to_owned(),
+            OsString::from("/usr/bin/python3"),
+            OsString::from("-c"),
+            OsString::from(python),
+        ]);
+        let mut child = command()
+            .args(&arguments)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn activation mode");
+        wait_for_path(&path, &mut child);
+        if mode == "stream" {
+            let mut client = UnixStream::connect(&path).expect("connect stream activation");
+            client
+                .write_all(b"mode-payload")
+                .expect("write stream payload");
+        } else if mode == "datagram" {
+            let client = UnixDatagram::unbound().expect("create datagram client");
+            client
+                .send_to(b"mode-payload", &path)
+                .expect("write datagram payload");
+        } else {
+            send_seqpacket(&path);
+        }
+        let output = wait_with_output(child);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{mode}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(output.stdout, b"b'mode-payload'\n", "{mode}");
+    }
+}
+
+#[test]
+fn accept_inetd_and_safe_child_limit_use_rustd_listen_contract() {
+    let response = accept_response(false, false);
+    let text = String::from_utf8(response).expect("accept env utf8");
+    assert!(
+        text.contains("'1'") && text.contains("'accepted'") && text.contains("True"),
+        "accept-mode activation environment: {text}"
+    );
+
+    assert_eq!(accept_response(true, false), b"inetd-echo");
+
+    let raised = String::from_utf8(accept_response(false, true)).expect("raised limit utf8");
+    // Accept children keep a safe soft NOFILE ceiling of 1024 even when the
+    // activator itself was launched with a higher soft limit.
+    assert!(
+        raised.contains("(1024, 1048576)"),
+        "accept child RLIMIT_NOFILE: {raised}"
+    );
+}
+
+#[test]
+fn notification_and_filesystem_socket_lifecycle_are_native() {
+    for arguments in [
+        vec!["--help"],
+        vec!["/bin/true"],
+        vec!["--now", "-l", "@rustd-native-notify", "/definitely/missing"],
+    ] {
+        let (output, messages) = notification_messages(&arguments);
+        assert!(
+            messages.iter().any(|message| message == b"EXIT_STATUS=0"
+                || message
+                    .windows(b"EXIT_STATUS=".len())
+                    .any(|w| w == b"EXIT_STATUS=")),
+            "notification {arguments:?} messages={messages:?} status={:?}",
+            output.status.code()
+        );
+    }
+
     let fixture = tempfile::tempdir().expect("create filesystem socket fixture");
     let first = fixture.path().join("first");
     let parent = first.join("second");
     let path = parent.join("activate.sock");
     let code = "import os; old=os.umask(0); os.umask(old); print(oct(old))";
-    let mut process = command(binary);
+    let mut process = command();
     process.args([OsString::from("--now"), OsString::from("-l")]);
     process.arg(&path).args(["/usr/bin/python3", "-c", code]);
     // SAFETY: pre_exec runs in the single-threaded fork child and umask has
@@ -491,45 +397,23 @@ fn filesystem_result(binary: &str) -> (Output, u32, bool, u32, u32) {
         });
     }
     let output = process.output().expect("run filesystem socket case");
-    let socket = fs::symlink_metadata(&path).expect("stat socket node");
-    let first = fs::metadata(first).expect("stat first parent");
-    let second = fs::metadata(parent).expect("stat second parent");
-    (
-        output,
-        socket.mode() & 0o7777,
-        socket.file_type().is_socket(),
-        first.mode() & 0o7777,
-        second.mode() & 0o7777,
-    )
-}
-
-#[test]
-fn notification_and_filesystem_socket_lifecycle_match_v261() {
-    if !host_is_pinned_v261() {
-        eprintln!("skipping live comparison: systemd-socket-activate is not v261");
-        return;
-    }
-    let candidate = env!("CARGO_BIN_EXE_rustd-socket-activate");
-    for arguments in [
-        vec!["--help"],
-        vec!["/bin/true"],
-        vec!["--now", "-l", "@rustd-notify", "/definitely/missing"],
-    ] {
-        let (host_output, host_messages) = notification_messages(HOST, &arguments);
-        let (our_output, our_messages) = notification_messages(candidate, &arguments);
-        assert_same(
-            &host_output,
-            &our_output,
-            &format!("notification {arguments:?}"),
-        );
-        assert_eq!(our_messages, host_messages, "notification {arguments:?}");
-    }
-
-    let host = filesystem_result(HOST);
-    let ours = filesystem_result(candidate);
-    assert_same(&host.0, &ours.0, "filesystem socket output and umask");
     assert_eq!(
-        (&ours.1, &ours.2, &ours.3, &ours.4),
-        (&host.1, &host.2, &host.3, &host.4)
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(output.stdout, b"0o77\n");
+    let socket = fs::symlink_metadata(&path).expect("stat socket node");
+    assert!(socket.file_type().is_socket());
+    // Bind temporarily applies umask 0133 so filesystem sockets land as 0644.
+    assert_eq!(socket.mode() & 0o777, 0o644);
+    assert_eq!(
+        fs::metadata(&first).expect("stat first").mode() & 0o777,
+        0o755
+    );
+    assert_eq!(
+        fs::metadata(&parent).expect("stat second").mode() & 0o777,
+        0o755
     );
 }

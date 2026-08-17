@@ -7,7 +7,7 @@
         <vendor>The RustD Project</vendor>
         <vendor_url>https://github.com/SisyphusAeolides/rustd</vendor_url>
 
-        <action id="org.freedesktop.locale1.set-locale">
+        <action id="io.rustd.Locale1.set-locale">
                 <description>Set system locale</description>
                 <message>Authentication is required to set the system locale.</message>
                 <defaults>
@@ -15,10 +15,10 @@
                         <allow_inactive>auth_admin_keep</allow_inactive>
                         <allow_active>auth_admin_keep</allow_active>
                 </defaults>
-                <annotate key="org.freedesktop.policykit.imply">org.freedesktop.locale1.set-keyboard</annotate>
+                <annotate key="org.freedesktop.policykit.imply">io.rustd.Locale1.set-keyboard</annotate>
         </action>
 
-        <action id="org.freedesktop.locale1.set-keyboard">
+        <action id="io.rustd.Locale1.set-keyboard">
                 <description>Set system keyboard settings</description>
                 <message>Authentication is required to set the system keyboard settings.</message>
                 <defaults>

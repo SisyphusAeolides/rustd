@@ -414,14 +414,14 @@ fn varlink_invocation() -> Result<bool, String> {
     if env::var_os("SYSTEMD_VARLINK_LISTEN").is_some() {
         return Ok(true);
     }
-    let pid_matches = env::var("LISTEN_PID")
+    let pid_matches = env::var("RUSTD_LISTEN_PID")
         .ok()
         .and_then(|value| value.parse::<u32>().ok())
         == Some(std::process::id());
     if !pid_matches {
         return Ok(false);
     }
-    let fds = env::var("LISTEN_FDS")
+    let fds = env::var("RUSTD_LISTEN_FDS")
         .ok()
         .and_then(|value| value.parse::<u32>().ok());
     if fds.is_none() || fds == Some(0) {
@@ -432,7 +432,7 @@ fn varlink_invocation() -> Result<bool, String> {
             "Failed to check if invoked in Varlink mode: Too many references: cannot splice",
         ));
     }
-    Ok(env::var("LISTEN_FDNAMES").ok().as_deref() == Some("varlink"))
+    Ok(env::var("RUSTD_LISTEN_FDNAMES").ok().as_deref() == Some("varlink"))
 }
 
 fn run_varlink_server() -> Result<(), String> {

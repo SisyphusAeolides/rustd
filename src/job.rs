@@ -565,20 +565,18 @@ fn job_is_ready(
     if !matches!(job.kind, JobKind::Start) {
         return true;
     }
-    // For a Start job, all After= dependencies must be in a settled state.
-    // An absent state means the dependency has not been processed yet.
+    // After= only orders against units that are actually part of the
+    // transaction. Live job-to-job edges are enforced via `get_before`; an
+    // After= reference to a unit that was never loaded/started must not pin
+    // the queue forever (upstream semantics: After= does not pull deps in).
     let empty = Vec::new();
     let deps = afters.get(&job.unit_name).unwrap_or(&empty);
-    deps.iter().all(|dep| {
-        matches!(
-            states.get(dep.as_str()),
-            Some(
-                UnitState::Active
-                    | UnitState::Inactive
-                    | UnitState::Failed
-                    | UnitState::Maintenance
-            )
-        )
+    deps.iter().all(|dep| match states.get(dep.as_str()) {
+        None => true,
+        Some(
+            UnitState::Active | UnitState::Inactive | UnitState::Failed | UnitState::Maintenance,
+        ) => true,
+        Some(_) => false,
     })
 }
 
@@ -764,6 +762,16 @@ mod tests {
         let afters = afters(&[("foo.service", &["bar.service"])]);
         let jobs = queue.drain_ready(&states, &afters);
         assert_eq!(jobs.len(), 1);
+    }
+
+    #[test]
+    fn start_absent_after_dep_does_not_block() {
+        let mut queue = JobQueue::default();
+        queue.enqueue(JobKind::Start, "sshd.service");
+        let af = afters(&[("sshd.service", &["network.target"])]);
+        let jobs = queue.drain_ready(&states(&[]), &af);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].unit_name, "sshd.service");
     }
 
     #[test]

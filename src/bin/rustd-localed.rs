@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! `org.freedesktop.locale1` service compatible with systemd v261.
+//! `io.rustd.Locale1` service compatible with systemd v261.
 
 #![allow(clippy::unused_self)]
 
@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use zbus::interface;
 
-const BUS_NAME: &str = "org.freedesktop.locale1";
-const OBJECT_PATH: &str = "/org/freedesktop/locale1";
+const BUS_NAME: &str = "io.rustd.Locale1";
+const OBJECT_PATH: &str = "/io/rustd/Locale1";
 const LOCALE_VARIABLES: &[&str] = &[
     "LANG",
     "LANGUAGE",
@@ -470,7 +470,7 @@ async fn restart_vconsole(connection: &zbus::Connection) -> zbus::fdo::Result<()
 #[derive(Default)]
 struct LocaleService;
 
-#[interface(name = "org.freedesktop.locale1")]
+#[interface(name = "io.rustd.Locale1")]
 impl LocaleService {
     async fn set_locale(
         &self,
@@ -482,7 +482,7 @@ impl LocaleService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.locale1.set-locale",
+            "io.rustd.Locale1.set-locale",
             interactive,
         )
         .await?;
@@ -501,7 +501,7 @@ impl LocaleService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.locale1.set-keyboard",
+            "io.rustd.Locale1.set-keyboard",
             interactive,
         )
         .await?;
@@ -528,7 +528,7 @@ impl LocaleService {
         authorize(
             connection,
             &header,
-            "org.freedesktop.locale1.set-keyboard",
+            "io.rustd.Locale1.set-keyboard",
             interactive,
         )
         .await?;
@@ -632,7 +632,7 @@ mod tests {
         let x11 = console_to_x11("us").unwrap();
         assert_eq!(x11.layout, "us");
         assert_eq!(x11.model, "pc105");
-        assert!(x11.variant.is_empty());
+        assert_eq!(x11.variant, "");
         assert_eq!(x11.options, "terminate:ctrl_alt_bksp");
         std::env::remove_var("SYSTEMD_KBD_MODEL_MAP");
     }

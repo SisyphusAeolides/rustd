@@ -65,14 +65,14 @@ typedef struct {
     int                 stdin_fd;   /* -1 = redirect to /dev/null              */
     int                 stdout_fd;  /* -1 = inherit parent stdout              */
     int                 stderr_fd;  /* -1 = inherit parent stderr              */
-    int                 notify_fd;  /* -1 = none; >=0 sets NOTIFY_SOCKET       */
+    int                 notify_fd;  /* -1 = none; >=0 sets RUSTD_NOTIFY_SOCKET       */
     uint64_t            watchdog_usec; /* 0 = watchdog disabled                 */
     const rustd_spawn_sandbox *sandbox; /* NULL = no sandbox                      */
     /*
      * RUSTD_LISTEN_FDS pass-through:
      * listen_fds  — array of file descriptors to pass to the child.
-     *               They are renumbered to start at fd 3 and LISTEN_FDS /
-     *               LISTEN_PID env vars are set accordingly.
+     *               They are renumbered to start at fd 3 and RUSTD_LISTEN_FDS /
+     *               RUSTD_LISTEN_PID env vars are set accordingly.
      * n_listen_fds — number of entries in listen_fds[]; 0 = none.
      */
     const int          *listen_fds;   /* NULL or array of fds to pass          */

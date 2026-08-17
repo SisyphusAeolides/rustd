@@ -466,7 +466,7 @@ pub fn connect_service_stream_with_limits(
 }
 
 /// Whether a `StandardOutput=` / `StandardError=` value should be connected
-/// to the RustD journal stream.
+/// to the `RustD` journal stream.
 #[must_use]
 pub fn wants_journal_stdio(value: &str) -> bool {
     let normalized = value.trim();

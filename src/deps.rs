@@ -32,90 +32,121 @@ pub struct DepUnit<'a> {
 /// `loader` is a closure that attempts to load a unit by name; it returns
 /// `None` on failure (used to simulate skip-on-missing for `Wants=`).
 ///
+/// Distribution unit trees contain ordering cycles, so a cycle drops the edge
+/// that closes it and the boot continues, as upstream does.
+///
 /// # Errors
-/// Returns an error if a `Requires=` dep cannot be loaded, or if a cycle
-/// is detected.
+/// Returns an error if a `Requires=` dep cannot be loaded.
 pub fn resolve_start_order<F, S: std::hash::BuildHasher>(
     target: &str,
     known: &HashMap<String, DepUnit<'_>, S>,
-    mut load: F,
+    load: F,
 ) -> anyhow::Result<Vec<String>>
 where
     F: FnMut(&str) -> Option<LoadedUnit>,
 {
-    let mut order: Vec<String> = Vec::new();
-    let mut visited: HashSet<String> = HashSet::new();
-    let mut on_stack: HashSet<String> = HashSet::new();
-
-    // We need a temporary store for units loaded during resolution.
-    let mut extra: HashMap<String, LoadedUnit> = HashMap::new();
-
-    dfs(
-        target,
+    let mut resolver = Resolver {
         known,
-        &mut extra,
-        &mut load,
-        &mut visited,
-        &mut on_stack,
-        &mut order,
-    )?;
+        extra: HashMap::new(),
+        load,
+        visited: HashSet::new(),
+        on_stack: HashSet::new(),
+        broken: HashSet::new(),
+        order: Vec::new(),
+    };
 
-    Ok(order)
+    resolver.resolve(target, None)?;
+
+    Ok(resolver.order)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn dfs<F, S: std::hash::BuildHasher>(
-    name: &str,
-    known: &HashMap<String, DepUnit<'_>, S>,
-    extra: &mut HashMap<String, LoadedUnit>,
-    load: &mut F,
-    visited: &mut HashSet<String>,
-    on_stack: &mut HashSet<String>,
-    order: &mut Vec<String>,
-) -> anyhow::Result<()>
+struct Resolver<'a, F, S: std::hash::BuildHasher> {
+    known: &'a HashMap<String, DepUnit<'a>, S>,
+    /// Units loaded during resolution that the registry does not hold yet.
+    extra: HashMap<String, LoadedUnit>,
+    load: F,
+    visited: HashSet<String>,
+    on_stack: HashSet<String>,
+    broken: HashSet<(String, String)>,
+    order: Vec<String>,
+}
+
+impl<F, S: std::hash::BuildHasher> Resolver<'_, F, S>
 where
     F: FnMut(&str) -> Option<LoadedUnit>,
 {
-    if visited.contains(name) {
-        return Ok(());
+    fn resolve(&mut self, name: &str, from: Option<&str>) -> anyhow::Result<()> {
+        if self.visited.contains(name) {
+            return Ok(());
+        }
+        if self.on_stack.contains(name) {
+            self.report_cycle(name, from);
+            return Ok(());
+        }
+
+        let (wants, requires, after) = deps_for(name, self.known, &self.extra);
+
+        self.on_stack.insert(name.to_owned());
+
+        // Requires= — missing dep is an error.
+        for dep in &requires {
+            self.ensure_loaded(dep, true)?;
+            self.resolve(dep, Some(name))?;
+        }
+
+        // Wants= — missing dep is silently skipped.
+        for dep in &wants {
+            let _ = self.ensure_loaded(dep, false);
+            // Only recurse if the unit is present: load may have skipped it.
+            if self.is_loaded(dep) {
+                self.resolve(dep, Some(name))?;
+            }
+        }
+
+        // After= — ordering only; the dep may already be pulled in above.
+        for dep in &after {
+            let _ = self.ensure_loaded(dep, false);
+            if self.is_loaded(dep) {
+                self.resolve(dep, Some(name))?;
+            }
+        }
+
+        self.on_stack.remove(name);
+        self.visited.insert(name.to_owned());
+        self.order.push(name.to_owned());
+
+        Ok(())
     }
-    if on_stack.contains(name) {
-        return Err(anyhow!("dependency cycle detected at unit '{name}'"));
-    }
 
-    // Gather deps from known registry first, then from freshly loaded unit.
-    let (wants, requires, after) = deps_for(name, known, extra);
-
-    on_stack.insert(name.to_owned());
-
-    // Requires= — missing dep is an error.
-    for dep in &requires {
-        ensure_loaded(dep, known, extra, load, true)?;
-        dfs(dep, known, extra, load, visited, on_stack, order)?;
-    }
-
-    // Wants= — missing dep is silently skipped.
-    for dep in &wants {
-        let _ = ensure_loaded(dep, known, extra, load, false);
-        // Only DFS if the unit is actually present (load may have silently skipped it).
-        if known.contains_key(dep.as_str()) || extra.contains_key(dep.as_str()) {
-            dfs(dep, known, extra, load, visited, on_stack, order)?;
+    /// Drop the edge that closes a cycle and warn once about it.
+    fn report_cycle(&mut self, name: &str, from: Option<&str>) {
+        let from = from.unwrap_or(name);
+        if self.broken.insert((from.to_owned(), name.to_owned())) {
+            eprintln!(
+                "rustd: found dependency cycle on '{name}', breaking edge '{from}' -> '{name}'"
+            );
         }
     }
 
-    // After= — ordering only (the dep may already be loaded by Wants/Requires).
-    for dep in &after {
-        let _ = ensure_loaded(dep, known, extra, load, false);
-        if known.contains_key(dep.as_str()) || extra.contains_key(dep.as_str()) {
-            dfs(dep, known, extra, load, visited, on_stack, order)?;
-        }
+    fn is_loaded(&self, name: &str) -> bool {
+        self.known.contains_key(name) || self.extra.contains_key(name)
     }
 
-    on_stack.remove(name);
-    visited.insert(name.to_owned());
-    order.push(name.to_owned());
-
-    Ok(())
+    /// Ensure `name` is present in the registry or the temporary store.
+    /// `required` controls whether a load failure is an error or a skip.
+    fn ensure_loaded(&mut self, name: &str, required: bool) -> anyhow::Result<()> {
+        if self.is_loaded(name) {
+            return Ok(());
+        }
+        match (self.load)(name) {
+            Some(unit) => {
+                self.extra.insert(name.to_owned(), unit);
+                Ok(())
+            }
+            None if required => Err(anyhow!("required dependency '{name}' could not be loaded")),
+            None => Ok(()),
+        }
+    }
 }
 
 /// Collect `(wants, requires, after)` for a named unit from known + extra.
@@ -132,31 +163,6 @@ fn deps_for<S: std::hash::BuildHasher>(
     match unit_sec {
         Some(u) => (u.wants.clone(), u.requires.clone(), u.after.clone()),
         None => (Vec::new(), Vec::new(), Vec::new()),
-    }
-}
-
-/// Ensure `name` is present in `known` or `extra`, loading it if needed.
-/// `required` controls whether a load failure is an error or a skip.
-fn ensure_loaded<F, S: std::hash::BuildHasher>(
-    name: &str,
-    known: &HashMap<String, DepUnit<'_>, S>,
-    extra: &mut HashMap<String, LoadedUnit>,
-    load: &mut F,
-    required: bool,
-) -> anyhow::Result<()>
-where
-    F: FnMut(&str) -> Option<LoadedUnit>,
-{
-    if known.contains_key(name) || extra.contains_key(name) {
-        return Ok(());
-    }
-    match load(name) {
-        Some(u) => {
-            extra.insert(name.to_owned(), u);
-            Ok(())
-        }
-        None if required => Err(anyhow!("required dependency '{name}' could not be loaded")),
-        None => Ok(()),
     }
 }
 
@@ -242,7 +248,7 @@ mod tests {
     }
 
     #[test]
-    fn cycle_detected() {
+    fn cycle_is_broken_instead_of_failing() {
         let a = make_target("a.target", &["b.target"], &[]);
         let b = make_target("b.target", &["a.target"], &[]);
         let known: HashMap<String, DepUnit<'_>> = [
@@ -251,7 +257,18 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        assert!(resolve_start_order("a.target", &known, |_| None).is_err());
+        let order = resolve_start_order("a.target", &known, |_| None).unwrap();
+        assert_eq!(order, vec!["b.target", "a.target"]);
+    }
+
+    #[test]
+    fn self_referential_unit_resolves_once() {
+        let a = make_target("a.target", &[], &["a.target"]);
+        let known: HashMap<String, DepUnit<'_>> = [("a.target".to_string(), dep_unit(&a))]
+            .into_iter()
+            .collect();
+        let order = resolve_start_order("a.target", &known, |_| None).unwrap();
+        assert_eq!(order, vec!["a.target"]);
     }
 
     #[test]

@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+[D-BUS Service]
+Name=io.rustd.Locale1
+Exec=/bin/false
+User=root

@@ -63,7 +63,14 @@ fn native_rustd_targets_are_declared() {
         "executable count must be derived from the native RustD contract"
     );
     assert!(!contract.contains("COMPATIBILITY_TO_NATIVE"));
-    assert!(!contract.contains("COMPATIBILITY_EXECUTABLES"));
+    assert!(
+        !contract.lines().any(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("COMPATIBILITY_EXECUTABLES")
+                && !trimmed.starts_with("FORBIDDEN_COMPATIBILITY_EXECUTABLES")
+        }),
+        "legacy positive compatibility executable set must not remain"
+    );
 }
 
 #[test]
@@ -84,14 +91,18 @@ fn staging_installer_is_native_only() {
         );
     }
 
-    for forbidden in [
-        "${prefix}/lib/systemd",
-        "COMPATIBILITY_TO_NATIVE",
-        "COMPATIBILITY_EXECUTABLES",
-    ] {
+    for forbidden in ["${prefix}/lib/systemd", "COMPATIBILITY_TO_NATIVE"] {
         assert!(
             !installer.contains(forbidden) && !contract.contains(forbidden),
             "legacy compatibility installation contract remains: {forbidden}"
         );
     }
+    assert!(
+        !installer.lines().chain(contract.lines()).any(|line| {
+            let trimmed = line.trim_start();
+            trimmed.starts_with("COMPATIBILITY_EXECUTABLES")
+                && !trimmed.starts_with("FORBIDDEN_COMPATIBILITY_EXECUTABLES")
+        }),
+        "legacy positive compatibility executable set must not remain"
+    );
 }

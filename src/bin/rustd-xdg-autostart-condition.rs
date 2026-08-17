@@ -76,7 +76,7 @@ mod tests {
 
     #[test]
     fn empty_fields_are_not_set_members() {
-        assert!(split_set(b"::").is_empty());
+        assert_eq!(split_set(b"::"), [] as [&[u8]; 0]);
         assert_eq!(
             split_set(b":GNOME::KDE:"),
             [b"GNOME".as_slice(), b"KDE".as_slice()]

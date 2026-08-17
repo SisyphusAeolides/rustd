@@ -4,4 +4,3 @@
 Name=org.freedesktop.login1
 Exec=/bin/false
 User=root
-SystemdService=rustd-logind.service

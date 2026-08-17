@@ -3727,6 +3727,9 @@ impl ManagerInterface {
             )));
         }
         authorize_privileged_caller(connection, header).await?;
+        if let Err(error) = shutdown_blocked_by_inhibitors(connection).await {
+            return Err(error);
+        }
         self.shutdown_action.store(action, Ordering::Release);
         self.wake
             .wake()
@@ -4520,7 +4523,7 @@ impl ManagerInterface {
     }
 }
 
-/// Registered manager interface with stable RustD introspection.
+/// Registered manager interface with stable `RustD` introspection.
 ///
 /// zbus 4.0.1 derives an input argument's introspection name from the Rust
 /// identifier. Rust requires the `type` argument in
@@ -4532,7 +4535,7 @@ pub struct ManagerInterfaceApi {
 }
 
 impl ManagerInterfaceApi {
-    /// Wrap a manager implementation for registration on the RustD D-Bus API.
+    /// Wrap a manager implementation for registration on the `RustD` D-Bus API.
     #[must_use]
     pub fn new(inner: ManagerInterface) -> Self {
         Self { inner }
@@ -4751,7 +4754,20 @@ fn deduplicate_unit_search_paths(paths: impl IntoIterator<Item = PathBuf>) -> Ve
 }
 
 fn manager_system_unit_search_paths(root: &Path) -> Vec<String> {
-    deduplicate_unit_search_paths(rooted_unit_search_dirs(root))
+    deduplicate_unit_search_paths([
+        root.join("etc/rustd/system.control"),
+        root.join("run/rustd/system.control"),
+        root.join("run/rustd/transient"),
+        root.join("run/rustd/generator.early"),
+        root.join("etc/rustd/system"),
+        root.join("etc/rustd/system.attached"),
+        root.join("run/rustd/system"),
+        root.join("run/rustd/system.attached"),
+        root.join("run/rustd/generator"),
+        root.join("usr/local/lib/rustd/system"),
+        root.join("usr/lib/rustd/system"),
+        root.join("run/rustd/generator.late"),
+    ])
 }
 
 fn manager_user_unit_search_paths() -> Vec<String> {
@@ -5822,6 +5838,46 @@ fn no_such_job(id: u32) -> JobMethodError {
 
 fn job_method_authorization_error(error: zbus::fdo::Error) -> JobMethodError {
     JobMethodError::AccessDenied(error.to_string())
+}
+
+async fn shutdown_blocked_by_inhibitors(
+    connection: &zbus::Connection,
+) -> zbus::fdo::Result<()> {
+    let reply = match connection
+        .call_method(
+            Some("org.freedesktop.login1"),
+            "/org/freedesktop/login1",
+            Some("org.freedesktop.login1.Manager"),
+            "ListInhibitors",
+            &(),
+        )
+        .await
+    {
+        Ok(reply) => reply,
+        // Logind may be offline during early boot; do not hard-fail power ops.
+        Err(_) => return Ok(()),
+    };
+    let inhibitors: Vec<(String, String, String, String, u32, u32)> = reply
+        .body()
+        .deserialize()
+        .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+    let blockers: Vec<String> = inhibitors
+        .into_iter()
+        .filter(|(_, _, _, mode, _, _)| mode == "block")
+        .filter(|(what, _, _, _, _, _)| {
+            what.split(':')
+                .any(|token| token == "shutdown" || token == "handle-power-key")
+        })
+        .map(|(what, who, why, _, _, _)| format!("{who}:{why} ({what})"))
+        .collect();
+    if blockers.is_empty() {
+        Ok(())
+    } else {
+        Err(zbus::fdo::Error::Failed(format!(
+            "operation inhibited by {}",
+            blockers.join("; ")
+        )))
+    }
 }
 
 /// Resolve the PID of the sender of an incoming D-Bus request.
@@ -7045,24 +7101,24 @@ mod tests {
     }
 
     #[test]
-    fn manager_unit_path_matches_the_v261_system_manager_order() {
+    fn manager_unit_path_uses_only_native_system_roots() {
         let (interface, _, _, _) = test_interface();
 
         assert_eq!(
             interface.unit_path(),
             vec![
-                "/etc/systemd/system.control",
-                "/run/systemd/system.control",
-                "/run/systemd/transient",
-                "/run/systemd/generator.early",
-                "/etc/systemd/system",
-                "/etc/systemd/system.attached",
-                "/run/systemd/system",
-                "/run/systemd/system.attached",
-                "/run/systemd/generator",
-                "/usr/local/lib/systemd/system",
-                "/usr/lib/systemd/system",
-                "/run/systemd/generator.late",
+                "/etc/rustd/system.control",
+                "/run/rustd/system.control",
+                "/run/rustd/transient",
+                "/run/rustd/generator.early",
+                "/etc/rustd/system",
+                "/etc/rustd/system.attached",
+                "/run/rustd/system",
+                "/run/rustd/system.attached",
+                "/run/rustd/generator",
+                "/usr/local/lib/rustd/system",
+                "/usr/lib/rustd/system",
+                "/run/rustd/generator.late",
             ]
         );
     }
@@ -7102,7 +7158,7 @@ mod tests {
     #[test]
     fn manager_unit_path_deduplicates_equivalent_search_directories() {
         let root = tempfile::tempdir().unwrap();
-        let user_lib = root.path().join("usr/lib/systemd/system");
+        let user_lib = root.path().join("usr/lib/rustd/system");
 
         std::fs::create_dir_all(user_lib).unwrap();
         std::os::unix::fs::symlink("usr/lib", root.path().join("lib")).unwrap();
@@ -7112,11 +7168,11 @@ mod tests {
         assert!(paths.contains(
             &root
                 .path()
-                .join("usr/lib/systemd/system")
+                .join("usr/lib/rustd/system")
                 .display()
                 .to_string()
         ));
-        assert!(!paths.contains(&root.path().join("lib/systemd/system").display().to_string()));
+        assert!(!paths.contains(&root.path().join("lib/rustd/system").display().to_string()));
     }
 
     #[test]

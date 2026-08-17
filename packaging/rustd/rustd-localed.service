@@ -1,11 +1,16 @@
 [Unit]
 Description=RustD Locale Service
+After=dbus.service
+Wants=dbus.service
+StartLimitIntervalSec=30
+StartLimitBurst=3
 
 [Service]
 Type=notify
-BusName=org.freedesktop.locale1
+BusName=io.rustd.Locale1
 ExecStart=/usr/lib/rustd/rustd-localed
 Restart=on-failure
+RestartSec=2s
 
 [Install]
 WantedBy=multi-user.target

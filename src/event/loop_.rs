@@ -315,6 +315,25 @@ impl EventLoop {
         Ok(())
     }
 
+    /// Remove an inotify source and all watches owned by it.
+    ///
+    /// # Errors
+    /// Returns an error if removing the descriptor from epoll fails.
+    pub fn remove_inotify(&mut self, id: SourceId) -> anyhow::Result<()> {
+        if let Some(source) = self.inotify_sources.remove(&id) {
+            let result = unsafe {
+                crate::ffi::event::rustd_epoll_del_fd(self.epfd.as_raw_fd(), source.ifd.as_raw_fd())
+            };
+            if result < 0 {
+                return Err(anyhow::anyhow!(
+                    "epoll_del inotify failed: errno {}",
+                    -result
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// Signal that the loop should exit with the given result on the next
     /// iteration boundary.
     pub fn request_exit(&mut self, result: LoopResult) {

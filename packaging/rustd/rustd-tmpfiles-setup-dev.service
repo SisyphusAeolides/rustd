@@ -1,0 +1,16 @@
+[Unit]
+Description=RustD Create Volatile Device Files
+DefaultDependencies=no
+Conflicts=shutdown.target
+Before=sysinit.target rustd-udevd.service shutdown.target
+After=rustd-sysusers.service
+ConditionPathIsReadWrite=/dev
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/rustd/rustd-tmpfiles --prefix=/dev --create --boot
+TimeoutSec=30s
+
+[Install]
+WantedBy=sysinit.target

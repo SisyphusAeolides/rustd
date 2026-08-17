@@ -1,13 +1,18 @@
 [Unit]
 Description=RustD Hostname Service
+After=dbus.service
+Wants=dbus.service
 Conflicts=shutdown.target
 Before=shutdown.target
+StartLimitIntervalSec=30
+StartLimitBurst=3
 
 [Service]
 Type=notify
-BusName=org.freedesktop.hostname1
+BusName=io.rustd.Hostname1
 ExecStart=/usr/lib/rustd/rustd-hostnamed
 Restart=on-failure
+RestartSec=2s
 
 [Install]
 WantedBy=multi-user.target

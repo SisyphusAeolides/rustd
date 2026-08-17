@@ -9,13 +9,13 @@ extern "C" {
     /// Restore the default dispositions for signals managed by the service manager.
     pub fn rustd_install_signal_handlers() -> libc::c_int;
 
-    /// Send `READY=1` to `NOTIFY_SOCKET`.
+    /// Send `READY=1` to `RUSTD_NOTIFY_SOCKET`.
     pub fn rustd_notify_ready() -> libc::c_int;
-    /// Send `STOPPING=1` to `NOTIFY_SOCKET`.
+    /// Send `STOPPING=1` to `RUSTD_NOTIFY_SOCKET`.
     pub fn rustd_notify_stopping() -> libc::c_int;
-    /// Send `WATCHDOG=1` to `NOTIFY_SOCKET`.
+    /// Send `WATCHDOG=1` to `RUSTD_NOTIFY_SOCKET`.
     pub fn rustd_notify_watchdog() -> libc::c_int;
-    /// Parse `WATCHDOG_USEC` and `WATCHDOG_PID`.
+    /// Parse `RUSTD_WATCHDOG_USEC` and `RUSTD_WATCHDOG_PID`.
     pub fn rustd_watchdog_enabled(unset_environment: libc::c_int, usec: *mut u64) -> libc::c_int;
 
     /// Return the real UID of the manager process.

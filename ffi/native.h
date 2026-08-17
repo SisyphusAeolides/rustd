@@ -7,7 +7,7 @@
 /* Signal handling */
 int rustd_install_signal_handlers(void);
 
-/* systemd-notify / sd-daemon ABI */
+/* RustD-native notify / listen helpers for service processes. */
 int rustd_notify_ready(void);
 int rustd_notify_stopping(void);
 int rustd_notify_watchdog(void);

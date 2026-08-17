@@ -1,0 +1,19 @@
+[Unit]
+Description=Plasma Login Manager
+Documentation=man:plasmalogin(1) man:plasmalogin.conf(5)
+Conflicts=getty@tty1.service
+After=rustd-user-sessions.service getty@tty1.service rustd-logind.service dbus.service
+Wants=rustd-logind.service dbus.service
+PartOf=graphical.target
+StartLimitIntervalSec=30
+StartLimitBurst=2
+
+[Service]
+# Settle devices via rustudevadm when available; ignore if still booting cold.
+ExecStartPre=-/usr/bin/rustudevadm settle --timeout=10
+ExecStart=/usr/bin/plasmalogin
+Restart=always
+
+[Install]
+Alias=display-manager.service
+WantedBy=graphical.target

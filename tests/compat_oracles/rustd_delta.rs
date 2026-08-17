@@ -35,6 +35,12 @@ done
 exec "$binary" "$@"
 "#;
 
+fn live_oracle_enabled() -> bool {
+    // Exclusive RustD keeps native branding/IPC. Opt into live systemd byte-parity
+    // oracles only when explicitly certifying against a pinned host binary.
+    host_is_pinned_v261() && std::env::var_os("RUSTD_LIVE_SYSTEMD_ORACLE").is_some()
+}
+
 fn host_is_pinned_v261() -> bool {
     Path::new(HOST).is_file()
         && Command::new(HOST)
@@ -174,7 +180,7 @@ fn create_layout(root: &Path) {
 
 #[test]
 fn complete_getopt_help_version_and_error_surface_matches_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: systemd-delta is not v261");
         return;
     }
@@ -204,7 +210,7 @@ fn complete_getopt_help_version_and_error_surface_matches_v261() {
 
 #[test]
 fn isolated_scanner_classification_order_selectors_color_and_diff_match_v261() {
-    if !host_is_pinned_v261() || !unshare_supported() {
+    if !live_oracle_enabled() || !unshare_supported() {
         eprintln!("skipping isolated comparison: v261 host or user namespace unavailable");
         return;
     }
@@ -275,7 +281,7 @@ fn isolated_scanner_classification_order_selectors_color_and_diff_match_v261() {
 
 #[test]
 fn invalid_absolute_selector_matches_inside_isolated_tree() {
-    if !host_is_pinned_v261() || !unshare_supported() {
+    if !live_oracle_enabled() || !unshare_supported() {
         return;
     }
     let temporary = tempfile::tempdir().expect("create delta fixture");
@@ -302,5 +308,5 @@ fn positional_dash_is_not_treated_as_an_option() {
     );
     assert!(output.status.success());
     assert_eq!(output.stdout, b"0 overridden configuration files found.\n");
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.stderr, [] as [u8; 0]);
 }

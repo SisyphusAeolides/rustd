@@ -61,16 +61,49 @@ typedef struct {
 
 static int error_descriptor = -1;
 
-static _Noreturn void helper_fail(int error_number, int exit_status) {
+/*
+ * A Type=simple service is not waited for, so the errno the manager would read
+ * from the error socket is discarded and the unit only reports the exit
+ * status. Early boot has no journal either, so the kernel log is the one place
+ * that always records why a service could not be started.
+ */
+static void helper_log_kmsg(int error_number, const char *step, int step_line) {
+    int fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC | O_NOCTTY);
+    if (fd < 0)
+        return;
+
+    char line[256];
+    int length = snprintf(
+            line,
+            sizeof(line),
+            "<3>rustd-spawn-helper: %s+%d failed: %s\n",
+            step,
+            step_line,
+            strerror(error_number));
+    if (length > 0) {
+        ssize_t written;
+        do {
+            written = write(fd, line, (size_t)length);
+        } while (written < 0 && errno == EINTR);
+    }
+    close(fd);
+}
+
+#define helper_fail(error_number, exit_status) \
+    helper_fail_at((error_number), (exit_status), __func__, __LINE__)
+
+static _Noreturn void helper_fail_at(
+        int error_number, int exit_status, const char *step, int step_line) {
+    if (error_number <= 0)
+        error_number = EIO;
     if (error_descriptor >= 0) {
-        if (error_number <= 0)
-            error_number = EIO;
         ssize_t written;
         do {
             written = send(
                     error_descriptor, &error_number, sizeof(error_number), MSG_NOSIGNAL);
         } while (written < 0 && errno == EINTR);
     }
+    helper_log_kmsg(error_number, step, step_line);
     _exit(exit_status);
 }
 
@@ -369,9 +402,13 @@ static int publish_listen_descriptors(uint32_t n_listen) {
 
     char value[32];
     snprintf(value, sizeof(value), "%u", n_listen);
+    if (setenv("RUSTD_LISTEN_FDS", value, 1) < 0)
+        return -errno;
     if (setenv("LISTEN_FDS", value, 1) < 0)
         return -errno;
     snprintf(value, sizeof(value), "%d", (int)getpid());
+    if (setenv("RUSTD_LISTEN_PID", value, 1) < 0)
+        return -errno;
     if (setenv("LISTEN_PID", value, 1) < 0)
         return -errno;
     return 0;
@@ -521,8 +558,27 @@ static int attach_self_to_cgroup(const char *path) {
         return 0;
 
     int fd = open(path, O_WRONLY | O_CLOEXEC);
-    if (fd < 0)
-        return -errno;
+    if (fd < 0) {
+        int error = errno;
+        int kmsg = open("/dev/kmsg", O_WRONLY | O_CLOEXEC | O_NOCTTY);
+        if (kmsg >= 0) {
+            char line[512];
+            int length = snprintf(
+                    line,
+                    sizeof(line),
+                    "<3>rustd-spawn-helper: attach_self_to_cgroup open('%s') failed: %s\n",
+                    path,
+                    strerror(error));
+            if (length > 0) {
+                ssize_t written;
+                do {
+                    written = write(kmsg, line, (size_t)length);
+                } while (written < 0 && errno == EINTR);
+            }
+            close(kmsg);
+        }
+        return -error;
+    }
 
     static const char self[] = "0\n";
     size_t offset = 0;
@@ -791,6 +847,9 @@ static void apply_service_environment(const rustd_spawn_request *request) {
     if (r < 0)
         helper_fail(-r, 125);
 
+    if (request->notify_socket && setenv("RUSTD_NOTIFY_SOCKET", request->notify_socket, 1) < 0)
+        helper_fail(errno, 125);
+    /* Dual-set classic NOTIFY_SOCKET for third-party libsystemd clients via rustd-compat. */
     if (request->notify_socket && setenv("NOTIFY_SOCKET", request->notify_socket, 1) < 0)
         helper_fail(errno, 125);
 
@@ -801,10 +860,10 @@ static void apply_service_environment(const rustd_spawn_request *request) {
                 sizeof(value),
                 "%llu",
                 (unsigned long long)header->watchdog_usec);
-        if (setenv("WATCHDOG_USEC", value, 1) < 0)
+        if (setenv("RUSTD_WATCHDOG_USEC", value, 1) < 0)
             helper_fail(errno, 125);
         snprintf(value, sizeof(value), "%d", (int)getpid());
-        if (setenv("WATCHDOG_PID", value, 1) < 0)
+        if (setenv("RUSTD_WATCHDOG_PID", value, 1) < 0)
             helper_fail(errno, 125);
     }
 }

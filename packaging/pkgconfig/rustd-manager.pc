@@ -1,0 +1,10 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: rustd-manager
+Description: RustD native manager control-socket client
+Version: 0.1.2
+Libs: -L${libdir} -lrustd_manager
+Cflags: -I${includedir}

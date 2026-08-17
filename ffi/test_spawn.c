@@ -341,9 +341,9 @@ static void test_spawn_notify_environment(void) {
         command,
         sizeof(command),
         "test \"$MY_VAR\" = hello "
-        "&& test \"$NOTIFY_SOCKET\" = '@rustd/test-notify' "
-        "&& test \"$WATCHDOG_USEC\" = 500000 "
-        "&& test \"$WATCHDOG_PID\" = \"$$\" "
+        "&& test \"$RUSTD_NOTIFY_SOCKET\" = '@rustd/test-notify' "
+        "&& test \"$RUSTD_WATCHDOG_USEC\" = 500000 "
+        "&& test \"$RUSTD_WATCHDOG_PID\" = \"$$\" "
         "&& test ! -e /proc/$$/fd/%d",
         pipefd[0]);
 
@@ -370,8 +370,8 @@ static void test_spawn_listen_fds(void) {
     const char *argv[] = {
         "/bin/sh",
         "-c",
-        "test \"$LISTEN_FDS\" = 1 "
-        "&& test \"$LISTEN_PID\" = \"$$\" "
+        "test \"$RUSTD_LISTEN_FDS\" = 1 "
+        "&& test \"$RUSTD_LISTEN_PID\" = \"$$\" "
         "&& test -e /proc/$$/fd/3 "
         "&& test ! -e /proc/$$/fd/4",
         NULL,

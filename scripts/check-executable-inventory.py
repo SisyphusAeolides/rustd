@@ -10,9 +10,6 @@ from pathlib import Path
 import sys
 
 from executable_contract import (
-    COMPATIBILITY_BUILD_ALIASES,
-    COMPATIBILITY_BUILD_EXECUTABLES,
-    COMPATIBILITY_TO_NATIVE,
     EXPECTED_BUILD_EXECUTABLE_COUNT,
     NATIVE_BUILD_ALIASES,
     NATIVE_BUILD_EXECUTABLES,
@@ -44,7 +41,7 @@ def load_targets(metadata_path: Path) -> dict[str, Path]:
 
 
 def validate(targets: dict[str, Path]) -> None:
-    expected = NATIVE_BUILD_EXECUTABLES | COMPATIBILITY_BUILD_EXECUTABLES
+    expected = NATIVE_BUILD_EXECUTABLES
     actual = frozenset(targets)
     if actual != expected:
         missing = sorted(expected - actual)
@@ -55,30 +52,9 @@ def validate(targets: dict[str, Path]) -> None:
             f"expected {EXPECTED_BUILD_EXECUTABLE_COUNT} build executables, found {len(targets)}"
         )
 
-    for compatibility, native in sorted(COMPATIBILITY_TO_NATIVE.items()):
-        # systemctl intentionally has a dedicated compatibility wrapper so it
-        # can preserve upstream-visible behavior such as set-property drop-in
-        # filenames while rustctl retains native RustD naming.
-        if compatibility == "systemctl":
-            continue
-        compatibility_build = COMPATIBILITY_BUILD_ALIASES.get(
-            compatibility, compatibility
-        )
-        native_build = NATIVE_BUILD_ALIASES.get(native, native)
-        if targets[compatibility_build] != targets[native_build]:
-            raise ValueError(
-                f"{compatibility} and {native} do not use the same source: "
-                f"{targets[compatibility_build]} != {targets[native_build]}"
-            )
-
     for installed, build in sorted(NATIVE_BUILD_ALIASES.items()):
         if build not in targets:
             raise ValueError(f"native install alias {installed} references missing build target {build}")
-    for installed, build in sorted(COMPATIBILITY_BUILD_ALIASES.items()):
-        if build not in targets:
-            raise ValueError(
-                f"compatibility install alias {installed} references missing build target {build}"
-            )
 
     missing_sources = sorted(
         str(path) for path in set(targets.values()) if not path.is_file()
@@ -97,10 +73,7 @@ def main() -> int:
     except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
         print(f"executable inventory validation failed: {error}", file=sys.stderr)
         return 1
-    print(
-        f"executable build inventory: {len(NATIVE_BUILD_EXECUTABLES)} native + "
-        f"{len(COMPATIBILITY_BUILD_EXECUTABLES)} compatibility targets passed"
-    )
+    print(f"executable build inventory: {len(NATIVE_BUILD_EXECUTABLES)} native targets passed")
     return 0
 
 

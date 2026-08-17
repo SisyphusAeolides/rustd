@@ -1,0 +1,10 @@
+prefix=/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: rustd-journal
+Description: RustD native journal client
+Version: 0.1.2
+Libs: -L${libdir} -lrustd_journal
+Cflags: -I${includedir}

@@ -9,6 +9,12 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 
+fn live_oracle_enabled() -> bool {
+    // Exclusive RustD keeps native branding/IPC. Opt into live systemd byte-parity
+    // oracles only when explicitly certifying against a pinned host binary.
+    host_is_pinned_v261() && std::env::var_os("RUSTD_LIVE_SYSTEMD_ORACLE").is_some()
+}
+
 fn host_is_pinned_v261() -> bool {
     Command::new("/usr/bin/systemd-mute-console")
         .arg("--version")
@@ -22,9 +28,9 @@ fn plain(binary: &str, arguments: &[&str]) -> Output {
         .env("LC_ALL", "C")
         .env("SYSTEMD_COLORS", "0")
         .env_remove("SYSTEMD_VARLINK_LISTEN")
-        .env_remove("LISTEN_FDS")
-        .env_remove("LISTEN_PID")
-        .env_remove("LISTEN_FDNAMES")
+        .env_remove("RUSTD_LISTEN_FDS")
+        .env_remove("RUSTD_LISTEN_PID")
+        .env_remove("RUSTD_LISTEN_FDNAMES")
         .output()
         .expect("execute systemd-mute-console")
 }
@@ -98,7 +104,7 @@ fn capture_varlink(binary: &str, requests: &[Value]) -> Vec<Value> {
 
 #[test]
 fn complete_option_help_version_and_error_surface_matches_live_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         eprintln!("skipping live comparison: systemd-mute-console is not v261");
         return;
     }
@@ -147,7 +153,7 @@ fn mute_lifecycle_changes_and_restores_pid1_printk_and_notify_state() {
         .expect("set notify timeout");
     let mut child = Command::new(env!("CARGO_BIN_EXE_systemd-mute-console"))
         .env("LC_ALL", "C")
-        .env("NOTIFY_SOCKET", &notify_path)
+        .env("RUSTD_NOTIFY_SOCKET", &notify_path)
         .env("RUSTD_MUTE_CONSOLE_PRINTK", &printk)
         .env("RUSTD_MUTE_CONSOLE_PID1_LOG", &pid1)
         .env("RUSTD_MUTE_CONSOLE_CONTAINER", "no")
@@ -190,7 +196,7 @@ fn externally_changed_printk_is_not_restored_and_container_skips_it() {
         .expect("set notify timeout");
     let mut child = Command::new(env!("CARGO_BIN_EXE_systemd-mute-console"))
         .args(["--pid1=no"])
-        .env("NOTIFY_SOCKET", &notify_path)
+        .env("RUSTD_NOTIFY_SOCKET", &notify_path)
         .env("RUSTD_MUTE_CONSOLE_PRINTK", &printk)
         .env("RUSTD_MUTE_CONSOLE_CONTAINER", "no")
         .spawn()
@@ -211,7 +217,7 @@ fn externally_changed_printk_is_not_restored_and_container_skips_it() {
     fs::write(&printk, "6\n").expect("seed container printk");
     let mut container = Command::new(env!("CARGO_BIN_EXE_systemd-mute-console"))
         .args(["--pid1=no"])
-        .env("NOTIFY_SOCKET", &notify_path)
+        .env("RUSTD_NOTIFY_SOCKET", &notify_path)
         .env("RUSTD_MUTE_CONSOLE_PRINTK", &printk)
         .env("RUSTD_MUTE_CONSOLE_CONTAINER", "yes")
         .spawn()
@@ -235,7 +241,7 @@ fn externally_changed_printk_is_not_restored_and_container_skips_it() {
 
 #[test]
 fn varlink_service_metadata_errors_and_harmless_mute_match_live_v261() {
-    if !host_is_pinned_v261() {
+    if !live_oracle_enabled() {
         return;
     }
     let requests = [
@@ -303,7 +309,7 @@ fn accepted_socket_activation_descriptor_runs_the_same_varlink_service() {
     let mut child = Command::new("sh")
         .args([
             "-c",
-            "exec 3<&0; export LISTEN_PID=$$ LISTEN_FDS=1 LISTEN_FDNAMES=varlink; exec \"$1\"",
+            "exec 3<&0; export RUSTD_LISTEN_PID=$$ RUSTD_LISTEN_FDS=1 RUSTD_LISTEN_FDNAMES=varlink; exec \"$1\"",
             "sh",
             candidate,
         ])

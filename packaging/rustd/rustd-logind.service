@@ -6,7 +6,7 @@ Conflicts=shutdown.target
 
 [Service]
 Type=notify
-BusName=org.freedesktop.login1
+BusName=io.rustd.Login1
 ExecStart=/usr/lib/rustd/rustd-logind
 Restart=on-failure
 

@@ -9,7 +9,12 @@ from pathlib import Path
 import shutil
 import sys
 
-from executable_contract import NATIVE_BUILD_ALIASES, NATIVE_EXECUTABLES, NATIVE_LIBEXEC
+from executable_contract import (
+    NATIVE_BUILD_ALIASES,
+    NATIVE_EXECUTABLES,
+    NATIVE_GENERATORS,
+    NATIVE_LIBEXEC,
+)
 
 
 def destination(root: Path, absolute: Path) -> Path:
@@ -53,6 +58,11 @@ def main() -> int:
                 else native_bin_directory
             )
             install_executable(source, destination(args.destdir, install_root / native))
+        generator_directory = args.prefix / "lib/rustd/system-generators"
+        for generator in sorted(NATIVE_GENERATORS):
+            target = destination(args.destdir, generator_directory / generator)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.symlink_to(args.native_libexec_directory / generator)
     except OSError as error:
         print(f"executable installation failed: {error}", file=sys.stderr)
         return 1

@@ -64,6 +64,8 @@ pub struct Manager {
     pub units: HashMap<String, UnitRecord>,
     /// Runtime state for active socket units (fds + bookkeeping).
     pub socket_records: HashMap<String, SocketRecord>,
+    /// Inotify event source registered for each active path unit.
+    path_sources: HashMap<String, SourceId>,
     /// The epoll-driven event loop.
     pub event_loop: EventLoop,
     /// Global manager configuration.
@@ -117,6 +119,8 @@ pub struct Manager {
     reexecute_requested: Arc<AtomicBool>,
     /// D-Bus shutdown objective consumed by the manager event loop.
     shutdown_action: Arc<AtomicU8>,
+    /// Kernel transition held until the shutdown transaction reaches idle.
+    pending_shutdown_result: Option<LoopResult>,
     /// Realtime timestamp captured when shutdown begins.
     shutdown_start_realtime_ns: Arc<AtomicI64>,
     /// Monotonic timestamp captured when shutdown begins.
@@ -290,6 +294,7 @@ impl Manager {
         Ok(Self {
             units: HashMap::new(),
             socket_records: HashMap::new(),
+            path_sources: HashMap::new(),
             event_loop,
             config,
             job_queue: JobQueue::with_registry(job_registry.clone()),
@@ -316,6 +321,7 @@ impl Manager {
             exit_requested,
             reexecute_requested,
             shutdown_action,
+            pending_shutdown_result: None,
             shutdown_start_realtime_ns,
             shutdown_start_monotonic_ns,
             startup_monotonic_ns,
@@ -563,6 +569,7 @@ impl Manager {
                     clock_now(ClockId::Monotonic).unwrap_or(0),
                     Ordering::Release,
                 );
+                #[allow(deprecated)]
                 let _ =
                     self.reload_count
                         .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
@@ -605,13 +612,19 @@ impl Manager {
         }
     }
 
-    fn requested_lifecycle_result(&self) -> Option<LoopResult> {
+    fn requested_lifecycle_result(&mut self) -> Option<LoopResult> {
+        if self.pending_shutdown_result.is_some() {
+            return self
+                .is_idle()
+                .then(|| self.pending_shutdown_result.take())
+                .flatten();
+        }
         if self.reexecute_requested.swap(false, Ordering::AcqRel) {
             Some(LoopResult::Reexecute)
         } else if self.exit_requested.swap(false, Ordering::AcqRel) {
             Some(LoopResult::Exit)
         } else {
-            match self.shutdown_action.swap(SHUTDOWN_NONE, Ordering::AcqRel) {
+            let requested = match self.shutdown_action.swap(SHUTDOWN_NONE, Ordering::AcqRel) {
                 SHUTDOWN_REBOOT => {
                     self.capture_shutdown_start_timestamp();
                     Some(LoopResult::Reboot)
@@ -629,7 +642,38 @@ impl Manager {
                     Some(LoopResult::Kexec)
                 }
                 _ => None,
+            };
+            if let Some(result) = requested {
+                self.begin_shutdown_transaction();
+                self.pending_shutdown_result = Some(result);
+                if self.is_idle() {
+                    return self.pending_shutdown_result.take();
+                }
             }
+            None
+        }
+    }
+
+    fn begin_shutdown_transaction(&mut self) {
+        if self.enqueue_isolate(0, "shutdown.target").is_ok() {
+            return;
+        }
+
+        // A damaged or incomplete unit installation must still stop every
+        // supervised workload before PID 1 invokes the kernel transition.
+        let active: Vec<String> = self
+            .units
+            .iter()
+            .filter(|(_, record)| {
+                matches!(
+                    record.state,
+                    UnitState::Active | UnitState::Activating | UnitState::Failed
+                )
+            })
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in active {
+            self.job_queue.enqueue_internal(JobKind::Stop, name);
         }
     }
 
@@ -1693,7 +1737,12 @@ impl Manager {
                 LoadedUnit::Socket(_) => {
                     if record.state == UnitState::Inactive || record.state == UnitState::Failed {
                         let socket_record = self.socket_records.entry(name.to_owned()).or_default();
-                        activate_socket(record, socket_record, &mut self.job_queue)?;
+                        activate_socket(
+                            record,
+                            socket_record,
+                            &mut self.event_loop,
+                            &self.shared_queue,
+                        )?;
                     }
                 }
                 LoadedUnit::Target(_) => {
@@ -1706,6 +1755,21 @@ impl Manager {
                         &self.shared_queue,
                     )?;
                 }
+                LoadedUnit::Mount(_) => crate::filesystem_unit::activate_mount(record)?,
+                LoadedUnit::Swap(_) => crate::filesystem_unit::activate_swap(record)?,
+                LoadedUnit::Path(_) => {
+                    let source_id = crate::path_unit::activate_path(
+                        record,
+                        &mut self.event_loop,
+                        &self.shared_queue,
+                    )?;
+                    self.path_sources.insert(name.to_owned(), source_id);
+                }
+                LoadedUnit::Automount(_) => {
+                    return Err(anyhow!(
+                        "automount unit '{name}' cannot start without an autofs mount"
+                    ));
+                }
                 _ => {
                     record.state = UnitState::Active;
                 }
@@ -1713,10 +1777,19 @@ impl Manager {
             JobKind::Stop => {
                 if let LoadedUnit::Socket(_) = &record.loaded {
                     if let Some(socket_record) = self.socket_records.get_mut(name) {
-                        deactivate_socket(record, socket_record);
+                        deactivate_socket(record, socket_record, &mut self.event_loop);
                     } else {
                         record.state = UnitState::Inactive;
                     }
+                } else if matches!(record.loaded, LoadedUnit::Mount(_)) {
+                    crate::filesystem_unit::deactivate_mount(record)?;
+                } else if matches!(record.loaded, LoadedUnit::Swap(_)) {
+                    crate::filesystem_unit::deactivate_swap(record)?;
+                } else if matches!(record.loaded, LoadedUnit::Path(_)) {
+                    if let Some(source_id) = self.path_sources.remove(name) {
+                        self.event_loop.remove_inotify(source_id)?;
+                    }
+                    record.state = UnitState::Inactive;
                 } else {
                     record.state = UnitState::Inactive;
                 }
@@ -1847,6 +1920,13 @@ impl Manager {
 
         self.cancel_start_timeout(name);
         let listen_fds = self.collect_listen_fds_for(name);
+
+        // Mark activation before realizing the cgroup so an empty-hierarchy
+        // notification cannot delete the path out from under the spawn helper.
+        if let Some(record) = self.units.get_mut(name) {
+            record.state = UnitState::Activating;
+        }
+
         let (resource_control_requested, cgroup_procs_path) = self.prepare_service_cgroup(name)?;
 
         let activation = {
@@ -2129,6 +2209,20 @@ impl Manager {
     }
 
     fn cleanup_unit_cgroup_if_empty(&mut self, name: &str) {
+        // An activating service creates its cgroup before the helper moves into
+        // it. Treating that still-empty hierarchy as garbage deletes the path
+        // the helper is about to open and every subsequent spawn fails with
+        // ENOENT.
+        if self.units.get(name).is_some_and(|record| {
+            matches!(
+                record.state,
+                UnitState::Activating | UnitState::Deactivating
+            ) || record.active_pid.is_some()
+                || record.control_pid.is_some()
+        }) {
+            return;
+        }
+
         match self.cgroup.is_unit_populated(name) {
             Ok(true) => {}
             Ok(false) => {
@@ -2375,6 +2469,8 @@ fn reset_failed_record(record: &mut UnitRecord) {
     }
     record.restart_count = 0;
     record.last_start_ns = 0;
+    record.start_limit_window_ns = 0;
+    record.start_limit_count = 0;
     record.watchdog_triggered = false;
     record.service_result = "success".to_owned();
     record.exec_main_code = 0;
@@ -2385,6 +2481,15 @@ fn automatic_restart_delay(
     record: &mut UnitRecord,
     exit: &crate::event::child::ChildExit,
 ) -> Option<Duration> {
+    let now_ns = clock_now(ClockId::Monotonic).unwrap_or(0);
+    automatic_restart_delay_at(record, exit, now_ns)
+}
+
+fn automatic_restart_delay_at(
+    record: &mut UnitRecord,
+    exit: &crate::event::child::ChildExit,
+    now_ns: i64,
+) -> Option<Duration> {
     let LoadedUnit::Service(service) = &record.loaded else {
         return None;
     };
@@ -2394,6 +2499,35 @@ fn automatic_restart_delay(
     }
 
     let next_restart = record.restart_count.saturating_add(1);
+    let unit_sec = record.loaded.unit_section();
+    // Match systemd's defaults when the unit does not set its own limit.
+    let burst = unit_sec.start_limit_burst.unwrap_or(5);
+    let interval = unit_sec
+        .start_limit_interval_sec
+        .unwrap_or(Duration::from_secs(10));
+    if burst > 0 && !interval.is_zero() {
+        let interval_ns = i64::try_from(interval.as_nanos()).unwrap_or(i64::MAX);
+        if record.start_limit_window_ns == 0
+            || now_ns.saturating_sub(record.start_limit_window_ns) >= interval_ns
+        {
+            record.start_limit_window_ns = now_ns;
+            record.start_limit_count = 0;
+        }
+        let next_start = record.start_limit_count.saturating_add(1);
+        if next_start > burst {
+            eprintln!(
+                "rustd: start limit hit for '{}': {} starts within {:?}",
+                record.loaded.name(),
+                burst,
+                interval
+            );
+            record.state = UnitState::Failed;
+            record.service_result = "start-limit-hit".into();
+            return None;
+        }
+        record.start_limit_count = next_start;
+    }
+
     let delay = restart_delay_for(section, next_restart);
     record.restart_count = next_restart;
     Some(delay)
@@ -2620,7 +2754,7 @@ mod tests {
         let _manager_test_guard = MANAGER_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let manager = Manager::new(ManagerConfig::default_system()).unwrap();
+        let mut manager = Manager::new(ManagerConfig::default_system()).unwrap();
         assert_eq!(
             manager.shutdown_start_realtime_ns.load(Ordering::Acquire),
             0
@@ -2678,7 +2812,7 @@ mod tests {
         let second = units.path().join("second-environment");
         let command = |output: &std::path::Path| {
             format!(
-                "/bin/sh -c 'printf \"%s|%s\" \"${{RUSTD_MANAGER_ENV_TEST-unset}}\" \"$RUSTD_UNIT_ENV_TEST\" > {}'",
+                "/bin/sh -c 'printf \"%%s|%%s\" \"${{RUSTD_MANAGER_ENV_TEST-unset}}\" \"$RUSTD_UNIT_ENV_TEST\" > {}'",
                 output.display()
             )
         };
@@ -2821,7 +2955,7 @@ mod tests {
     }
 
     #[test]
-    fn automount_and_slice_start_jobs_reach_active_control_plane_state() {
+    fn unsupported_automount_does_not_fake_active_while_slices_activate() {
         let _manager_test_guard = MANAGER_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2840,12 +2974,13 @@ mod tests {
         manager.load_unit("srv-data.automount").unwrap();
         manager.load_unit("-.slice").unwrap();
         manager.load_unit("batch.slice").unwrap();
-        manager
+        let error = manager
             .run_job(JobKind::Start, "srv-data.automount")
-            .unwrap();
+            .unwrap_err();
+        assert!(error.to_string().contains("without an autofs mount"));
         manager.run_job(JobKind::Start, "-.slice").unwrap();
         manager.run_job(JobKind::Start, "batch.slice").unwrap();
-        assert_eq!(manager.units["srv-data.automount"].state, UnitState::Active);
+        assert_ne!(manager.units["srv-data.automount"].state, UnitState::Active);
         assert_eq!(manager.units["batch.slice"].state, UnitState::Active);
         assert_eq!(manager.units["-.slice"].state, UnitState::Active);
         assert_eq!(
@@ -3249,5 +3384,36 @@ mod tests {
         assert_eq!(restart_delay_for(&section, 2), Duration::from_secs(2));
         assert_eq!(restart_delay_for(&section, 3), Duration::from_secs(4));
         assert_eq!(restart_delay_for(&section, 4), Duration::from_secs(8));
+    }
+
+    #[test]
+    fn start_limit_window_expires_instead_of_counting_for_process_lifetime() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(
+            directory.path().join("limited.service"),
+            "[Unit]\nStartLimitBurst=2\nStartLimitIntervalSec=1s\n\
+             [Service]\nType=simple\nRestart=always\nExecStart=/bin/false\n",
+        )
+        .unwrap();
+        let loader = UnitLoader::with_dirs(vec![directory.path().to_path_buf()]);
+        let mut record = UnitRecord::new(loader.load("limited.service").unwrap());
+        let exit = crate::event::child::ChildExit {
+            pid: 1,
+            code: libc::CLD_EXITED,
+            status: 1,
+        };
+
+        assert!(automatic_restart_delay_at(&mut record, &exit, 1).is_some());
+        assert!(automatic_restart_delay_at(&mut record, &exit, 2).is_some());
+        assert!(automatic_restart_delay_at(&mut record, &exit, 3).is_none());
+        assert_eq!(record.service_result, "start-limit-hit");
+
+        record.state = UnitState::Inactive;
+        record.service_result = "exit-code".to_owned();
+        assert!(
+            automatic_restart_delay_at(&mut record, &exit, 1_000_000_001).is_some(),
+            "the unit must be startable after StartLimitIntervalSec elapses"
+        );
+        assert_eq!(record.start_limit_count, 1);
     }
 }

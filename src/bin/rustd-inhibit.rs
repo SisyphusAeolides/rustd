@@ -95,7 +95,7 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
         anyhow::bail!("Invalid inhibitor mode '{mode}'. Expected 'block' or 'delay'.");
     }
 
-    // Try to acquire inhibitor lock via D-Bus org.freedesktop.login1
+    // Try to acquire inhibitor lock via D-Bus io.rustd.Login1
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build();

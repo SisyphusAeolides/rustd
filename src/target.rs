@@ -15,7 +15,8 @@ use crate::unit::UnitState;
 /// Attempt to mark a target unit `Active`.
 ///
 /// The target transitions to `Active` when all mandatory deps (`Requires=`)
-/// are `Active` and no dep is still `Activating`.
+/// are `Active`. A failed required dependency fails the target instead of
+/// leaving it stuck in `Activating` forever.
 ///
 /// Returns `true` if the target was transitioned to `Active`.
 pub fn try_activate_target<S: std::hash::BuildHasher>(
@@ -28,22 +29,22 @@ pub fn try_activate_target<S: std::hash::BuildHasher>(
 
     let unit_sec = record.loaded.unit_section();
     let requires = unit_sec.requires.clone();
-    let wants = unit_sec.wants.clone();
 
-    // All Requires= must be Active or Inactive; none Activating/Deactivating.
+    // Only Requires= gates target activation. Wants= is best-effort: a slow or
+    // stuck optional dependency (for example time-wait-sync with an infinite
+    // timeout) must not pin the whole boot.
     for dep in &requires {
         match units.get(dep.as_str()).map(|r| r.state) {
+            // Successful oneshots without RemainAfterExit= end Inactive; that
+            // still satisfies Requires=. Missing units are ignored here — load
+            // failures for Requires= are handled when the start transaction is
+            // built.
             Some(UnitState::Active | UnitState::Inactive) | None => {}
-            _ => return false,
-        }
-    }
-
-    // Wants= that are still transitioning block the target.
-    for dep in &wants {
-        if let Some(UnitState::Activating | UnitState::Deactivating) =
-            units.get(dep.as_str()).map(|r| r.state)
-        {
-            return false;
+            Some(UnitState::Failed | UnitState::Maintenance) => {
+                record.state = UnitState::Failed;
+                return false;
+            }
+            Some(UnitState::Activating | UnitState::Deactivating) => return false,
         }
     }
 
@@ -111,5 +112,19 @@ mod tests {
         let result = try_activate_target(&mut target, &units);
         assert!(!result);
         assert_ne!(target.state, UnitState::Active);
+    }
+
+    #[test]
+    fn fails_when_required_dep_failed() {
+        let mut target = make_target_record("multi-user.target", &["foo.service"]);
+        target.state = UnitState::Activating;
+        let mut units = HashMap::new();
+        units.insert(
+            "foo.service".to_string(),
+            make_service_record("foo.service", UnitState::Failed),
+        );
+        let result = try_activate_target(&mut target, &units);
+        assert!(!result);
+        assert_eq!(target.state, UnitState::Failed);
     }
 }

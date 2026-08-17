@@ -21,7 +21,7 @@ use crate::event::loop_::IoHandler;
 use crate::unit::section_service::NotifyAccess;
 
 /// Default abstract notification socket.
-pub const NOTIFY_SOCKET_PATH: &str = "@rustd/notify";
+pub const RUSTD_NOTIFY_SOCKET_PATH: &str = "@rustd/notify";
 
 /// A parsed `rustd_notify` message.
 #[derive(Debug, Default, Clone)]
@@ -104,8 +104,8 @@ impl NotifyServer {
     /// # Errors
     /// Returns an error if the socket cannot be created, configured, or bound.
     pub fn new() -> anyhow::Result<Self> {
-        let path =
-            std::env::var("RUSTD_NOTIFY_SOCKET").unwrap_or_else(|_| NOTIFY_SOCKET_PATH.to_owned());
+        let path = std::env::var("RUSTD_NOTIFY_SOCKET")
+            .unwrap_or_else(|_| RUSTD_NOTIFY_SOCKET_PATH.to_owned());
         Self::new_at(&path)
     }
 

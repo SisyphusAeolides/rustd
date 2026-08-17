@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
-//! Runtime session records used by the RustD logind compatibility service.
+//! Runtime session records used by the `RustD` logind compatibility service.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -27,8 +27,7 @@ pub struct Session {
 #[must_use]
 pub fn root() -> PathBuf {
     std::env::var_os("RUSTD_LOGIND_RUNTIME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(RUNTIME_ROOT))
+        .map_or_else(|| PathBuf::from(RUNTIME_ROOT), PathBuf::from)
 }
 
 fn directory(kind: &str) -> PathBuf {
@@ -233,17 +232,17 @@ pub fn object_component(value: &str) -> String {
 /// D-Bus object path for a session id.
 #[must_use]
 pub fn session_path(id: &str) -> String {
-    format!("/org/freedesktop/login1/session/{}", object_component(id))
+    format!("/io/rustd/Login1/session/{}", object_component(id))
 }
 
 /// D-Bus object path for a user id.
 #[must_use]
 pub fn user_path(uid: u32) -> String {
-    format!("/org/freedesktop/login1/user/{uid}")
+    format!("/io/rustd/Login1/user/{uid}")
 }
 
 /// D-Bus object path for a seat id.
 #[must_use]
 pub fn seat_path(id: &str) -> String {
-    format!("/org/freedesktop/login1/seat/{}", object_component(id))
+    format!("/io/rustd/Login1/seat/{}", object_component(id))
 }

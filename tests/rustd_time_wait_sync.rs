@@ -122,8 +122,8 @@ fn watchdog_socket_receives_keepalive_payload_while_waiting() {
         .env("RUSTD_TIME_WAIT_SYNC_RUN_ROOT", &root)
         .env("RUSTD_TIME_WAIT_SYNC_ADJTIMEX_STATES", "5")
         .env("RUSTD_TIME_WAIT_SYNC_TIMER_USEC", "5000000")
-        .env("WATCHDOG_USEC", "100000")
-        .env("NOTIFY_SOCKET", &socket_path)
+        .env("RUSTD_WATCHDOG_USEC", "100000")
+        .env("RUSTD_NOTIFY_SOCKET", &socket_path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -194,7 +194,7 @@ fn packaged_unit_preserves_native_runtime_contract() {
         "ExecStart=/usr/lib/rustd/rustd-time-wait-sync",
         "TimeoutStartSec=infinity",
         "RemainAfterExit=yes",
-        "WantedBy=sysinit.target",
+        "WantedBy=time-sync.target",
     ] {
         assert!(unit.contains(required), "missing unit contract: {required}");
     }

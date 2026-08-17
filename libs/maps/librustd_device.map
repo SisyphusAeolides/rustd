@@ -1,0 +1,6 @@
+RUSTD_DEVICE_1.0 {
+  global:
+    rustd_device_*;
+  local:
+    *;
+};

@@ -558,7 +558,7 @@ fn run(mut options: Options) -> Result<i32, ()> {
         return Err(());
     }
     if result == 0 {
-        eprintln!("No status data could be sent: $NOTIFY_SOCKET was not set");
+        eprintln!("No status data could be sent: $RUSTD_NOTIFY_SOCKET was not set");
         return Err(());
     }
     options.fds.clear();
@@ -570,7 +570,7 @@ fn run(mut options: Options) -> Result<i32, ()> {
             return Err(());
         }
         if barrier == 0 {
-            eprintln!("No status data could be sent: $NOTIFY_SOCKET was not set");
+            eprintln!("No status data could be sent: $RUSTD_NOTIFY_SOCKET was not set");
             return Err(());
         }
     }
@@ -613,7 +613,8 @@ fn action_fork(command: &[String], quiet: bool) -> Result<i32, ()> {
         .map_err(|_| ())?;
     let mut child = Command::new(&command[0])
         .args(&command[1..])
-        .env("NOTIFY_SOCKET", notify_address)
+        .env("RUSTD_NOTIFY_SOCKET", &notify_address)
+        .env("NOTIFY_SOCKET", &notify_address)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
