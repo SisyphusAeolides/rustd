@@ -206,7 +206,7 @@ static int collect_journal_files(rustd_journal *journal) {
     fclose(stream);
     journal->paths = paths;
     journal->path_count = count;
-    journal->path_index = count;
+    journal->path_index = SIZE_MAX;
     return 0;
 }
 
@@ -232,7 +232,7 @@ int rustd_journal_open(rustd_journal **ret, const char *directory) {
         return result;
     }
     if (result == -ENOENT)
-        journal->path_index = 0;
+        journal->path_index = SIZE_MAX;
     *ret = journal;
     return 0;
 }
@@ -330,7 +330,9 @@ int rustd_journal_previous_skip(rustd_journal *journal, uint64_t skip) {
 
     if (!journal)
         return -EINVAL;
-    while (skip > 0 && moved < INT_MAX) {
+    if (skip > (uint64_t)INT_MAX)
+        return -EINVAL;
+    while (skip > 0) {
         int result = rustd_journal_previous(journal);
         if (result < 0)
             return result;
