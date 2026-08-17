@@ -1,14 +1,17 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 /*
- * Fail-closed placeholders for sd_bus / sd_json / sd_varlink.
- * These exist only so preview SONAMEs can close host symbol audits.
- * They are NOT a D-Bus/JSON/Varlink implementation. Retain systemd-libs
- * for Tier C exclusive cutover until a real native bus stack lands.
+ * Fail-closed compatibility surface for sd_bus / sd_json / sd_varlink.
+ * Error-object helpers below are behavioral implementations. The transport,
+ * message, JSON, and Varlink operations remain deliberately unsupported until
+ * their native RustD backends are complete.
  */
+#define _GNU_SOURCE
 #include <errno.h>
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 typedef struct sd_bus sd_bus;
 typedef struct sd_bus_message sd_bus_message;
@@ -29,37 +32,173 @@ typedef int (*sd_bus_message_handler_t)(sd_bus_message *m, void *userdata, sd_bu
 
 const unsigned sd_bus_object_vtable_format = 0;
 
+struct rustd_bus_error_map {
+    const char *name;
+    int error;
+};
+
+static const struct rustd_bus_error_map rustd_bus_error_map[] = {
+    {"org.freedesktop.DBus.Error.Failed", EACCES},
+    {"org.freedesktop.DBus.Error.NoMemory", ENOMEM},
+    {"org.freedesktop.DBus.Error.ServiceUnknown", EHOSTUNREACH},
+    {"org.freedesktop.DBus.Error.NameHasNoOwner", ENXIO},
+    {"org.freedesktop.DBus.Error.NoReply", ETIMEDOUT},
+    {"org.freedesktop.DBus.Error.IOError", EIO},
+    {"org.freedesktop.DBus.Error.BadAddress", EADDRNOTAVAIL},
+    {"org.freedesktop.DBus.Error.NotSupported", EOPNOTSUPP},
+    {"org.freedesktop.DBus.Error.LimitsExceeded", ENOBUFS},
+    {"org.freedesktop.DBus.Error.AccessDenied", EACCES},
+    {"org.freedesktop.DBus.Error.AuthFailed", EACCES},
+    {"org.freedesktop.DBus.Error.NoServer", EHOSTDOWN},
+    {"org.freedesktop.DBus.Error.Timeout", ETIMEDOUT},
+    {"org.freedesktop.DBus.Error.NoNetwork", ENONET},
+    {"org.freedesktop.DBus.Error.AddressInUse", EADDRINUSE},
+    {"org.freedesktop.DBus.Error.Disconnected", ECONNRESET},
+    {"org.freedesktop.DBus.Error.InvalidArgs", EINVAL},
+    {"org.freedesktop.DBus.Error.FileNotFound", ENOENT},
+    {"org.freedesktop.DBus.Error.FileExists", EEXIST},
+    {"org.freedesktop.DBus.Error.UnknownMethod", EBADR},
+    {"org.freedesktop.DBus.Error.UnknownObject", EBADR},
+    {"org.freedesktop.DBus.Error.UnknownInterface", EBADR},
+    {"org.freedesktop.DBus.Error.UnknownProperty", EBADR},
+    {"org.freedesktop.DBus.Error.PropertyReadOnly", EROFS},
+    {"org.freedesktop.DBus.Error.UnixProcessIdUnknown", ESRCH},
+    {"org.freedesktop.DBus.Error.InvalidSignature", EINVAL},
+    {"org.freedesktop.DBus.Error.InconsistentMessage", EBADMSG},
+    {"org.freedesktop.DBus.Error.TimedOut", ETIMEDOUT},
+    {"org.freedesktop.DBus.Error.MatchRuleNotFound", ENOENT},
+    {"org.freedesktop.DBus.Error.MatchRuleInvalid", EINVAL},
+    {"org.freedesktop.DBus.Error.InteractiveAuthorizationRequired", EACCES},
+    {"org.freedesktop.DBus.Error.InvalidFileContent", EINVAL},
+    {"org.freedesktop.DBus.Error.SELinuxSecurityContextUnknown", ESRCH},
+    {"org.freedesktop.DBus.Error.ObjectPathInUse", EBUSY},
+};
+
+static int rustd_bus_error_is_dirty(const sd_bus_error *error) {
+    return error && (error->name || error->message || error->_need_free != 0);
+}
+
+static const struct rustd_bus_error_map *rustd_bus_error_by_errno(int error) {
+    size_t i;
+    for (i = 0; i < sizeof(rustd_bus_error_map) / sizeof(rustd_bus_error_map[0]); i++)
+        if (rustd_bus_error_map[i].error == error)
+            return &rustd_bus_error_map[i];
+    return NULL;
+}
+
+static int rustd_bus_error_name_to_errno(const char *name) {
+    const char prefix[] = "System.Error.";
+    size_t i;
+
+    if (!name)
+        return 0;
+    if (strncmp(name, prefix, sizeof(prefix) - 1U) == 0) {
+        const char *wanted = name + sizeof(prefix) - 1U;
+        int error;
+        for (error = 1; error < 4096; error++) {
+            const char *candidate = strerrorname_np(error);
+            if (candidate && strcmp(candidate, wanted) == 0)
+                return error;
+        }
+        return EIO;
+    }
+    for (i = 0; i < sizeof(rustd_bus_error_map) / sizeof(rustd_bus_error_map[0]); i++)
+        if (strcmp(rustd_bus_error_map[i].name, name) == 0)
+            return rustd_bus_error_map[i].error;
+    return EIO;
+}
+
+static int rustd_bus_error_set_dynamic_errno(sd_bus_error *error, int code) {
+    const char prefix[] = "System.Error.";
+    const char *errno_name = strerrorname_np(code);
+    size_t length;
+    char *name;
+    char *message;
+
+    if (!errno_name)
+        return 0;
+    length = sizeof(prefix) - 1U + strlen(errno_name) + 1U;
+    name = malloc(length);
+    if (!name)
+        return -ENOMEM;
+    memcpy(name, prefix, sizeof(prefix) - 1U);
+    strcpy(name + sizeof(prefix) - 1U, errno_name);
+    message = strdup(strerror(code));
+    if (!message) {
+        free(name);
+        return -ENOMEM;
+    }
+    error->name = name;
+    error->message = message;
+    error->_need_free = 1;
+    return 1;
+}
+
 static int rustd_bus_enosys(sd_bus_error *error) {
-    if (error) {
+    if (error && !rustd_bus_error_is_dirty(error)) {
         error->name = "org.freedesktop.DBus.Error.NotSupported";
-        error->message = "rustd-compat bus stubs are fail-closed";
+        error->message = "rustd-compat bus transport is not implemented";
         error->_need_free = 0;
     }
     return -ENOSYS;
 }
 
 int sd_bus_error_set_errno(sd_bus_error *e, int error) {
-    (void)rustd_bus_enosys(e);
-    return error < 0 ? error : -ENOSYS;
+    const struct rustd_bus_error_map *mapped;
+    int r;
+
+    if (error < 0)
+        error = -error;
+    if (!e)
+        return -error;
+    if (error == 0)
+        return 0;
+    if (rustd_bus_error_is_dirty(e))
+        return -EINVAL;
+
+    mapped = rustd_bus_error_by_errno(error);
+    if (mapped) {
+        e->name = mapped->name;
+        e->message = strerror(error);
+        e->_need_free = 0;
+        return -error;
+    }
+
+    r = rustd_bus_error_set_dynamic_errno(e, error);
+    if (r < 0) {
+        e->name = "org.freedesktop.DBus.Error.NoMemory";
+        e->message = "Out of memory";
+        e->_need_free = 0;
+    } else if (r == 0) {
+        e->name = "org.freedesktop.DBus.Error.Failed";
+        e->message = strerror(error);
+        e->_need_free = 0;
+    }
+    return -error;
 }
 
 void sd_bus_error_free(sd_bus_error *e) {
     if (!e)
         return;
+    if (e->_need_free > 0) {
+        free((void *)e->name);
+        free((void *)e->message);
+    }
     e->name = NULL;
     e->message = NULL;
     e->_need_free = 0;
 }
 
 int sd_bus_error_get_errno(const sd_bus_error *e) {
-    (void)e;
-    return ENOSYS;
+    return e && e->name ? rustd_bus_error_name_to_errno(e->name) : 0;
 }
 
 int sd_bus_error_has_name(const sd_bus_error *e, const char *name) {
-    (void)e;
-    (void)name;
-    return 0;
+    if (!e)
+        return 0;
+    if (!e->name || !name)
+        return e->name == name;
+    return strcmp(e->name, name) == 0;
 }
 
 void sd_bus_close(sd_bus *bus) {
