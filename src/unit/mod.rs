@@ -27,7 +27,7 @@ pub use section_unit::UnitSection;
 /// The lifecycle states of a systemd unit.
 ///
 /// Upstream reference: `src/core/unit.h UnitActiveState` (v261)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum UnitState {
     Inactive,
     Activating,
