@@ -1,0 +1,282 @@
+name: Apply udev sysattr setter
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/apply-udev-setter.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Install native headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential gfortran libudev-dev libsystemd-dev
+
+      - name: Apply and validate udev setter
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/udev-setter.patch <<'PATCH'
+--- a/include/rustd/device.h
++++ b/include/rustd/device.h
+@@ -40,6 +40,7 @@
+ const char *rustd_device_get_action(rustd_device *device);
+ const char *rustd_device_get_property_value(rustd_device *device, const char *key);
+ const char *rustd_device_get_sysattr_value(rustd_device *device, const char *key);
++int rustd_device_set_sysattr_value(rustd_device *device, const char *key, const char *value);
+ dev_t rustd_device_get_devnum(rustd_device *device);
+ int rustd_device_get_is_initialized(rustd_device *device);
+ rustd_device *rustd_device_get_parent(rustd_device *device);
+--- a/libs/device/device.c
++++ b/libs/device/device.c
+@@ -369,10 +369,32 @@
+     return NULL;
+ }
+ 
++static int sysattr_path_is_safe(const char *key) {
++    const char *segment;
++    const char *cursor;
++
++    if (!key || !*key || key[0] == '/')
++        return 0;
++    segment = key;
++    for (cursor = key;; cursor++) {
++        size_t length;
++        if (*cursor != '/' && *cursor != '\0')
++            continue;
++        length = (size_t)(cursor - segment);
++        if (length == 0 ||
++            (length == 1 && segment[0] == '.') ||
++            (length == 2 && segment[0] == '.' && segment[1] == '.'))
++            return 0;
++        if (*cursor == '\0')
++            return 1;
++        segment = cursor + 1;
++    }
++}
++
+ const char *rustd_device_get_sysattr_value(rustd_device *device, const char *key) {
+     static __thread char buffer[1024];
+     char *value;
+-    if (!device || !key)
++    if (!device || !sysattr_path_is_safe(key))
+         return NULL;
+     value = read_sysfs_value(device->syspath, key);
+     if (!value)
+@@ -380,6 +402,52 @@
+     snprintf(buffer, sizeof(buffer), "%s", value);
+     free(value);
+     return buffer;
++}
++
++int rustd_device_set_sysattr_value(rustd_device *device, const char *key, const char *value) {
++    char path[PATH_MAX];
++    char copied[4097];
++    size_t length;
++    size_t offset = 0;
++    int fd;
++    int n;
++
++    if (!device || !sysattr_path_is_safe(key))
++        return -EINVAL;
++    if (!value)
++        return 0;
++
++    n = snprintf(path, sizeof(path), "%s/%s", device->syspath, key);
++    if (n < 0 || (size_t)n >= sizeof(path))
++        return -ENAMETOOLONG;
++
++    length = strnlen(value, 4096);
++    memcpy(copied, value, length);
++    while (length > 0 && (copied[length - 1] == '\n' || copied[length - 1] == '\r'))
++        length--;
++    copied[length] = '\0';
++
++    fd = open(path, O_WRONLY | O_CLOEXEC);
++    if (fd < 0)
++        return -errno;
++    while (offset < length) {
++        ssize_t written = write(fd, copied + offset, length - offset);
++        if (written < 0) {
++            int error = errno;
++            if (error == EINTR)
++                continue;
++            close(fd);
++            return -error;
++        }
++        if (written == 0) {
++            close(fd);
++            return -EIO;
++        }
++        offset += (size_t)written;
++    }
++    if (close(fd) < 0)
++        return -errno;
++    return 0;
+ }
+ 
+ rustd_device *rustd_device_get_parent(rustd_device *device) {
+--- a/libs/compat/udev.c
++++ b/libs/compat/udev.c
+@@ -242,10 +242,9 @@
+     return 0;
+ }
+ int udev_device_set_sysattr_value(struct udev_device *device, const char *key, const char *value) {
+-    (void)device;
+-    (void)key;
+-    (void)value;
+-    return -ENOSYS;
++    if (!device)
++        return -EINVAL;
++    return rustd_device_set_sysattr_value(device->dev, key, value);
+ }
+ 
+ struct udev_enumerate *udev_enumerate_new(struct udev *udev) {
+--- a/libs/tests/test_libs_smoke.c
++++ b/libs/tests/test_libs_smoke.c
+@@ -1,6 +1,12 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
++#define _GNU_SOURCE
+ #include <assert.h>
++#include <errno.h>
++#include <fcntl.h>
+ #include <stdio.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <unistd.h>
+ #include <rustd/service.h>
+ #include <rustd/journal.h>
+ #include <rustd/device.h>
+@@ -30,6 +36,36 @@
+     }
+ 
+     {
++        char directory[128];
++        char attribute[160];
++        rustd_device_ctx *ctx = rustd_device_ctx_new();
++        rustd_device *device;
++        int fd;
++
++        assert(ctx);
++        snprintf(directory, sizeof(directory), "/tmp/rustd-device-smoke-%ld", (long)getpid());
++        assert(mkdir(directory, 0700) == 0);
++        snprintf(attribute, sizeof(attribute), "%s/control", directory);
++        fd = open(attribute, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
++        assert(fd >= 0);
++        assert(write(fd, "prior", 5) == 5);
++        assert(close(fd) == 0);
++
++        device = rustd_device_new_from_syspath(ctx, directory);
++        assert(device);
++        assert(rustd_device_set_sysattr_value(device, "control", "after\n\r") == 0);
++        assert(strcmp(rustd_device_get_sysattr_value(device, "control"), "after") == 0);
++        assert(rustd_device_set_sysattr_value(device, "control", NULL) == 0);
++        assert(strcmp(rustd_device_get_sysattr_value(device, "control"), "after") == 0);
++        assert(rustd_device_set_sysattr_value(device, "../escape", "blocked") == -EINVAL);
++
++        rustd_device_unref(device);
++        rustd_device_ctx_unref(ctx);
++        assert(unlink(attribute) == 0);
++        assert(rmdir(directory) == 0);
++    }
++
++    {
+         rustd_journal *journal = NULL;
+         int opened = rustd_journal_open(&journal, "/tmp/rustd-journal-missing");
+         if (opened == 0) {
+--- a/libs/tests/test_compat_abi.c
++++ b/libs/tests/test_compat_abi.c
+@@ -1,6 +1,13 @@
+ /* SPDX-License-Identifier: LGPL-2.1-or-later */
++#define _GNU_SOURCE
+ #include <assert.h>
++#include <errno.h>
++#include <fcntl.h>
+ #include <stdint.h>
++#include <stdio.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <unistd.h>
+ 
+ #include <libudev.h>
+ #include <systemd/sd-device.h>
+@@ -15,6 +22,8 @@
+     int (*monitor_new)(sd_device_monitor **) = sd_device_monitor_new;
+     sd_event *(*monitor_event)(sd_device_monitor *) = sd_device_monitor_get_event;
+     void (*flush_matches)(sd_journal *) = sd_journal_flush_matches;
++    int (*set_sysattr)(struct udev_device *, const char *, const char *) =
++        udev_device_set_sysattr_value;
+ 
+     assert(login_new);
+     assert(device_open);
+@@ -23,6 +32,7 @@
+     assert(monitor_new);
+     assert(monitor_event);
+     assert(flush_matches);
++    assert(set_sysattr);
+ }
+ 
+ int main(void) {
+@@ -31,6 +41,32 @@
+     verify_function_types();
+     udev = udev_new();
+     assert(udev);
++
++    {
++        char directory[128];
++        char attribute[160];
++        struct udev_device *device;
++        int fd;
++
++        snprintf(directory, sizeof(directory), "/tmp/rustd-udev-compat-%ld", (long)getpid());
++        assert(mkdir(directory, 0700) == 0);
++        snprintf(attribute, sizeof(attribute), "%s/control", directory);
++        fd = open(attribute, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
++        assert(fd >= 0);
++        assert(close(fd) == 0);
++
++        device = udev_device_new_from_syspath(udev, directory);
++        assert(device);
++        assert(udev_device_set_sysattr_value(device, "control", "compat\n") == 0);
++        assert(strcmp(udev_device_get_sysattr_value(device, "control"), "compat") == 0);
++        assert(udev_device_set_sysattr_value(device, NULL, "blocked") == -EINVAL);
++        assert(udev_device_set_sysattr_value(device, "../escape", "blocked") == -EINVAL);
++        assert(udev_device_unref(device) == NULL);
++
++        assert(unlink(attribute) == 0);
++        assert(rmdir(directory) == 0);
++    }
++
+     assert(udev_ref(udev) == udev);
+     assert(udev_unref(udev) == NULL);
+     assert(udev_unref(udev) == NULL);
+PATCH
+          git apply --check /tmp/udev-setter.patch
+          git apply /tmp/udev-setter.patch
+          make check-libs -j2
+          make check-compat -j2
+          expected=$'include/rustd/device.h\nlibs/compat/udev.c\nlibs/device/device.c\nlibs/tests/test_compat_abi.c\nlibs/tests/test_libs_smoke.c'
+          changed="$(git diff --name-only | sort)"
+          if [[ "$changed" != "$expected" ]]; then
+            printf 'Unexpected source changes:\n%s\n' "$changed" >&2
+            exit 1
+          fi
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git add -- include/rustd/device.h libs/device/device.c libs/compat/udev.c libs/tests/test_libs_smoke.c libs/tests/test_compat_abi.c
+          git commit -m 'Implement udev sysattr writes'
+          git push origin HEAD:main
