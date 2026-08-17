@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include <libudev.h>
+#include <systemd/sd-bus.h>
 #include <systemd/sd-device.h>
 #include <systemd/sd-journal.h>
 #include <systemd/sd-login.h>
@@ -35,10 +36,36 @@ static void verify_function_types(void) {
     assert(set_sysattr);
 }
 
+static void verify_bus_error_semantics(void) {
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    sd_bus_error unknown = SD_BUS_ERROR_NULL;
+
+    assert(sd_bus_error_get_errno(NULL) == 0);
+    assert(sd_bus_error_get_errno(&error) == 0);
+    assert(sd_bus_error_set_errno(NULL, EIO) == -EIO);
+
+    assert(sd_bus_error_set_errno(&error, EINVAL) == -EINVAL);
+    assert(sd_bus_error_has_name(&error, SD_BUS_ERROR_INVALID_ARGS) > 0);
+    assert(sd_bus_error_get_errno(&error) == EINVAL);
+    assert(error.message != NULL);
+    assert(sd_bus_error_set_errno(&error, EIO) == -EINVAL);
+    sd_bus_error_free(&error);
+    assert(error.name == NULL);
+    assert(error.message == NULL);
+    assert(sd_bus_error_get_errno(&error) == 0);
+
+    assert(sd_bus_error_set_errno(&unknown, EDQUOT) == -EDQUOT);
+    assert(unknown.name != NULL);
+    assert(strncmp(unknown.name, "System.Error.", strlen("System.Error.")) == 0);
+    assert(sd_bus_error_get_errno(&unknown) == EDQUOT);
+    sd_bus_error_free(&unknown);
+}
+
 int main(void) {
     struct udev *udev;
 
     verify_function_types();
+    verify_bus_error_semantics();
     udev = udev_new();
     assert(udev);
 
