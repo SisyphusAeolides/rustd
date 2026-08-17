@@ -4,6 +4,9 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   smoke:
     strategy:
@@ -16,10 +19,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: Install Rust target
-        run: rustup target add ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup target add ${{ matrix.target }}
       - name: Native build and library gates
         if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y \
             gfortran \
@@ -32,4 +40,7 @@ jobs:
           cargo test --locked --lib
       - name: AArch64 release build
         if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: bash scripts/aarch64-cross-build.sh
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/aarch64-cross-build.sh

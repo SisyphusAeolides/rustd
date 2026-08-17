@@ -223,6 +223,17 @@ fn main() {
 
     if env::var_os("CARGO_FEATURE_KALMAN").is_some() {
         let fc = target_tool("FC", &target, "gfortran");
+        let fc_available = Command::new(&fc)
+            .arg("--version")
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if !fc_available {
+            panic!(
+                "Fortran compiler {:?} not found. Install gfortran or provide the target compiler through FC/FC_<target>.",
+                fc
+            );
+        }
         let kalman_obj = object(&out_dir, "rustd_kalman_sched");
         command(
             &fc,

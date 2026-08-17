@@ -31,7 +31,9 @@ jobs:
       - name: Publish pending status
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
+          set -euo pipefail
           payload=$(printf '{"state":"pending","context":"rustd/reproducibility","description":"Reproducible release proof is running","target_url":"%s"}' "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")
           curl --fail-with-body --silent --show-error -X POST \
             -H "Accept: application/vnd.github+json" \
@@ -45,7 +47,9 @@ jobs:
           fetch-depth: 1
 
       - name: Install build toolchain
+        shell: bash
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             gfortran \
@@ -56,9 +60,12 @@ jobs:
           rustup default 1.75.0
 
       - name: Verify release reproducibility
+        shell: bash
         env:
           CARGO_BUILD_JOBS: 1
-        run: bash scripts/check-reproducible-release.sh
+        run: |
+          set -euo pipefail
+          bash scripts/check-reproducible-release.sh
 
       - name: Upload reproducibility evidence
         if: ${{ always() }}
@@ -74,7 +81,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           STATE: ${{ job.status == 'success' && 'success' || 'failure' }}
+        shell: bash
         run: |
+          set -euo pipefail
           payload=$(printf '{"state":"%s","context":"rustd/reproducibility","description":"Reproducible release proof %s","target_url":"%s"}' "$STATE" "$STATE" "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}")
           curl --fail-with-body --silent --show-error -X POST \
             -H "Accept: application/vnd.github+json" \

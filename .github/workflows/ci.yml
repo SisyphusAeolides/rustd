@@ -112,7 +112,9 @@ jobs:
 
       - name: Package source snapshot
         if: always()
+        shell: bash
         run: |
+          set -euo pipefail
           tar \
             --exclude=.git \
             --exclude=build \
