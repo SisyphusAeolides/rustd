@@ -67,7 +67,7 @@ $(LIBS_DIR)/libudev.so.1: libs/compat/udev.c libs/maps/libudev.map include/rustd
 		libs/compat/udev.c \
 		-Wl,--version-script=libs/maps/libudev.map \
 		-Wl,-soname,libudev.so.1 $(LIB_LDFLAGS) \
-		-Wl,-rpath,'$$ORIGIN' -L$(LIBS_DIR) -lrustd_device \
+		-Wl,-rpath,'$$ORIGIN' -L$(LIBS_DIR) -l:librustd_device.so.1 \
 		-o $@
 
 $(LIBS_DIR)/libsystemd.so.0: libs/compat/systemd.c libs/compat/sd_bus_stubs.c libs/maps/libsystemd.map \
@@ -80,7 +80,7 @@ $(LIBS_DIR)/libsystemd.so.0: libs/compat/systemd.c libs/compat/sd_bus_stubs.c li
 		-Wl,--version-script=libs/maps/libsystemd.map \
 		-Wl,-soname,libsystemd.so.0 $(LIB_LDFLAGS) \
 		-Wl,-rpath,'$$ORIGIN' -L$(LIBS_DIR) \
-		-lrustd_service -lrustd_journal -lrustd_login -lrustd_device \
+		-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 \
 		-o $@
 
 $(LIBS_DIR)/librustd_service.so.1: ffi/native.c ffi/notify.c libs/service/abi.c libs/maps/librustd_service.map include/rustd/service.h
