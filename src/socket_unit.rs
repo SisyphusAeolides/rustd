@@ -245,6 +245,61 @@ pub fn activate_socket(
     Ok(())
 }
 
+/// Adopt listener descriptors inherited across a manager `execv`.
+///
+/// Listener descriptors are deliberately non-CLOEXEC. Re-register their
+/// readiness handlers without rebinding addresses or changing descriptor
+/// numbers, so already-connected/queued activation traffic survives reexec.
+pub fn adopt_socket(
+    record: &mut UnitRecord,
+    sock_rec: &mut SocketRecord,
+    inherited_fds: Vec<RawFd>,
+    event_loop: &mut EventLoop,
+    queue: &Arc<Mutex<JobQueue>>,
+) -> anyhow::Result<()> {
+    let LoadedUnit::Socket(ref sock) = record.loaded else {
+        return Err(anyhow!(
+            "adopt_socket called on non-socket unit '{}'",
+            record.loaded.name()
+        ));
+    };
+    if inherited_fds.len() != sock.specific.listen.len() {
+        return Err(anyhow!(
+            "socket '{}' inherited {} listeners but configuration declares {}",
+            record.loaded.name(), inherited_fds.len(), sock.specific.listen.len()
+        ));
+    }
+    for &fd in &inherited_fds {
+        if fd < 0 || unsafe { libc::fcntl(fd, libc::F_GETFD) } < 0 {
+            return Err(anyhow!("socket '{}' inherited invalid fd {fd}", record.loaded.name()));
+        }
+    }
+    let service_name = triggered_service_name(record.loaded.name(), &sock.specific.service);
+    let mut source_ids = Vec::with_capacity(inherited_fds.len());
+    for &fd in &inherited_fds {
+        match event_loop.add_io(
+            fd,
+            libc::EPOLLIN as u32,
+            Box::new(SocketReadableHandler {
+                service_name: service_name.clone(),
+                queue: Arc::clone(queue),
+            }),
+        ) {
+            Ok(source_id) => source_ids.push(source_id),
+            Err(error) => {
+                for source_id in source_ids {
+                    let _ = event_loop.remove_io(source_id);
+                }
+                return Err(error);
+            }
+        }
+    }
+    sock_rec.listen_fds = inherited_fds;
+    sock_rec.source_ids = source_ids;
+    record.state = UnitState::Active;
+    Ok(())
+}
+
 /// Deactivate a socket unit: close listener fds and transition to `Inactive`.
 pub fn deactivate_socket(
     record: &mut UnitRecord,
