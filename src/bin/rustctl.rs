@@ -19,9 +19,6 @@ use rustd::unit::section_install::InstallSection;
 const VERSION: &str = concat!("RustD ", env!("CARGO_PKG_VERSION"));
 const JOB_TIMEOUT: Duration = Duration::from_secs(90);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const RUSTD_BUS_NAME: &str = "io.rustd.Manager1";
-const RUSTD_OBJECT_PATH: &str = "/io/rustd/Manager1";
-const RUSTD_MANAGER_INTERFACE: &str = "io.rustd.Manager1.Manager";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Scope {
@@ -58,31 +55,6 @@ enum JobVerb {
     Stop,
     Restart,
     Reload,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum LifecycleVerb {
-    Reboot,
-    Poweroff,
-    Halt,
-    Kexec,
-    Reexecute,
-}
-
-impl LifecycleVerb {
-    const fn method(self) -> &'static str {
-        match self {
-            Self::Reboot => "Reboot",
-            Self::Poweroff => "PowerOff",
-            Self::Halt => "Halt",
-            Self::Kexec => "KExec",
-            Self::Reexecute => "Reexecute",
-        }
-    }
-
-    const fn machine_wide(self) -> bool {
-        !matches!(self, Self::Reexecute)
-    }
 }
 
 fn main() {
@@ -147,13 +119,6 @@ fn run() -> anyhow::Result<i32> {
             })
         }
         "cancel" => cancel(&units),
-        "reboot" => lifecycle_request(&options, &units, LifecycleVerb::Reboot),
-        "poweroff" => lifecycle_request(&options, &units, LifecycleVerb::Poweroff),
-        "halt" => lifecycle_request(&options, &units, LifecycleVerb::Halt),
-        "kexec" => lifecycle_request(&options, &units, LifecycleVerb::Kexec),
-        "reexecute" | "manager-reexec" => {
-            lifecycle_request(&options, &units, LifecycleVerb::Reexecute)
-        }
         other => anyhow::bail!("unknown command '{other}' (run 'rustctl help')"),
     }
 }
@@ -222,50 +187,6 @@ fn checked(request: &IpcRequest) -> anyhow::Result<IpcResponse> {
 fn simple_request(request: IpcRequest) -> anyhow::Result<i32> {
     checked(&request)?;
     Ok(0)
-}
-
-fn lifecycle_request(
-    options: &Options,
-    arguments: &[&str],
-    verb: LifecycleVerb,
-) -> anyhow::Result<i32> {
-    validate_lifecycle_request(options, arguments, verb)?;
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()?;
-    runtime.block_on(async {
-        let connection = match options.scope {
-            Scope::System => zbus::Connection::system().await?,
-            Scope::User => zbus::Connection::session().await?,
-        };
-        let proxy = zbus::Proxy::new(
-            &connection,
-            RUSTD_BUS_NAME,
-            RUSTD_OBJECT_PATH,
-            RUSTD_MANAGER_INTERFACE,
-        )
-        .await?;
-        let _reply = proxy.call_method(verb.method(), &()).await?;
-        Ok::<(), anyhow::Error>(())
-    })?;
-    Ok(0)
-}
-
-fn validate_lifecycle_request(
-    options: &Options,
-    arguments: &[&str],
-    verb: LifecycleVerb,
-) -> anyhow::Result<()> {
-    if !arguments.is_empty() {
-        anyhow::bail!("{} takes no arguments", verb.method());
-    }
-    if options.root.is_some() {
-        anyhow::bail!("manager lifecycle commands may not be combined with --root");
-    }
-    if options.scope == Scope::User && verb.machine_wide() {
-        anyhow::bail!("machine lifecycle commands require the system manager");
-    }
-    Ok(())
 }
 
 fn exactly_one<'a>(values: &'a [&str], description: &str) -> anyhow::Result<&'a str> {
@@ -757,11 +678,6 @@ fn print_help() {
     println!("  reset-failed [UNIT...]             Clear failed state");
     println!("  daemon-reload                      Reload unit configuration");
     println!("  cancel [JOB...]                    Cancel jobs");
-    println!("  reboot                             Cleanly reboot through RustD");
-    println!("  poweroff                           Cleanly power off through RustD");
-    println!("  halt                               Cleanly halt through RustD");
-    println!("  kexec                              Execute the loaded kexec image through RustD");
-    println!("  reexecute                          Re-execute the RustD manager in place");
     println!();
     println!("Options:");
     println!("  --system                           Operate on the system manager (default)");
@@ -784,22 +700,6 @@ mod tests {
         let (options, positional) = parse_args(&args).unwrap();
         assert!(options.now);
         assert_eq!(positional, ["enable", "demo.service"]);
-    }
-
-    #[test]
-    fn lifecycle_requests_enforce_scope_and_offline_safety() {
-        let system = Options::default();
-        assert!(validate_lifecycle_request(&system, &[], LifecycleVerb::Poweroff).is_ok());
-        assert!(validate_lifecycle_request(&system, &["unexpected"], LifecycleVerb::Reboot).is_err());
-
-        let mut user = Options::default();
-        user.scope = Scope::User;
-        assert!(validate_lifecycle_request(&user, &[], LifecycleVerb::Reboot).is_err());
-        assert!(validate_lifecycle_request(&user, &[], LifecycleVerb::Reexecute).is_ok());
-
-        let mut rooted = Options::default();
-        rooted.root = Some(PathBuf::from("/tmp/offline-root"));
-        assert!(validate_lifecycle_request(&rooted, &[], LifecycleVerb::Poweroff).is_err());
     }
 
     #[test]
