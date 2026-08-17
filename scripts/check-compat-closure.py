@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify rustd-compat exports every versioned symbol required by a host audit."""
+"""Verify rustd-compat behaviorally covers every symbol required by a host audit."""
 
 from __future__ import annotations
 
@@ -12,6 +12,10 @@ from pathlib import Path
 
 
 SYMBOL = re.compile(r"^(sd_|udev_)")
+FUNCTION = re.compile(
+    r"(?m)^[\w\s*]+\b((?:sd_|udev_)[A-Za-z0-9_]+)\s*\([^;]*?\)\s*\{"
+)
+UNSUPPORTED_MARKERS = ("ENOSYS", "rustd_bus_enosys")
 
 
 def dynamic_symbols(path: Path, *, undefined: bool) -> set[str]:
@@ -30,6 +34,37 @@ def dynamic_symbols(path: Path, *, undefined: bool) -> set[str]:
         if SYMBOL.match(candidate):
             symbols.add(candidate.replace("@@", "@", 1))
     return symbols
+
+
+def function_body(source: str, start: int) -> str:
+    depth = 1
+    cursor = start
+    while cursor < len(source) and depth:
+        if source[cursor] == "{":
+            depth += 1
+        elif source[cursor] == "}":
+            depth -= 1
+        cursor += 1
+    return source[start:cursor]
+
+
+def fail_closed_symbols(root: Path) -> set[str]:
+    unsupported: set[str] = set()
+    for relative in (
+        Path("libs/compat/systemd.c"),
+        Path("libs/compat/sd_bus_stubs.c"),
+        Path("libs/compat/udev.c"),
+    ):
+        source = (root / relative).read_text(encoding="utf-8")
+        for match in FUNCTION.finditer(source):
+            body = function_body(source, match.end())
+            if any(marker in body for marker in UNSUPPORTED_MARKERS):
+                unsupported.add(match.group(1))
+    return unsupported
+
+
+def unversioned(symbol: str) -> str:
+    return symbol.split("@", 1)[0]
 
 
 def main() -> int:
@@ -53,13 +88,23 @@ def main() -> int:
     provided.update(dynamic_symbols(args.libudev, undefined=False))
     missing = sorted(required - provided)
 
+    repository_root = Path(__file__).resolve().parents[1]
+    fail_closed = fail_closed_symbols(repository_root)
+    unsupported = sorted(
+        symbol for symbol in required if unversioned(symbol) in fail_closed
+    )
+
     print(
         f"compat closure: {len(consumers)} consumers, "
-        f"{len(required)} required versioned symbols, {len(missing)} missing"
+        f"{len(required)} required versioned symbols, {len(missing)} missing, "
+        f"{len(unsupported)} fail-closed"
     )
     for symbol in missing:
         print(f"MISSING {symbol}")
-    return 1 if missing else 0
+    for symbol in unsupported:
+        print(f"FAIL_CLOSED {symbol}")
+
+    return 1 if missing or unsupported else 0
 
 
 if __name__ == "__main__":
