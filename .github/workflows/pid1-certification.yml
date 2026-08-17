@@ -16,7 +16,7 @@ concurrency:
 jobs:
   pid1-certification:
     runs-on: ubuntu-24.04
-    timeout-minutes: 55
+    timeout-minutes: 60
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,6 +94,15 @@ jobs:
           RUSTD_PID1_SERIAL_LOG=pid1-reexec-serial-1.log \
             bash scripts/ci-pid1-initramfs.sh
 
+      - name: Deliver one thousand queued realtime signals to RustD PID1
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUSTD_PID1_SIGNAL_COUNT=1000 \
+          RUSTD_PID1_QEMU_TIMEOUT=150s \
+          RUSTD_PID1_SERIAL_LOG=pid1-signal-storm-serial-1.log \
+            bash scripts/ci-pid1-signal-storm.sh
+
       - name: Reboot through RustD ten times
         shell: bash
         run: |
@@ -134,6 +143,7 @@ jobs:
           )
           timestamp = int(time.time())
           records = (
+              ("fault.signal_storm", 1000, "one QEMU PID 1 campaign delivered one thousand queued SIGRTMIN realtime signals through RustD's signalfd path; the control plane remained responsive and a long-running keeper retained the same live MainPID after the storm"),
               ("boot.cold", 3, "three independent QEMU initramfs cold boots passed with RustD as PID 1 and the normal unit graph healthy"),
               ("boot.reboot", 10, "ten independent QEMU boots issued rustctl reboot to RustD PID 1, observed the managed keeper ExecStop during the orderly shutdown transaction, and QEMU exited from the guest reboot with -no-reboot"),
               ("boot.poweroff", 10, "ten independent QEMU boots issued rustctl poweroff to RustD PID 1, observed the managed keeper ExecStop during the orderly shutdown transaction, and QEMU exited from the guest poweroff"),
@@ -165,10 +175,11 @@ jobs:
           if stat.S_IMODE(path.stat().st_mode) != 0o600:
               raise SystemExit("PID1 evidence mode must be 0600")
           records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-          expected = {"boot.cold", "boot.reboot", "boot.poweroff", "boot.rescue", "boot.emergency", "boot.reexec"}
+          expected = {"fault.signal_storm", "boot.cold", "boot.reboot", "boot.poweroff", "boot.rescue", "boot.emergency", "boot.reexec"}
           if {record.get("gate") for record in records} != expected:
               raise SystemExit("PID1 evidence gate set is incomplete")
           minimums = {
+              "fault.signal_storm": 1000,
               "boot.cold": 3,
               "boot.reboot": 10,
               "boot.poweroff": 10,
@@ -186,7 +197,7 @@ jobs:
                   raise SystemExit(f"{gate}: insufficient iterations")
               if not str(record.get("detail", "")).strip():
                   raise SystemExit(f"{gate}: empty detail")
-          print("certification evidence OK: boot.cold,boot.reboot,boot.poweroff,boot.rescue,boot.emergency,boot.reexec")
+          print("certification evidence OK: fault.signal_storm,boot.cold,boot.reboot,boot.poweroff,boot.rescue,boot.emergency,boot.reexec")
           PY
 
       - name: Upload serial certificate logs
