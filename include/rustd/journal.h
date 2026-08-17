@@ -34,6 +34,8 @@ int rustd_journal_open(rustd_journal **ret, const char *directory);
 void rustd_journal_unref(rustd_journal *journal);
 int rustd_journal_seek_tail(rustd_journal *journal);
 int rustd_journal_next(rustd_journal *journal);
+int rustd_journal_previous(rustd_journal *journal);
+int rustd_journal_previous_skip(rustd_journal *journal, uint64_t skip);
 int rustd_journal_get_data(rustd_journal *journal, const char *field,
                            const void **data, size_t *length);
 int rustd_journal_get_realtime_usec(rustd_journal *journal, uint64_t *usec);
