@@ -82,6 +82,44 @@ pub fn activate_path(
     Ok(source_id)
 }
 
+/// Re-register path watches after an in-place manager exec without
+/// re-evaluating level-triggered conditions as a fresh activation.
+pub fn adopt_path(
+    record: &mut UnitRecord,
+    event_loop: &mut EventLoop,
+    queue: &Arc<Mutex<JobQueue>>,
+) -> anyhow::Result<SourceId> {
+    let LoadedUnit::Path(path_unit) = &record.loaded else {
+        return Err(anyhow!("adopt_path called for non-path unit"));
+    };
+    if path_unit.specific.watches.is_empty() {
+        return Err(anyhow!("path unit has no Path*= watches"));
+    }
+    let target = if path_unit.specific.unit.is_empty() {
+        record.loaded.name().strip_suffix(".path").map_or_else(
+            || format!("{}.service", record.loaded.name()),
+            |stem| format!("{stem}.service"),
+        )
+    } else {
+        path_unit.specific.unit.clone()
+    };
+    let source_id = event_loop.add_inotify(Box::new(PathChangedHandler {
+        unit_name: target,
+        queue: Arc::clone(queue),
+    }))?;
+    for watch in &path_unit.specific.watches {
+        let watched_path = watch_root(&watch.path);
+        if let Err(error) =
+            event_loop.inotify_add_watch(source_id, &watched_path.to_string_lossy(), WATCH_MASK)
+        {
+            let _ = event_loop.remove_inotify(source_id);
+            return Err(error);
+        }
+    }
+    record.state = UnitState::Active;
+    Ok(source_id)
+}
+
 fn watch_root(configured: &str) -> PathBuf {
     let configured = Path::new(configured);
     let mut candidate = if contains_glob(configured) {
