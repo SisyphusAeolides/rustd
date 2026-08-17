@@ -60,6 +60,29 @@ enum JobVerb {
     Reload,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MachineTransition {
+    Reboot,
+    Poweroff,
+}
+
+impl MachineTransition {
+    fn signal(self) -> libc::c_int {
+        let minimum = libc::SIGRTMIN();
+        match self {
+            Self::Reboot => minimum + 4,
+            Self::Poweroff => minimum + 2,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Reboot => "reboot",
+            Self::Poweroff => "poweroff",
+        }
+    }
+}
+
 fn main() {
     match run() {
         Ok(code) => std::process::exit(code),
@@ -116,6 +139,8 @@ fn run() -> anyhow::Result<i32> {
         }),
         "daemon-reload" => simple_request(IpcRequest::DaemonReload),
         "daemon-reexec" => daemon_reexec(&options, &units),
+        "reboot" => machine_transition(&options, &units, MachineTransition::Reboot),
+        "poweroff" => machine_transition(&options, &units, MachineTransition::Poweroff),
         "isolate" => {
             let unit = exactly_one(&units, "target")?;
             simple_request(IpcRequest::Isolate {
@@ -193,21 +218,7 @@ fn simple_request(request: IpcRequest) -> anyhow::Result<i32> {
     Ok(0)
 }
 
-fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
-    if !units.is_empty() {
-        anyhow::bail!("daemon-reexec does not accept unit names");
-    }
-    if options.root.is_some() {
-        anyhow::bail!("daemon-reexec may not be combined with --root");
-    }
-
-    let path = control_socket_path();
-    let stream = UnixStream::connect(&path)
-        .map_err(|error| anyhow::anyhow!("cannot connect to {}: {error}", path.display()))?;
-    let metadata = fs::metadata(&path)
-        .map_err(|error| anyhow::anyhow!("cannot stat {}: {error}", path.display()))?;
-    let old_identity = (metadata.dev(), metadata.ino());
-
+fn manager_peer_pid(stream: &UnixStream, path: &Path) -> anyhow::Result<libc::pid_t> {
     let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
     let mut credential_len: libc::socklen_t = std::mem::size_of::<libc::ucred>()
         .try_into()
@@ -236,17 +247,38 @@ fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
     if credential_len != expected_len || credentials.pid <= 0 {
         anyhow::bail!("manager control socket returned invalid peer credentials");
     }
-    drop(stream);
+    Ok(credentials.pid)
+}
 
-    // SAFETY: `credentials.pid` was supplied by the kernel for the connected
-    // manager peer and SIGUSR2 is RustD's native re-execute request.
-    if unsafe { libc::kill(credentials.pid, libc::SIGUSR2) } < 0 {
+fn signal_manager(pid: libc::pid_t, signal: libc::c_int, operation: &str) -> anyhow::Result<()> {
+    // SAFETY: `pid` came from Linux SO_PEERCRED for the connected RustD control
+    // socket and `signal` is one of RustD's managed lifecycle signals.
+    if unsafe { libc::kill(pid, signal) } < 0 {
         anyhow::bail!(
-            "failed to signal manager pid {} for re-exec: {}",
-            credentials.pid,
+            "failed to signal manager pid {pid} for {operation}: {}",
             std::io::Error::last_os_error()
         );
     }
+    Ok(())
+}
+
+fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
+    if !units.is_empty() {
+        anyhow::bail!("daemon-reexec does not accept unit names");
+    }
+    if options.root.is_some() {
+        anyhow::bail!("daemon-reexec may not be combined with --root");
+    }
+
+    let path = control_socket_path();
+    let stream = UnixStream::connect(&path)
+        .map_err(|error| anyhow::anyhow!("cannot connect to {}: {error}", path.display()))?;
+    let metadata = fs::metadata(&path)
+        .map_err(|error| anyhow::anyhow!("cannot stat {}: {error}", path.display()))?;
+    let old_identity = (metadata.dev(), metadata.ino());
+    let pid = manager_peer_pid(&stream, &path)?;
+    drop(stream);
+    signal_manager(pid, libc::SIGUSR2, "re-exec")?;
 
     let deadline = Instant::now() + REEXEC_TIMEOUT;
     loop {
@@ -265,6 +297,30 @@ fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
         }
         std::thread::sleep(REEXEC_POLL_INTERVAL);
     }
+}
+
+fn machine_transition(
+    options: &Options,
+    units: &[&str],
+    transition: MachineTransition,
+) -> anyhow::Result<i32> {
+    if !units.is_empty() {
+        anyhow::bail!("{} does not accept unit names", transition.name());
+    }
+    if options.root.is_some() {
+        anyhow::bail!("{} may not be combined with --root", transition.name());
+    }
+    if options.scope != Scope::System {
+        anyhow::bail!("{} is a system-manager operation", transition.name());
+    }
+
+    let path = control_socket_path();
+    let stream = UnixStream::connect(&path)
+        .map_err(|error| anyhow::anyhow!("cannot connect to {}: {error}", path.display()))?;
+    let pid = manager_peer_pid(&stream, &path)?;
+    drop(stream);
+    signal_manager(pid, transition.signal(), transition.name())?;
+    Ok(0)
 }
 
 fn exactly_one<'a>(values: &'a [&str], description: &str) -> anyhow::Result<&'a str> {
@@ -756,6 +812,8 @@ fn print_help() {
     println!("  reset-failed [UNIT...]             Clear failed state");
     println!("  daemon-reload                      Reload unit configuration");
     println!("  daemon-reexec                      Re-execute the manager in place");
+    println!("  reboot                             Reboot the machine through RustD PID 1");
+    println!("  poweroff                           Power off the machine through RustD PID 1");
     println!("  cancel [JOB...]                    Cancel jobs");
     println!();
     println!("Options:");
@@ -799,6 +857,13 @@ mod tests {
         assert!(validate_unit_name("demo.service").is_ok());
         assert!(validate_unit_name("../demo.service").is_err());
         assert!(validate_unit_name("/demo.service").is_err());
+    }
+
+    #[test]
+    fn machine_transition_signals_match_pid1_contract() {
+        let minimum = libc::SIGRTMIN();
+        assert_eq!(MachineTransition::Reboot.signal(), minimum + 4);
+        assert_eq!(MachineTransition::Poweroff.signal(), minimum + 2);
     }
 
     #[test]
