@@ -64,7 +64,7 @@ mkdir -p \
 ln -s ../run "$INITROOT/var/run"
 
 cp "$(command -v busybox)" "$INITROOT/bin/busybox"
-for applet in cat kill mkdir mount poweroff sh sleep; do
+for applet in awk cat kill mkdir mount poweroff sh sleep; do
     ln -s busybox "$INITROOT/bin/$applet"
 done
 
@@ -147,6 +147,10 @@ cat >"$INITROOT/usr/lib/rustd/signal-storm-trigger.sh" <<EOF
 #!/bin/sh
 set -eu
 count='$SIGNAL_COUNT'
+main_pid() {
+    /usr/bin/rustctl show rustd-ci-signal-keeper.service 2>/dev/null \
+        | /bin/awk -F= '\$1 == "MainPID" { print \$2; exit }'
+}
 attempt=0
 while [ "\$attempt" -lt 60 ]; do
     if /usr/bin/rustctl --quiet is-active default.target >/dev/null 2>&1 \
@@ -162,7 +166,7 @@ if [ "\$attempt" -ge 60 ]; then
     exit 1
 fi
 
-before="\$(/usr/bin/rustctl show rustd-ci-signal-keeper.service -p MainPID --value 2>/dev/null)"
+before="\$(main_pid)"
 case "\$before" in
     ''|*[!0-9]*|0)
         echo "RUSTD_PID1_SIGNAL_STORM_FAIL: invalid keeper MainPID before storm: \$before" >/dev/ttyS0
@@ -196,7 +200,7 @@ while [ "\$probe" -lt 10 ]; do
         /bin/poweroff -f
         exit 1
     }
-    after="\$(/usr/bin/rustctl show rustd-ci-signal-keeper.service -p MainPID --value 2>/dev/null)"
+    after="\$(main_pid)"
     if [ "\$after" != "\$before" ]; then
         echo "RUSTD_PID1_SIGNAL_STORM_FAIL: keeper MainPID changed from \$before to \$after" >/dev/ttyS0
         /bin/poweroff -f
