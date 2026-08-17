@@ -114,16 +114,7 @@ jobs:
           source = source.replace("[0i8; 128]", "[0 as libc::c_char; 128]", 1)
           if source.count(".cast::<i8>()") != 1:
               raise SystemExit("machinectl C format pointer layout drifted")
-          source = source.replace(".cast::<i8>()", ".cast::<libc::c_char>()", 1)
-          long_local = 'b"%a %Y-%m-%d %H:%M:%S %Z\\0".as_ptr().cast::<libc::c_char>(),'
-          formatted_local = (
-              'b"%a %Y-%m-%d %H:%M:%S %Z\\0"\n'
-              '                .as_ptr()\n'
-              '                .cast::<libc::c_char>(), '
-          ).rstrip()
-          if source.count(long_local) != 1:
-              raise SystemExit("machinectl timestamp format expression drifted")
-          path.write_text(source.replace(long_local, formatted_local, 1))
+          path.write_text(source.replace(".cast::<i8>()", ".cast::<libc::c_char>()", 1))
           PY
 
           cargo fmt --all -- --check
