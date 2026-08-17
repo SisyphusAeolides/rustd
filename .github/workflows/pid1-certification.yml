@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  statuses: write
 
 concurrency:
   group: rustd-pid1-certification-${{ github.ref }}
@@ -66,11 +65,42 @@ jobs:
               bash scripts/ci-pid1-initramfs.sh
           done
 
+      - name: Record cold-boot evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolved_sha="$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)"
+          python3 - "$GITHUB_SHA" "$resolved_sha" > pid1-certification-evidence.jsonl <<'PY'
+          import json
+          import os
+          import sys
+          import time
+
+          rustd_sha, resolved_sha = sys.argv[1:]
+          source = (
+              f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+              f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          )
+          print(json.dumps({
+              "gate": "boot.cold",
+              "status": "pass",
+              "detail": "three independent QEMU initramfs cold boots passed with RustD as PID 1",
+              "ts": int(time.time()),
+              "rustd_sha": rustd_sha,
+              "resolved_sha": resolved_sha,
+              "iterations": 3,
+              "source": source,
+          }, sort_keys=True, separators=(",", ":")))
+          PY
+          chmod 0644 pid1-certification-evidence.jsonl
+
       - name: Upload serial certificate logs
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rustd-pid1-serial-${{ github.sha }}
-          path: pid1-serial-*.log
+          path: |
+            pid1-serial-*.log
+            pid1-certification-evidence.jsonl
           if-no-files-found: error
           retention-days: 14
