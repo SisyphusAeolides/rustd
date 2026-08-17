@@ -33,7 +33,6 @@ SEMANTIC_PLACEHOLDERS = {
     "sd_journal_printv_with_location",
     "sd_device_monitor_start",
     "sd_device_monitor_get_event",
-    "sd_seat_can_multi_session",
 }
 
 
