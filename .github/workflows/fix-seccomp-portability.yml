@@ -115,6 +115,14 @@ jobs:
           if source.count(".cast::<i8>()") != 1:
               raise SystemExit("machinectl C format pointer layout drifted")
           path.write_text(source.replace(".cast::<i8>()", ".cast::<libc::c_char>()", 1))
+
+          path = Path("src/bin/rustd-notify.rs")
+          source = path.read_text()
+          old_notify = "let mut notify_address = [0_i8; 128];"
+          new_notify = "let mut notify_address = [0 as libc::c_char; 128];"
+          if source.count(old_notify) != 1:
+              raise SystemExit("notify C address buffer layout drifted")
+          path.write_text(source.replace(old_notify, new_notify, 1))
           PY
 
           cargo fmt --all -- --check
@@ -132,7 +140,7 @@ jobs:
           cargo test --locked --lib
 
           git rm -- .github/workflows/fix-seccomp-portability.yml
-          expected=$'.github/workflows/fix-seccomp-portability.yml\nffi/seccomp.c\nsrc/bin/rustd-update-utmp.rs\nsrc/bin/rustmachinectl.rs\nsrc/bin/rusttimedatectl.rs'
+          expected=$'.github/workflows/fix-seccomp-portability.yml\nffi/seccomp.c\nsrc/bin/rustd-notify.rs\nsrc/bin/rustd-update-utmp.rs\nsrc/bin/rustmachinectl.rs\nsrc/bin/rusttimedatectl.rs'
           changed="$(git diff HEAD --name-only | sort)"
           if [[ "$changed" != "$expected" ]]; then
             printf 'Unexpected source changes:\n%s\n' "$changed" >&2
@@ -140,6 +148,6 @@ jobs:
           fi
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
-          git add -- ffi/seccomp.c src/bin/rustd-update-utmp.rs src/bin/rustmachinectl.rs src/bin/rusttimedatectl.rs
+          git add -- ffi/seccomp.c src/bin/rustd-notify.rs src/bin/rustd-update-utmp.rs src/bin/rustmachinectl.rs src/bin/rusttimedatectl.rs
           git commit -m 'Make platform ABI checks target aware'
           git push origin HEAD:main
