@@ -90,6 +90,12 @@ impl DynamicUser {
     /// The old process image does not run `Drop`, so its lock file remains
     /// authoritative. Refuse to manufacture a new identity if that exact
     /// lock is missing or has unsafe permissions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `uid` is outside the dynamic-user range, the
+    /// surviving lock cannot be inspected, or the lock is not a regular
+    /// owner-only file for the requested allocation.
     pub fn adopt(service_name: &str, uid: libc::uid_t) -> anyhow::Result<Self> {
         if !(DYNAMIC_UID_MIN..=DYNAMIC_UID_MAX).contains(&uid) {
             anyhow::bail!("dynamic UID {uid} is outside the allocation range");
