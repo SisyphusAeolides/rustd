@@ -1,4 +1,5 @@
 name: Fix staged sd-bus dispatch filter bridge
+# trigger
 
 on:
   push:
@@ -36,10 +37,6 @@ jobs:
           if filter_code not in s:
               if anchor not in s: raise SystemExit('bus open anchor missing')
               s=s.replace(anchor,filter_code+anchor,1)
-          old='''    dbus_connection_set_exit_on_disconnect(connection, FALSE);\n    r = sd_bus_new(&bus);'''
-          new='''    dbus_connection_set_exit_on_disconnect(connection, FALSE);\n    r = sd_bus_new(&bus);'''
-          if old not in s: raise SystemExit('open preimage missing')
-          # install after bus owns connection so filter userdata is valid
           old2='''    bus->connection = connection;\n    bus->started = true;\n    *ret = bus;\n    return 0;'''
           new2='''    bus->connection = connection;\n    if (!dbus_connection_add_filter(connection, rustd_dbus_filter, bus, NULL)) {\n        sd_bus_unref(bus);\n        return -ENOMEM;\n    }\n    bus->started = true;\n    *ret = bus;\n    return 0;'''
           if old2 not in s: raise SystemExit('connection assignment preimage missing')
