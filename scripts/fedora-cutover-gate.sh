@@ -50,7 +50,26 @@ else
     [[ ${ID:-} == fedora ]] && pass "Fedora host detected (${VERSION_ID:-unknown})" || fail "host is not Fedora"
 fi
 
-for cmd in rpm dnf readelf nm rustctl rustd-resolvectl; do require_cmd "$cmd"; done
+for cmd in rpm dnf readelf nm rustctl rustd-resolvectl getenforce semodule; do require_cmd "$cmd"; done
+
+# Fedora production cutover must preserve SELinux enforcement and load the
+# RustD policy extension. A permissive/unloaded policy is never release-green.
+selinux_mode="$(getenforce 2>/dev/null || true)"
+if [[ $selinux_mode == Enforcing ]]; then
+    pass 'SELinux is enforcing'
+else
+    fail "SELinux is not enforcing (mode=${selinux_mode:-unknown})"
+fi
+if rpm -q rustd-selinux >/dev/null 2>&1; then
+    pass 'rustd-selinux RPM installed'
+else
+    fail 'rustd-selinux RPM is not installed'
+fi
+if semodule -l 2>/dev/null | awk '{print $1}' | grep -Fxq rustd_fedora; then
+    pass 'rustd_fedora SELinux module loaded'
+else
+    fail 'rustd_fedora SELinux module is not loaded'
+fi
 
 # Full release means zero installed systemd RPMs, not merely a different PID 1.
 mapfile -t systemd_pkgs < <(rpm -qa --qf '%{NAME}\n' | awk '/^systemd($|-)/' | sort -u)
