@@ -1,4 +1,5 @@
 name: Land Fedora SELinux cutover enforcement
+# trigger
 
 on:
   push:
