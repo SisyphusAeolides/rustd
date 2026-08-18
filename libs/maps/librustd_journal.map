@@ -11,6 +11,9 @@ RUSTD_JOURNAL_1.0 {
     rustd_journal_previous_skip;
     rustd_journal_get_data;
     rustd_journal_get_realtime_usec;
+    rustd_journal_add_match;
+    rustd_journal_add_disjunction;
+    rustd_journal_flush_matches;
   local:
     *;
 };
