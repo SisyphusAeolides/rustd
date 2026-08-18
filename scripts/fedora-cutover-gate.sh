@@ -104,15 +104,31 @@ owner_matches() {
     fi
 }
 
-owner_matches /usr/sbin/init '^rustd($|-)'
+symlink_target_matches() {
+    local path=$1 expected=$2 target
+    if [[ ! -L $path ]]; then
+        fail "$path is not a compatibility symlink"
+        return
+    fi
+    target=$(readlink -f "$path" 2>/dev/null || true)
+    if [[ $target == "$expected" ]]; then
+        pass "$path resolves to $expected"
+    else
+        fail "$path resolves to ${target:-unknown}, expected $expected"
+    fi
+}
+
+owner_matches /usr/sbin/init '^rustd-fedora-compat$'
 owner_matches /usr/lib64/libsystemd.so.0 '^rustd-compat-libs$'
 owner_matches /usr/lib64/libudev.so.1 '^rustd-compat-libs$'
 for path in /usr/bin/systemctl /usr/lib/systemd/systemd-update-helper \
             /usr/bin/systemd-tmpfiles /usr/bin/systemd-sysusers \
             /usr/lib/systemd/systemd-sysctl /usr/lib/systemd/systemd-binfmt \
-            /usr/bin/udevadm; do
+            /usr/lib/systemd/systemd-udevd /usr/bin/udevadm; do
     owner_matches "$path" '^rustd-fedora-compat$'
 done
+symlink_target_matches /usr/sbin/init /usr/lib/rustd/rustd
+symlink_target_matches /usr/lib/systemd/systemd-udevd /usr/lib/rustd/rustd-udevd
 
 # PID 1 must be RustD itself.
 pid1=$(readlink -f /proc/1/exe 2>/dev/null || true)
