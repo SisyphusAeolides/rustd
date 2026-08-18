@@ -1,0 +1,69 @@
+name: Persist Fedora full VM certification result
+
+on:
+  workflow_run:
+    workflows: ["Fedora 44 full VM zero-systemd certification"]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fedora-full-vm-voucher
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Publish exact VM result
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        env:
+          TESTED_SHA: ${{ github.event.workflow_run.head_sha }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          case "$CONCLUSION" in
+            success) status=pass ;;
+            *) status=failure ;;
+          esac
+
+          mkdir -p certification
+          cat > certification/fedora-full-vm-latest.txt <<EOF
+          schema=rustd-fedora-full-vm-v1
+          status=$status
+          conclusion=$CONCLUSION
+          tested_sha=$TESTED_SHA
+          run_id=$RUN_ID
+          fedora_release=44
+          image=Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
+          systemd_rpms=zero-required
+          pid1=/usr/lib/rustd/rustd
+          cold_boots=3
+          selinux=enforcing-required
+          networkmanager=active-required
+          sshd=active-required
+          rustd_resolved=active-required
+          dnf_check=pass-required
+          dns_nss=pass-required
+          initramfs_systemd_code=zero-required
+          EOF
+
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          git add certification/fedora-full-vm-latest.txt
+          git diff --cached --check
+          if git diff --cached --quiet; then
+            exit 0
+          fi
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m "Record Fedora full VM ${status}"
+          git push origin HEAD:main
