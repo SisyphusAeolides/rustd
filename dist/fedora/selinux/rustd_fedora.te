@@ -1,0 +1,20 @@
+policy_module(rustd_fedora, 1.0.0)
+
+# RustD deliberately reuses Fedora's mature confinement domains for equivalent
+# system roles. This module introduces only one new writable data type for the
+# resolver's RFC5011 state; it does not make any RustD process permissive or
+# unconfined.
+gen_require(`
+    type init_var_lib_t;
+    type systemd_resolved_t;
+')
+
+type rustd_resolved_var_lib_t;
+files_type(rustd_resolved_var_lib_t)
+
+# /var/lib/rustd is init-owned; rustd-resolved only needs to traverse that
+# parent and manage its dedicated /var/lib/rustd/resolved subtree.
+search_dirs_pattern(systemd_resolved_t, init_var_lib_t, init_var_lib_t)
+manage_dirs_pattern(systemd_resolved_t, rustd_resolved_var_lib_t, rustd_resolved_var_lib_t)
+manage_files_pattern(systemd_resolved_t, rustd_resolved_var_lib_t, rustd_resolved_var_lib_t)
+manage_lnk_files_pattern(systemd_resolved_t, rustd_resolved_var_lib_t, rustd_resolved_var_lib_t)
