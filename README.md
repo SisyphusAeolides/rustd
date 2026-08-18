@@ -13,10 +13,11 @@ reference architecture and implementation parity is not a release gate.
 
 > **Safety status:** the source/build gates are extensive, but PID 1 production
 > certification still requires repeated installed-system boot, reboot, shutdown,
-> rescue, emergency, re-exec, crash/fault, and recovery campaigns. Until those
-> installed-system gates have passed for a release candidate, keep a known-good
-> recovery path and validate RustD in a snapshot-backed VM or equivalent
-> recoverable environment before making it the only boot path.
+> rescue, emergency, re-exec, crash/fault, recovery, and Fedora zero-systemd
+> cutover campaigns. Until the installed-system gates have passed for a release
+> candidate, keep a known-good recovery path and validate RustD in a
+> snapshot-backed VM or equivalent recoverable environment before making it the
+> only boot path.
 
 ## Native architecture
 
@@ -75,11 +76,13 @@ The repository now uses RustD identity through its compiled and packaged core:
 - Cargo package and library crate names are `rustd`;
 - internal Rust imports use `rustd::...`;
 - private C/Rust FFI helpers use `rustd_*` names;
-- the installer ships native RustD executable names only;
-- the executable contract does not declare compatibility aliases;
+- the installer ships native RustD executable names as the authoritative
+  interfaces;
 - the supported build surface is native RustD targets;
-- legacy compatibility libraries and host-manager shims are not part of the
-  shipped RustD architecture;
+- Fedora compatibility RPM capabilities, selected legacy executable pathnames,
+  and compatibility SONAMEs are isolated external boundaries backed by RustD
+  code; they are not a second implementation and do not permit systemd RPMs or
+  systemd executable code in a certified cutover;
 - native C/Fortran objects and the static ABI archive use RustD names and
   `librustd_native.a`;
 - manager configuration uses `RUSTD_MANAGER_CONFIG`,
@@ -103,15 +106,53 @@ The repository now uses RustD identity through its compiled and packaged core:
 
 Remaining work is release hardening, not an internal crate-name migration. The
 largest unresolved production boundary is repeated sole-PID1 installed-system
-certification under real boot, shutdown, recovery, crash, concurrency, and
-resource-pressure conditions. Networking components also continue to be
-converted toward a fully self-contained RustD stack.
+certification on the exact Fedora cutover image together with final ABI closure
+and the paired RustD-Resolved release certificate.
 
 ## Supported platform
 
-Arch Linux and compatible Arch-based distributions are the initial supported
-release and maintenance targets. The intended production stack does not require
-a host installation of another init system.
+Fedora 44 is the current zero-systemd cutover certification target. The release
+gate uses the official Fedora Cloud base image and must prove that the machine
+continues to boot and operate after the Fedora systemd package stack is removed.
+Arch Linux and compatible Arch-based distributions remain supported build and
+native-install targets, but they do not substitute for the Fedora cutover gate.
+
+## Fedora zero-systemd cutover
+
+The Fedora target is deliberately stronger than an installroot dependency
+solver. A release candidate is not Fedora-certified until
+`certification/fedora-full-vm-latest.txt` records `status=pass` for the exact
+candidate SHA.
+
+The Fedora campaign performs a destructive conversion of a disposable Fedora
+44 VM and requires all of the following:
+
+- build RustD, RustD-Resolved, compatibility libraries, Fedora transaction
+  frontends, and SELinux policy from one pinned source pair;
+- bind the replacement RPM capabilities to the exact Fedora `systemd`,
+  `systemd-libs`, and `systemd-udev` EVR measured in the build environment;
+- migrate authselect-managed PAM and NSS configuration before removing the old
+  PAM package, preserving the selected profile/features and creating a rollback
+  backup;
+- reject unsupported `systemd-homed` and `pam_systemd_loadkey` configurations
+  before the destructive phase rather than silently dropping their semantics;
+- remove every installed RPM whose name is `systemd` or begins `systemd-` and
+  pass `dnf check` afterward;
+- require `/usr/sbin/init` to be owned by `rustd`, compatibility SONAMEs to be
+  owned by `rustd-compat-libs`, and legacy Fedora transaction entry points to be
+  owned by `rustd-fedora-compat`;
+- rebuild the Fedora initramfs without systemd implementation modules or
+  executables, while allowing only explicitly tested compatibility pathnames
+  that resolve to RustD code;
+- cold-boot the converted filesystem three times with RustD as PID 1;
+- keep SELinux enforcing and prove D-Bus, NetworkManager, OpenSSH,
+  RustD-Resolved, NSS/DNS, DNF, udev settling, service control, and RustD
+  poweroff remain functional.
+
+The cutover helper is installed as `/usr/sbin/rustd-fedora-cutover`. It is a
+fail-closed migration tool for the disposable certification machine and for
+administrators who deliberately choose the same conversion path; it is not a
+reason to perform an unverified in-place conversion on an irreplaceable host.
 
 ## Language boundaries
 
@@ -217,13 +258,19 @@ ultimately demonstrate all of the following:
    manager reload;
 6. integrate `rustd-resolved` through native RustD service/runtime paths and
    survive resolver/network restart and reconfiguration;
-7. contain no supported foreign executable aliases, compatibility libraries as
-   primary interfaces, or foreign init-system install roots;
+7. keep native RustD interfaces authoritative while limiting compatibility
+   pathnames, RPM capabilities, and SONAMEs to measured external boundaries
+   implemented by RustD code;
 8. reproduce release artifacts from the locked source tree and pass long-running
    soak/fault-injection tests;
-9. pass `make certify` on the installed candidate while RustD is PID 1.
+9. pass `make certify` on the installed candidate while RustD is PID 1;
+10. pass the Fedora 44 full-VM zero-systemd certificate with zero `systemd*`
+    RPMs, no systemd implementation code in the rebuilt initramfs, SELinux
+    enforcing, and the required networking/login/DNS/package-management stack
+    operational.
 
-Passing source CI alone is deliberately not represented as proof that PID 1 is
+Passing source CI, an RPM dependency solve, or a compatibility symbol count
+alone is deliberately not represented as proof that PID 1 is
 production-certified.
 
 ## Performance contract
