@@ -1,0 +1,106 @@
+name: Complete ABI release certification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'libs/compat/**'
+      - 'libs/maps/**'
+      - 'scripts/check-compat-closure.py'
+      - 'scripts/check-compat-source-readiness.py'
+      - 'scripts/check-release-closure.py'
+      - 'Makefile'
+      - '.github/workflows/release-closure-cert.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rustd-release-closure
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gfortran pkg-config libdbus-1-dev libudev-dev
+      - name: Build and require complete closure
+        id: closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          make clean
+          make check-compat
+          python3 scripts/check-compat-source-readiness.py \
+            --report target/compat-readiness.json --require-complete
+          python3 scripts/check-release-closure.py \
+            --readiness target/compat-readiness.json \
+            --libsystemd build/libs/libsystemd.so.0 \
+            --libudev build/libs/libudev.so.1
+          if grep -RInE '#[[:space:]]*include[[:space:]]*[<"]systemd/' \
+              libs include ffi src 2>/dev/null; then
+            echo 'systemd development header dependency remains' >&2
+            exit 1
+          fi
+          if readelf -d build/libs/libsystemd.so.0 | grep -Fq 'libsystemd.so'; then
+            echo 'libsystemd self/runtime dependency remains' >&2
+            exit 1
+          fi
+          if readelf -d build/libs/libudev.so.1 | grep -Fq 'libsystemd.so'; then
+            echo 'libudev runtime dependency on libsystemd remains' >&2
+            exit 1
+          fi
+      - name: Publish exact-SHA voucher
+        if: always()
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.closure.outcome }}
+        run: |
+          set -euo pipefail
+          status=failure
+          [ "$OUTCOME" = success ] && status=pass
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          python3 - "$status" "$GITHUB_SHA" <<'PY'
+          import json, pathlib, sys
+          status, sha = sys.argv[1:]
+          readiness = {}
+          path = pathlib.Path('target/compat-readiness.json')
+          if path.exists():
+              try:
+                  readiness = json.loads(path.read_text())
+              except Exception:
+                  readiness = {}
+          out = {
+              'schema': 'rustd-release-closure-v1',
+              'status': status,
+              'tested_sha': sha,
+              'required': readiness.get('required'),
+              'supported': readiness.get('supported'),
+              'unsupported': readiness.get('unsupported'),
+              'missing_source_definition': readiness.get('missing_source_definition'),
+              'no_systemd_headers': status == 'pass',
+              'no_libsystemd_dependency': status == 'pass',
+          }
+          pathlib.Path('certification/release-closure-latest.json').write_text(
+              json.dumps(out, indent=2, sort_keys=True) + '\n'
+          )
+          PY
+          git add certification/release-closure-latest.json
+          if ! git diff --cached --quiet; then
+            git config user.name 'Kenny Glowner'
+            git config user.email 'SisyphusAeolides@pm.me'
+            git commit -m "Record complete ABI release certification $status"
+            git push origin HEAD:main
+          fi
+          [ "$status" = pass ]
