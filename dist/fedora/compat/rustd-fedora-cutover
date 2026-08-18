@@ -33,7 +33,7 @@ if [[ $profile == custom/rustd ]]; then
         || fail 'custom/rustd is active but rustd_dns is missing from hosts NSS configuration'
     ! grep -Eq '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
         || fail 'custom/rustd is active but a removed NSS backend is still referenced'
-    ! grep -R -E -q 'pam_systemd(_home)?\.so' /etc/pam.d \
+    ! grep -R -E -q 'pam_systemd(_home|_loadkey)?\.so' /etc/pam.d \
         || fail 'custom/rustd is active but a systemd PAM module is still referenced'
     grep -R -Fq 'pam_rustd.so' /etc/pam.d \
         || fail 'custom/rustd is active but pam_rustd.so is not referenced'
@@ -44,6 +44,13 @@ profile_dir=/etc/authselect/custom/rustd
 [[ ! -e $profile_dir ]] || fail "$profile_dir already exists; refusing to replace an administrator profile"
 authselect create-profile rustd --base-on="$profile"
 [[ -d $profile_dir ]] || fail 'authselect did not create custom/rustd'
+
+# pam_systemd_loadkey has credential-loading semantics that pam_rustd does not
+# claim to emulate. Abort before activating the custom profile or erasing the
+# old PAM package instead of silently dropping an authentication step.
+if grep -R -E -q 'pam_systemd_loadkey\.so' "$profile_dir"; then
+    fail 'active authselect profile uses pam_systemd_loadkey.so; no RustD replacement is certified'
+fi
 
 python3 - "$profile_dir" <<'PY'
 from pathlib import Path
@@ -101,7 +108,9 @@ if not hosts_changed:
 nss.write_text("".join(out))
 PY
 
-# Validate the generated configuration before authselect changes /etc.
+# Validate every generated PAM template before authselect changes /etc.
+! grep -R -E -q 'pam_systemd(_home|_loadkey)?\.so' "$profile_dir" \
+    || fail 'generated authselect profile still references a systemd PAM module'
 test_args=("${features[@]}")
 authselect test custom/rustd --nsswitch "${test_args[@]}" > /tmp/rustd-authselect-nss.$$
 authselect test custom/rustd --system-auth "${test_args[@]}" > /tmp/rustd-authselect-pam.$$
@@ -113,7 +122,7 @@ grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /tmp/rustd-authselect-ns
     || fail 'generated nsswitch.conf still references a removed NSS backend'
 grep -Fq 'pam_rustd.so' /tmp/rustd-authselect-pam.$$ \
     || fail 'generated system-auth does not contain pam_rustd.so'
-! grep -E -q 'pam_systemd(_home)?\.so' /tmp/rustd-authselect-pam.$$ \
+! grep -E -q 'pam_systemd(_home|_loadkey)?\.so' /tmp/rustd-authselect-pam.$$ \
     || fail 'generated system-auth still references a systemd PAM module'
 
 backup="rustd-cutover-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -126,7 +135,7 @@ grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
     || fail 'active NSS configuration still references a removed backend'
 grep -R -Fq 'pam_rustd.so' /etc/pam.d \
     || fail 'active PAM configuration does not contain pam_rustd.so'
-! grep -R -E -q 'pam_systemd(_home)?\.so' /etc/pam.d \
+! grep -R -E -q 'pam_systemd(_home|_loadkey)?\.so' /etc/pam.d \
     || fail 'active PAM configuration still references a systemd PAM module'
 
 printf 'RustD authselect cutover complete; rollback backup: %s\n' "$backup"
