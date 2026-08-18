@@ -1,0 +1,30 @@
+name: Native interface contract
+
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -euo pipefail {0}'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ffi/interface.c
+      - ffi/test_interface.c
+      - .github/workflows/interface-native.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Compile and run interface contract
+        run: |
+          cc -std=c17 -O2 -Wall -Wextra -Werror -fstack-protector-strong \
+            -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 \
+            ffi/test_interface.c ffi/interface.c -o /tmp/test-interface
+          /tmp/test-interface
