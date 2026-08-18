@@ -22,6 +22,7 @@ jobs:
         shell: bash
         run: |
           set -u
+          # Second commit intentionally triggers this already-installed workflow.
           expected=01cac46bc41f2c9d9e025ace5dab1281d6b1954d
           observed="$(git hash-object src/manager.rs)"
           status=failure
