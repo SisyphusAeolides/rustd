@@ -1,4 +1,5 @@
 name: Diagnose Fedora Login1 session support
+# trigger
 
 on:
   push:
