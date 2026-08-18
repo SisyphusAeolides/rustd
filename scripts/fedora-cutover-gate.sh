@@ -119,6 +119,9 @@ symlink_target_matches() {
 }
 
 owner_matches /usr/sbin/init '^rustd-fedora-compat$'
+owner_matches /usr/sbin/rustd-fedora-cutover '^rustd-cutover-tools$'
+owner_matches /usr/lib64/security/pam_rustd.so '^rustd-cutover-tools$'
+owner_matches /usr/lib64/libnss_rustd_dns.so.2 '^rustd-resolved-nss$'
 owner_matches /usr/lib64/libsystemd.so.0 '^rustd-compat-libs$'
 owner_matches /usr/lib64/libudev.so.1 '^rustd-compat-libs$'
 for path in /usr/bin/systemctl /usr/lib/systemd/systemd-update-helper \
