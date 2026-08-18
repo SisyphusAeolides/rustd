@@ -1,4 +1,5 @@
 name: Land Fedora systemctl post-verb options
+# trigger
 
 on:
   push:
