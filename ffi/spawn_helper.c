@@ -5,13 +5,7 @@
  *
  * This code runs in a fresh image that posix_spawn() created for the manager,
  * so it is a brand new single-threaded process rather than a copy of PID 1.
- * That is the whole point of the design: the setup below allocates, calls
- * setenv(3), mounts, and talks to libseccomp, none of which would be legal
- * between fork() and execve() in a threaded manager.
- *
- * The helper is the final service process — it execs in place, so the PID the
- * manager received from posix_spawn() is the service PID and stays a direct
- * child of the manager.
+ * The helper is the final service process and execs in place.
  *
  * Upstream reference: src/core/execute.c exec_child() (v261)
  */
@@ -54,6 +48,7 @@ typedef struct {
     const char *selinux_context;
     const char *apparmor_profile;
     const char *notify_socket;
+    const char **read_write_paths;
     rustd_spawn_rlimit *rlimits;
     rustd_seccomp_rule *seccomp_rules;
     rustd_spawn_sandbox sandbox;
@@ -61,12 +56,6 @@ typedef struct {
 
 static int error_descriptor = -1;
 
-/*
- * A Type=simple service is not waited for, so the errno the manager would read
- * from the error socket is discarded and the unit only reports the exit
- * status. Early boot has no journal either, so the kernel log is the one place
- * that always records why a service could not be started.
- */
 static void helper_log_kmsg(int error_number, const char *step, int step_line) {
     int fd = open("/dev/kmsg", O_WRONLY | O_CLOEXEC | O_NOCTTY);
     if (fd < 0)
@@ -107,8 +96,6 @@ static _Noreturn void helper_fail_at(
     _exit(exit_status);
 }
 
-/* ── request transport ───────────────────────────────────────────────────── */
-
 static int read_request_blob(int fd, unsigned char **ret_blob, size_t *ret_size) {
     struct stat status;
     if (fstat(fd, &status) < 0)
@@ -120,7 +107,6 @@ static int read_request_blob(int fd, unsigned char **ret_blob, size_t *ret_size)
     if ((size_t)status.st_size > RUSTD_SPAWN_MAX_REQUEST_BYTES)
         return -E2BIG;
 
-    /* Only the manager publishes sealed requests; anything else is rejected. */
     int seals = fcntl(fd, F_GET_SEALS);
     if (seals < 0)
         return -EPROTO;
@@ -176,7 +162,11 @@ static int decode_header(const rustd_spawn_wire_header *header, size_t size) {
         return -EPROTO;
     if (header->n_seccomp_rules > RUSTD_SPAWN_MAX_SECCOMP_RULES)
         return -EPROTO;
+    if (header->n_read_write_paths > RUSTD_SPAWN_MAX_READ_WRITE_PATHS)
+        return -EPROTO;
     if (header->n_env > 0 && !(header->flags & RUSTD_SPAWN_FLAG_HAS_ENVIRONMENT))
+        return -EPROTO;
+    if (header->n_read_write_paths > 0 && !(header->flags & RUSTD_SPAWN_FLAG_HAS_SANDBOX))
         return -EPROTO;
     return 0;
 }
@@ -200,9 +190,17 @@ static int decode_vector(
     return 0;
 }
 
+static int valid_read_write_path(const char *value) {
+    if (!value || value[0] == '\0')
+        return 0;
+    const char *path = value[0] == '-' ? value + 1 : value;
+    return path[0] == '/' && path[1] != '\0';
+}
+
 static void request_release(rustd_spawn_request *request) {
     free(request->argv);
     free(request->envp);
+    free(request->read_write_paths);
     free(request->rlimits);
     free(request->seccomp_rules);
     free(request->blob);
@@ -271,9 +269,20 @@ static int decode_request(int fd, rustd_spawn_request *request) {
             goto fail;
     }
 
+    if (request->header.n_read_write_paths > 0) {
+        r = decode_vector(&reader, request->header.n_read_write_paths, &request->read_write_paths);
+        if (r < 0)
+            goto fail;
+        for (uint32_t i = 0; i < request->header.n_read_write_paths; i++) {
+            if (!valid_read_write_path(request->read_write_paths[i])) {
+                r = -EPROTO;
+                goto fail;
+            }
+        }
+    }
+
     if (request->header.n_rlimits > 0) {
-        request->rlimits =
-                calloc(request->header.n_rlimits, sizeof(*request->rlimits));
+        request->rlimits = calloc(request->header.n_rlimits, sizeof(*request->rlimits));
         if (!request->rlimits) {
             r = -ENOMEM;
             goto fail;
@@ -295,8 +304,7 @@ static int decode_request(int fd, rustd_spawn_request *request) {
     }
 
     if (request->header.n_seccomp_rules > 0) {
-        request->seccomp_rules =
-                calloc(request->header.n_seccomp_rules, sizeof(*request->seccomp_rules));
+        request->seccomp_rules = calloc(request->header.n_seccomp_rules, sizeof(*request->seccomp_rules));
         if (!request->seccomp_rules) {
             r = -ENOMEM;
             goto fail;
@@ -341,6 +349,8 @@ static int decode_request(int fd, rustd_spawn_request *request) {
     request->sandbox.syscall_filter_default_action = header->seccomp_default_action;
     request->sandbox.syscall_filter_enabled = (int)header->syscall_filter_enabled;
     request->sandbox.restrict_native_syscalls = (int)header->restrict_native_syscalls;
+    request->sandbox.read_write_paths = request->read_write_paths;
+    request->sandbox.n_read_write_paths = header->n_read_write_paths;
     return 0;
 
 fail:
@@ -348,13 +358,6 @@ fail:
     return r;
 }
 
-/* ── descriptor hygiene ──────────────────────────────────────────────────── */
-
-/*
- * Close everything at or above `first`.  The manager may hold descriptors
- * without FD_CLOEXEC, and this image inherited them, so the sweep is what
- * keeps them out of the service.
- */
 static void close_descriptors_from(unsigned int first) {
 #ifdef SYS_close_range
     if (syscall(SYS_close_range, (unsigned int)first, ~0U, 0U) == 0)
@@ -371,10 +374,6 @@ static void close_descriptors_from(unsigned int first) {
         close((int)fd);
 }
 
-/*
- * Move a control descriptor above the range the listener descriptors will
- * occupy.  F_DUPFD_CLOEXEC keeps it from crossing the final exec.
- */
 static int lift_control_descriptor(int fd, int minimum, int *ret_fd) {
     int moved = fcntl(fd, F_DUPFD_CLOEXEC, minimum);
     if (moved < 0)
@@ -391,7 +390,6 @@ static int publish_listen_descriptors(uint32_t n_listen) {
         if (dup2(source, target) < 0)
             return -errno;
     }
-    /* Drop the staging copies that no listener descriptor took over. */
     for (int fd = RUSTD_LISTEN_FDS_START + (int)n_listen;
          fd < RUSTD_SPAWN_LISTEN_FD_BASE + (int)n_listen;
          fd++)
@@ -413,8 +411,6 @@ static int publish_listen_descriptors(uint32_t n_listen) {
         return -errno;
     return 0;
 }
-
-/* ── security context ────────────────────────────────────────────────────── */
 
 static int security_module_present(const char *const *paths) {
     for (size_t i = 0; paths[i]; i++) {
@@ -475,20 +471,15 @@ static int apply_selinux_exec_context(const char *context) {
         return 0;
 
     static const char *const enabled_paths[] = {
-        "/sys/fs/selinux/enforce",
-        "/sys/fs/selinux",
-        NULL,
+        "/sys/fs/selinux/enforce", "/sys/fs/selinux", NULL,
     };
     int enabled = security_module_present(enabled_paths);
     if (enabled <= 0)
         return enabled;
 
     static const char *const attr_paths[] = {
-        "/proc/thread-self/attr/selinux/exec",
-        "/proc/self/attr/selinux/exec",
-        "/proc/thread-self/attr/exec",
-        "/proc/self/attr/exec",
-        NULL,
+        "/proc/thread-self/attr/selinux/exec", "/proc/self/attr/selinux/exec",
+        "/proc/thread-self/attr/exec", "/proc/self/attr/exec", NULL,
     };
     return write_process_attribute(attr_paths, context, strlen(context) + 1);
 }
@@ -529,11 +520,8 @@ static int apply_apparmor_exec_profile(const char *profile) {
     memcpy(payload + sizeof("exec ") - 1, profile, profile_len);
 
     static const char *const attr_paths[] = {
-        "/proc/thread-self/attr/apparmor/exec",
-        "/proc/self/attr/apparmor/exec",
-        "/proc/thread-self/attr/exec",
-        "/proc/self/attr/exec",
-        NULL,
+        "/proc/thread-self/attr/apparmor/exec", "/proc/self/attr/apparmor/exec",
+        "/proc/thread-self/attr/exec", "/proc/self/attr/exec", NULL,
     };
     int r = write_process_attribute(attr_paths, payload, payload_len);
     free(payload);
@@ -551,8 +539,6 @@ static int apply_exec_mac_contexts(const rustd_spawn_request *request) {
     return 0;
 }
 
-/* ── process attributes ──────────────────────────────────────────────────── */
-
 static int attach_self_to_cgroup(const char *path) {
     if (!path || path[0] == '\0')
         return 0;
@@ -564,11 +550,9 @@ static int attach_self_to_cgroup(const char *path) {
         if (kmsg >= 0) {
             char line[512];
             int length = snprintf(
-                    line,
-                    sizeof(line),
+                    line, sizeof(line),
                     "<3>rustd-spawn-helper: attach_self_to_cgroup open('%s') failed: %s\n",
-                    path,
-                    strerror(error));
+                    path, strerror(error));
             if (length > 0) {
                 ssize_t written;
                 do {
@@ -697,8 +681,6 @@ static void wait_for_idle_gate(int fd) {
     close(fd);
 }
 
-/* ── setup sequence ──────────────────────────────────────────────────────── */
-
 static void apply_sandbox_mounts(const rustd_spawn_request *request) {
     if (!(request->header.flags & RUSTD_SPAWN_FLAG_HAS_SANDBOX))
         return;
@@ -712,6 +694,14 @@ static void apply_sandbox_mounts(const rustd_spawn_request *request) {
         if (r < 0)
             helper_fail(-r, 125);
     }
+
+    if (sandbox->n_read_write_paths > 0) {
+        int r = rustd_sandbox_make_writable_paths(
+                sandbox->read_write_paths, sandbox->n_read_write_paths);
+        if (r < 0)
+            helper_fail(-r, 125);
+    }
+
     if (sandbox->protect_kernel_tunables || sandbox->protect_kernel_modules
         || sandbox->protect_kernel_logs || sandbox->protect_clock
         || sandbox->protect_control_groups || sandbox->restrict_suid_sgid) {
@@ -724,10 +714,6 @@ static void apply_sandbox_mounts(const rustd_spawn_request *request) {
     }
 }
 
-/*
- * Seccomp-backed restrictions.  Kept separate from the mount work because the
- * MAC transition runs between the two, exactly as it did in the forked child.
- */
 static void apply_sandbox_filters(const rustd_spawn_request *request, int *forced_no_new_privs) {
     if (!(request->header.flags & RUSTD_SPAWN_FLAG_HAS_SANDBOX))
         return;
@@ -849,17 +835,12 @@ static void apply_service_environment(const rustd_spawn_request *request) {
 
     if (request->notify_socket && setenv("RUSTD_NOTIFY_SOCKET", request->notify_socket, 1) < 0)
         helper_fail(errno, 125);
-    /* Dual-set classic NOTIFY_SOCKET for third-party libsystemd clients via rustd-compat. */
     if (request->notify_socket && setenv("NOTIFY_SOCKET", request->notify_socket, 1) < 0)
         helper_fail(errno, 125);
 
     if (header->watchdog_usec > 0) {
         char value[32];
-        snprintf(
-                value,
-                sizeof(value),
-                "%llu",
-                (unsigned long long)header->watchdog_usec);
+        snprintf(value, sizeof(value), "%llu", (unsigned long long)header->watchdog_usec);
         if (setenv("RUSTD_WATCHDOG_USEC", value, 1) < 0)
             helper_fail(errno, 125);
         snprintf(value, sizeof(value), "%d", (int)getpid());
@@ -882,10 +863,6 @@ _Noreturn void rustd_spawn_helper_main(void) {
     if (!(request.header.flags & RUSTD_SPAWN_FLAG_HAS_IDLE_GATE))
         close(RUSTD_SPAWN_IDLE_FD);
 
-    /*
-     * Slots 3..5 are now accounted for, so everything above the listener
-     * staging area is a manager descriptor this image must not keep.
-     */
     close_descriptors_from((unsigned int)(RUSTD_SPAWN_LISTEN_FD_BASE + n_listen));
 
     r = lift_control_descriptor(
