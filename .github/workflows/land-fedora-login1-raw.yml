@@ -1,5 +1,5 @@
 name: Land Fedora Login1 source from raw certified payload
-# trigger
+# document runtime helper errors before strict clippy
 
 on:
   push:
@@ -49,6 +49,10 @@ jobs:
           cut='git fetch origin main'
           if cut in script:
               script=script[:script.index(cut)]
+          old='''/// Securely create and own the XDG runtime directory for a login session.\npub fn prepare_user_runtime(uid: u32, gid: u32) -> io::Result<PathBuf> {'''
+          new='''/// Securely create and own the XDG runtime directory for a login session.\n///\n/// # Errors\n/// Returns an error when the runtime root cannot be created, the target path\n/// is unsafe, permissions cannot be set, or ownership cannot be established.\npub fn prepare_user_runtime(uid: u32, gid: u32) -> io::Result<PathBuf> {'''
+          if old in script:
+              script=script.replace(old,new,1)
           required=('pub fn prepare_user_runtime','async fn create_session',
                     'cargo check --locked --bin rustd-logind',
                     'cargo clippy --locked --bin rustd-logind',
@@ -89,9 +93,9 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-login1-landing-v1\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-fedora-login1-landing-v2\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 420 /tmp/fedora-login1-landing.log || true
+            tail -n 480 /tmp/fedora-login1-landing.log || true
           } > certification/fedora-login1-diagnostic.txt
           git add certification/fedora-login1-diagnostic.txt
           git config user.name 'Kenny Glowner'
