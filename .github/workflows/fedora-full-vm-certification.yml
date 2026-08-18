@@ -8,6 +8,8 @@ on:
       - scripts/rustd-resolved-revision.txt
       - scripts/build-fedora-rpms.sh
       - scripts/fedora-cutover-gate.sh
+      - scripts/fedora-vm-guest-cutover.sh
+      - src/bin/rustd-udevd.rs
       - dist/fedora/**
       - .github/workflows/fedora-full-vm-certification.yml
   workflow_dispatch:
@@ -51,6 +53,7 @@ jobs:
           git -C rustd-resolved fetch origin "$pinned"
           git -C rustd-resolved checkout --detach "$pinned"
           test "$(git -C rustd-resolved rev-parse HEAD)" = "$pinned"
+          printf '/rustd-resolved/\n' >> .git/info/exclude
 
       - name: Install VM host tools
         shell: bash
@@ -77,10 +80,22 @@ jobs:
                 selinux-policy selinux-policy-devel policycoreutils-devel bzip2 \
                 gcc gcc-gfortran python3 cargo rust pkgconf-pkg-config \
                 dbus-devel pam-devel json-c-devel openssl-devel liburing-devel \
-                tar gzip systemd-libs
+                tar gzip systemd systemd-libs systemd-udev
               git config --global --add safe.directory /work
               git config --global --add safe.directory /work/rustd-resolved
               RUSTD_RESOLVED_SOURCE_ROOT=/work/rustd-resolved scripts/build-fedora-rpms.sh
+              manager_evr="$(sed -n "s/^systemd_reference_evr=//p" target/fedora-rpms/manifest.txt)"
+              libs_evr="$(sed -n "s/^systemd_libraries_reference_evr=//p" target/fedora-rpms/manifest.txt)"
+              udev_evr="$(sed -n "s/^systemd_udev_reference_evr=//p" target/fedora-rpms/manifest.txt)"
+              test -n "$manager_evr"
+              test "$manager_evr" = "$libs_evr"
+              test "$manager_evr" = "$udev_evr"
+              compat="$(find target/fedora-rpms -maxdepth 1 -type f -name "rustd-fedora-compat-*.rpm" ! -name "*.src.rpm" | head -n1)"
+              libs="$(find target/fedora-rpms -maxdepth 1 -type f -name "rustd-compat-libs-*.rpm" ! -name "*.src.rpm" | head -n1)"
+              test -n "$compat" -a -n "$libs"
+              rpm -qp --provides "$compat" | grep -Fxq "systemd = $manager_evr"
+              rpm -qp --provides "$compat" | grep -Fxq "systemd-udev = $udev_evr"
+              rpm -qp --provides "$libs" | grep -Fxq "systemd-libs = $libs_evr"
             '
           test -s target/fedora-rpms/manifest.txt
           grep -Fxq "rustd_sha=$(git rev-parse HEAD)" target/fedora-rpms/manifest.txt
@@ -102,7 +117,7 @@ jobs:
             echo 'closed=true' >> "$GITHUB_OUTPUT"
           else
             echo 'closed=false' >> "$GITHUB_OUTPUT"
-            echo 'ABI closure is not yet release-green; VM testing will still run to expose independent Fedora blockers.'
+            echo 'ABI closure is not yet release-green.'
           fi
 
       - name: Download and verify Fedora Cloud image
@@ -146,7 +161,7 @@ jobs:
           EOF
           cloud-localds "$RUNNER_TEMP/seed.img" "$RUNNER_TEMP/user-data" "$RUNNER_TEMP/meta-data"
 
-      - name: Stage cutover in a real Fedora guest
+      - name: Stage destructive cutover in a real Fedora guest
         shell: bash
         run: |
           set -euo pipefail
@@ -173,7 +188,6 @@ jobs:
             -serial "file:$serial" \
             -monitor "unix:$monitor,server,nowait" &
           qemu_pid=$!
-          printf '%s\n' "$qemu_pid" > "$RUNNER_TEMP/qemu-precutover.pid"
 
           ssh_cmd=(ssh -i "$RUNNER_TEMP/rustd-ci-key" -p "$SSH_PORT" \
             -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
@@ -193,29 +207,25 @@ jobs:
           done
           [[ $ready == 1 ]] || { tail -n 240 "$serial" >&2 || true; exit 1; }
 
-          "${ssh_cmd[@]}" 'set -e; cat /etc/fedora-release; test "$(cat /proc/1/comm)" = systemd; getenforce; dnf --version | head -n1; df -h /'
+          "${ssh_cmd[@]}" 'set -e; cat /etc/fedora-release; test "$(cat /proc/1/comm)" = systemd; test "$(getenforce)" = Enforcing; dnf --version | head -n1; df -h /'
           "${ssh_cmd[@]}" 'sudo mkdir -p /var/tmp/rustd-rpms && sudo chown rustdci:rustdci /var/tmp/rustd-rpms'
           tar -C target/fedora-rpms -cf - . | "${ssh_cmd[@]}" 'tar -C /var/tmp/rustd-rpms -xf -'
-          "${ssh_cmd[@]}" 'sudo dnf -y install createrepo_c dracut && sudo createrepo_c /var/tmp/rustd-rpms'
-
-          "${ssh_cmd[@]}" 'rpm -qa --qf "%{NAME}\n" | sort > /var/tmp/packages-before.txt; rpm -q --whatrequires systemd 2>/dev/null | sort -u > /var/tmp/systemd-consumers-before.txt || true'
-          "${ssh_cmd[@]}" 'set -euo pipefail; sudo dnf -y --repofrompath=rustd,file:///var/tmp/rustd-rpms --setopt=rustd.gpgcheck=0 install rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux --allowerasing'
-          "${ssh_cmd[@]}" 'set -euo pipefail; sudo dnf -q check; if rpm -qa --qf "%{NAME}\n" | grep -Eq "^systemd($|-)"; then rpm -qa --qf "%{NAME}-%{EVR}.%{ARCH}\n" | grep "^systemd" >&2; exit 1; fi'
-          "${ssh_cmd[@]}" 'set -euo pipefail; rpm -q rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux kernel-core NetworkManager openssh-server dbus-daemon selinux-policy-targeted; test "$(rpm -qf --qf "%{NAME}\n" /usr/sbin/init)" = rustd; test "$(rpm -qf --qf "%{NAME}\n" /usr/lib64/libsystemd.so.0)" = rustd-compat-libs; test "$(rpm -qf --qf "%{NAME}\n" /usr/lib64/libudev.so.1)" = rustd-compat-libs'
-
-          # The converted machine is not certifiable if its boot image still
-          # contains executable code from the removed implementation.
-          "${ssh_cmd[@]}" 'set -euo pipefail; kernel=$(ls -1 /usr/lib/modules | sort -V | tail -1); sudo dracut --force "/boot/initramfs-${kernel}.img" "$kernel"; sudo lsinitrd "/boot/initramfs-${kernel}.img" > /var/tmp/rustd-lsinitrd.txt; if grep -E "usr/lib/systemd/(systemd|systemd-udevd|systemd-journald|systemd-resolved)([[:space:]]|$)" /var/tmp/rustd-lsinitrd.txt; then echo "removed implementation remains in initramfs" >&2; exit 1; fi'
-
+          cat scripts/fedora-vm-guest-cutover.sh | "${ssh_cmd[@]}" 'sudo bash -s'
+          "${ssh_cmd[@]}" 'cat /var/tmp/rustd-initrd-modules.txt' > "$RUNNER_TEMP/rustd-initrd-modules.txt"
+          "${ssh_cmd[@]}" 'grep -E "systemd-udevd|usr/lib/rustd/rustd-udevd" /var/tmp/rustd-lsinitrd.txt || true' > "$RUNNER_TEMP/rustd-initrd-udev.txt"
           "${ssh_cmd[@]}" 'sudo sync'
-          printf 'system_powerdown\n' | socat - "UNIX-CONNECT:$monitor"
-          for _ in $(seq 1 120); do
+
+          # The old PID 1 is still resident from the pre-cutover boot, but its
+          # package tree has intentionally been erased. Terminate QEMU only
+          # after sync so the next launch is a genuine cold boot of the new
+          # RustD-only filesystem rather than relying on removed shutdown code.
+          printf 'quit\n' | socat - "UNIX-CONNECT:$monitor"
+          for _ in $(seq 1 30); do
             kill -0 "$qemu_pid" 2>/dev/null || break
             sleep 1
           done
           if kill -0 "$qemu_pid" 2>/dev/null; then
-            echo 'Fedora guest did not shut down after ACPI power event' >&2
-            tail -n 240 "$serial" >&2 || true
+            echo 'QEMU did not stop after monitor quit' >&2
             kill "$qemu_pid" || true
             exit 1
           fi
@@ -269,10 +279,10 @@ jobs:
             done
             [[ $ready == 1 ]] || { tail -n 300 "$serial" >&2 || true; kill "$qemu_pid" || true; exit 1; }
 
-            "${ssh_cmd[@]}" 'set -euo pipefail; test "$(readlink -f /proc/1/exe)" = /usr/lib/rustd/rustd; test "$(getenforce)" = Enforcing; sudo dnf -q check; if rpm -qa --qf "%{NAME}\n" | grep -Eq "^systemd($|-)"; then exit 1; fi; rustctl --quiet is-active dbus.service; rustctl --quiet is-active NetworkManager.service; rustctl --quiet is-active sshd.service; rustctl --quiet is-active rustd-resolved.service; getent hosts localhost >/dev/null; getent ahosts fedoraproject.org >/dev/null; rustd-resolvectl status >/dev/null; sudo dnf -q makecache'
+            "${ssh_cmd[@]}" 'set -euo pipefail; test "$(readlink -f /proc/1/exe)" = /usr/lib/rustd/rustd; test "$(getenforce)" = Enforcing; sudo dnf -q check; authselect check >/dev/null; if rpm -qa --qf "%{NAME}\n" | grep -Eq "^systemd($|-)"; then exit 1; fi; ! grep -Eq "^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)" /etc/nsswitch.conf; ! grep -R -E -q "pam_systemd(_home|_loadkey)?\\.so" /etc/pam.d; rustctl --quiet is-active dbus.service; rustctl --quiet is-active NetworkManager.service; rustctl --quiet is-active sshd.service; rustctl --quiet is-active rustd-resolved.service; getent hosts localhost >/dev/null; getent ahosts fedoraproject.org >/dev/null; rustd-resolvectl status >/dev/null; sudo dnf -q makecache'
 
             if [[ $attempt -eq 1 ]]; then
-              "${ssh_cmd[@]}" 'set -euo pipefail; test "$(rpm -qf --qf "%{NAME}\n" /usr/bin/systemctl)" = rustd-fedora-compat; systemctl is-active sshd.service >/dev/null; udevadm settle --timeout=30; rustctl list-units >/dev/null'
+              "${ssh_cmd[@]}" 'set -euo pipefail; test "$(rpm -qf --qf "%{NAME}\n" /usr/bin/systemctl)" = rustd-fedora-compat; test "$(readlink -f /usr/lib/systemd/systemd-udevd)" = /usr/lib/rustd/rustd-udevd; systemctl is-active sshd.service >/dev/null; udevadm settle --timeout=30; rustctl list-units >/dev/null; ! ps -eo exe= | grep -E "^/usr/lib/systemd/(systemd|systemd-journald|systemd-resolved)$"'
             fi
 
             "${ssh_cmd[@]}" 'sudo rustctl poweroff'
@@ -304,6 +314,8 @@ jobs:
           path: |
             ${{ runner.temp }}/fedora-precutover-serial.log
             ${{ runner.temp }}/fedora-rustd-boot-*.log
+            ${{ runner.temp }}/rustd-initrd-modules.txt
+            ${{ runner.temp }}/rustd-initrd-udev.txt
             target/fedora-rpms/manifest.txt
           if-no-files-found: warn
           retention-days: 14
