@@ -1,4 +1,5 @@
 name: Clean obsolete native FFI surface
+# retrigger after installation
 
 defaults:
   run:
