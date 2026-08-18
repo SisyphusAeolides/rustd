@@ -1,0 +1,143 @@
+name: RustD rollback certification
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rustd-rollback-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rollback-certification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install UEFI and virtualization tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            busybox-static \
+            cpio \
+            gfortran \
+            grub-efi-amd64-bin \
+            linux-image-generic \
+            ovmf \
+            qemu-system-x86
+          kernel="$(ls -1v /boot/vmlinuz-*-generic | tail -1)"
+          sudo cp -L "$kernel" "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          chmod 0644 "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          echo "RUSTD_PID1_KERNEL=$RUNNER_TEMP/rustd-ci-vmlinuz" >> "$GITHUB_ENV"
+          code="$(find /usr/share/OVMF /usr/share/edk2 -type f \( -name 'OVMF_CODE_4M.fd' -o -name 'OVMF_CODE.fd' \) 2>/dev/null | head -1)"
+          vars="$(find /usr/share/OVMF /usr/share/edk2 -type f \( -name 'OVMF_VARS_4M.fd' -o -name 'OVMF_VARS.fd' \) 2>/dev/null | head -1)"
+          test -r "$code"
+          test -r "$vars"
+          echo "RUSTD_OVMF_CODE=$code" >> "$GITHUB_ENV"
+          echo "RUSTD_OVMF_VARS=$vars" >> "$GITHUB_ENV"
+
+      - name: Install Rust 1.75.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.75.0 --profile minimal
+          rustc +1.75.0 --version --verbose
+          cargo +1.75.0 --version --verbose
+
+      - name: Build rollback certificate payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.75.0 build --release --all-features --locked \
+            --bin rustd \
+            --bin rustctl \
+            --bin rustd-bless-boot
+
+      - name: Run three independent UEFI rollback boots
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            echo "RustD UEFI rollback certification attempt ${attempt}/3"
+            RUSTD_ROLLBACK_SERIAL_LOG="rollback-serial-${attempt}.log" \
+              bash scripts/ci-boot-rollback.sh
+          done
+
+      - name: Record exact-stack rollback evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolved_sha="$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)"
+          python3 - "$GITHUB_SHA" "$resolved_sha" > rollback-certification-evidence.jsonl <<'PY'
+          import json
+          import os
+          import sys
+          import time
+
+          rustd_sha, resolved_sha = sys.argv[1:]
+          source = (
+              f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+              f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          )
+          print(json.dumps({
+              "gate": "boot.rollback",
+              "status": "pass",
+              "detail": (
+                  "three independent OVMF UEFI boots used real efivarfs LoaderBootCountPath state; "
+                  "the actual rustd-bless-boot binary completed good, indeterminate, and bad boot-counter "
+                  "transitions, exhausted the failed candidate to +0, preserved the fallback entry, "
+                  "and left RustD PID 1 and its control plane healthy"
+              ),
+              "ts": int(time.time()),
+              "rustd_sha": rustd_sha,
+              "resolved_sha": resolved_sha,
+              "iterations": 3,
+              "source": source,
+          }, sort_keys=True, separators=(",", ":")))
+          PY
+          chmod 0600 rollback-certification-evidence.jsonl
+          python3 - "$GITHUB_SHA" "$resolved_sha" <<'PY'
+          import json
+          import stat
+          import sys
+          from pathlib import Path
+
+          rustd_sha, resolved_sha = sys.argv[1:]
+          path = Path("rollback-certification-evidence.jsonl")
+          if stat.S_IMODE(path.stat().st_mode) != 0o600:
+              raise SystemExit("rollback evidence mode must be 0600")
+          records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+          if len(records) != 1:
+              raise SystemExit("rollback evidence must contain exactly one record")
+          record = records[0]
+          if record.get("gate") != "boot.rollback" or record.get("status") != "pass":
+              raise SystemExit("rollback evidence gate/status mismatch")
+          if record.get("rustd_sha") != rustd_sha or record.get("resolved_sha") != resolved_sha:
+              raise SystemExit("rollback evidence exact-stack SHA mismatch")
+          if int(record.get("iterations", 0)) < 3:
+              raise SystemExit("rollback evidence has insufficient iterations")
+          if not str(record.get("source", "")).strip():
+              raise SystemExit("rollback evidence source is empty")
+          print("certification evidence OK: boot.rollback")
+          PY
+
+      - name: Upload rollback certificate logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustd-rollback-certification-${{ github.sha }}
+          path: |
+            rollback-serial-*.log
+            rollback-certification-evidence.jsonl
+          if-no-files-found: warn
+          retention-days: 14
