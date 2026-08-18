@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: run-final-rustd-abi-closure
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   close:
@@ -107,7 +107,7 @@ bash /tmp/apply-journal-filter.sh'''
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-final-abi-diagnostic-v8\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-final-abi-diagnostic-v9\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
             tail -n 420 /tmp/final-abi-closure.log || true
           } > certification/final-abi-closure-diagnostic.txt
