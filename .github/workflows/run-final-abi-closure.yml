@@ -1,0 +1,67 @@
+name: Run final RustD ABI closure
+
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -euo pipefail {0}'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-final-abi-closure.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: run-final-rustd-abi-closure
+  cancel-in-progress: false
+
+jobs:
+  close:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Install closure dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential gfortran pkg-config libdbus-1-dev libudev-dev \
+            libjson-c-dev dbus python3-yaml
+
+      - name: Execute canonical final ABI transaction
+        id: closure
+        continue-on-error: true
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import yaml
+          data = yaml.safe_load(Path('.github/workflows/final-abi-closure.yml').read_text())
+          step = next(x for x in data['jobs']['close']['steps'] if x.get('name') == 'Apply certified compatibility engines')
+          Path('/tmp/final-abi-closure.sh').write_text(step['run'])
+          PY
+          bash /tmp/final-abi-closure.sh > /tmp/final-abi-closure.log 2>&1
+
+      - name: Publish failure diagnostic
+        if: steps.closure.outcome != 'success'
+        run: |
+          git reset --hard HEAD
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-final-abi-diagnostic-v1\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf '%s\n' '--- tail ---'
+            tail -n 240 /tmp/final-abi-closure.log || true
+          } > certification/final-abi-closure-diagnostic.txt
+          git add certification/final-abi-closure-diagnostic.txt
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Record final ABI closure diagnostic'
+          git push origin HEAD:main
+          exit 1
