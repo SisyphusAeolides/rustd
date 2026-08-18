@@ -1,5 +1,5 @@
 name: Repair event workflow warning
-# trigger
+# literal-match trigger
 
 on:
   push:
@@ -25,10 +25,10 @@ jobs:
           from pathlib import Path
           p=Path('.github/workflows/land-compat-event-engine-v2.yml')
           s=p.read_text()
-          old='''    if (ret) *ret = source; return 0;\\n'''
-          new='''    if (ret)\\n        *ret = source;\\n    return 0;\\n'''
+          old='if (ret) *ret = source; return 0;'
+          new='if (ret)\\n        *ret = source;\\n    return 0;'
           if old not in s:
-              raise SystemExit('event workflow warning preimage missing')
+              raise SystemExit('event workflow warning statement missing')
           p.write_text(s.replace(old,new,1))
           PY
           rm -f .github/workflows/repair-event-workflow.yml
