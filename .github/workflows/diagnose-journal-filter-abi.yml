@@ -1,0 +1,57 @@
+name: Diagnose journal filter ABI closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/diagnose-journal-filter-abi.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install runner dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gcc gfortran libsystemd-dev libudev-dev python3-yaml
+      - name: Execute canonical journal landing transaction
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 - <<'PY'
+          import yaml
+          from pathlib import Path
+          data=yaml.safe_load(Path('.github/workflows/land-journal-filter-abi.yml').read_text())
+          steps=data['jobs']['land']['steps']
+          step=next(x for x in steps if x.get('name') == 'Apply native journal filtering and verify')
+          Path('/tmp/journal-step.sh').write_text(step['run'])
+          PY
+          set +e
+          bash /tmp/journal-step.sh > /tmp/journal-filter.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            exit 0
+          fi
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-journal-filter-diagnostic-v1\nstatus=failure\ntested_sha=%s\nrc=%s\n' "$GITHUB_SHA" "$rc"
+            printf '%s\n' '--- tail ---'
+            tail -n 180 /tmp/journal-filter.log
+          } > certification/journal-filter-diagnostic.txt
+          git add certification/journal-filter-diagnostic.txt
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Record journal filter closure diagnostic'
+          git push origin HEAD:main
+          exit "$rc"
