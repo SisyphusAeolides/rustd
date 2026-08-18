@@ -1,0 +1,134 @@
+name: RustD OOM certification
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rustd-oom-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  oom-certification:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install build and virtualization tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            busybox-static \
+            cpio \
+            gcc \
+            gfortran \
+            linux-image-generic \
+            qemu-system-x86
+          kernel="$(ls -1v /boot/vmlinuz-*-generic | tail -1)"
+          sudo cp -L "$kernel" "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          chmod 0644 "$RUNNER_TEMP/rustd-ci-vmlinuz"
+          echo "RUSTD_PID1_KERNEL=$RUNNER_TEMP/rustd-ci-vmlinuz" >> "$GITHUB_ENV"
+
+      - name: Install Rust 1.75.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.75.0 --profile minimal
+          rustc +1.75.0 --version --verbose
+          cargo +1.75.0 --version --verbose
+
+      - name: Build OOM certificate payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo +1.75.0 build --release --all-features --locked \
+            --bin rustd \
+            --bin rustctl
+
+      - name: Force ten independent kernel cgroup OOM kills
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 10); do
+            echo "RustD PID1 OOM certification attempt ${attempt}/10"
+            RUSTD_PID1_OOM_SERIAL_LOG="pid1-oom-serial-${attempt}.log" \
+              bash scripts/ci-pid1-oom.sh
+          done
+
+      - name: Record exact-stack OOM evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          resolved_sha="$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)"
+          python3 - "$GITHUB_SHA" "$resolved_sha" > oom-certification-evidence.jsonl <<'PY'
+          import json
+          import os
+          import sys
+          import time
+
+          rustd_sha, resolved_sha = sys.argv[1:]
+          source = (
+              f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+              f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
+          )
+          print(json.dumps({
+              "gate": "fault.oom",
+              "status": "pass",
+              "detail": (
+                  "ten independent QEMU boots forced a real cgroup-v2 memory.events "
+                  "oom_kill under MemoryMax; RustD PID 1 and its control plane survived, "
+                  "the OOM victim failed, and an unrelated keeper retained the same live MainPID"
+              ),
+              "ts": int(time.time()),
+              "rustd_sha": rustd_sha,
+              "resolved_sha": resolved_sha,
+              "iterations": 10,
+              "source": source,
+          }, sort_keys=True, separators=(",", ":")))
+          PY
+          chmod 0600 oom-certification-evidence.jsonl
+          python3 - "$GITHUB_SHA" "$resolved_sha" <<'PY'
+          import json
+          import stat
+          import sys
+          from pathlib import Path
+
+          rustd_sha, resolved_sha = sys.argv[1:]
+          path = Path("oom-certification-evidence.jsonl")
+          if stat.S_IMODE(path.stat().st_mode) != 0o600:
+              raise SystemExit("OOM evidence mode must be 0600")
+          records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+          if len(records) != 1:
+              raise SystemExit("OOM evidence must contain exactly one record")
+          record = records[0]
+          if record.get("gate") != "fault.oom" or record.get("status") != "pass":
+              raise SystemExit("OOM evidence gate/status mismatch")
+          if record.get("rustd_sha") != rustd_sha or record.get("resolved_sha") != resolved_sha:
+              raise SystemExit("OOM evidence exact-stack SHA mismatch")
+          if int(record.get("iterations", 0)) < 10:
+              raise SystemExit("OOM evidence has insufficient iterations")
+          if not str(record.get("source", "")).strip():
+              raise SystemExit("OOM evidence source is empty")
+          print("certification evidence OK: fault.oom")
+          PY
+
+      - name: Upload OOM certificate logs
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: rustd-oom-certification-${{ github.sha }}
+          path: |
+            pid1-oom-serial-*.log
+            oom-certification-evidence.jsonl
+          if-no-files-found: warn
+          retention-days: 14
