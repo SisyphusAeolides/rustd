@@ -4,27 +4,64 @@
 set -euo pipefail
 
 RUSTCTL=${RUSTCTL:-/usr/bin/rustctl}
-SYSTEM_DEST=/run/rustd/system
-USER_DEST=/usr/lib/rustd/user
-MARK_ROOT=/run/rustd/fedora-update
+SYSTEM_DEST=${RUSTD_FEDORA_SYSTEM_UNIT_DEST:-/run/rustd/system}
+USER_DEST=${RUSTD_FEDORA_USER_UNIT_DEST:-/usr/lib/rustd/user}
+GLOBAL_USER_DEST=${RUSTD_FEDORA_GLOBAL_USER_DEST:-/etc/rustd/user}
+MARK_ROOT=${RUSTD_FEDORA_MARK_ROOT:-/run/rustd/fedora-update}
+
+IFS=: read -r -a SYSTEM_DIRS <<< "${RUSTD_FEDORA_SYSTEM_UNIT_DIRS:-/etc/systemd/system:/run/systemd/system:/usr/local/lib/systemd/system:/usr/lib/systemd/system}"
+IFS=: read -r -a USER_DIRS <<< "${RUSTD_FEDORA_USER_UNIT_DIRS:-/etc/systemd/user:/run/systemd/user:/usr/local/lib/systemd/user:/usr/lib/systemd/user}"
+IFS=: read -r -a SYSTEM_PRESET_DIRS <<< "${RUSTD_FEDORA_SYSTEM_PRESET_DIRS:-/etc/systemd/system-preset:/run/systemd/system-preset:/usr/local/lib/systemd/system-preset:/usr/lib/systemd/system-preset}"
+IFS=: read -r -a USER_PRESET_DIRS <<< "${RUSTD_FEDORA_USER_PRESET_DIRS:-/etc/systemd/user-preset:/run/systemd/user-preset:/usr/local/lib/systemd/user-preset:/usr/lib/systemd/user-preset}"
+
 scope=system
 global=0
 now=0
 quiet=0
 marked=0
-
 mkdir -p "$MARK_ROOT/restart" "$MARK_ROOT/reload"
 
-sync_unit() {
-    local unit=$1 source= dest=
-    local -a dirs
+foreign_dirs() {
+    local -n ret=$1
     if [[ $scope == user || $global -eq 1 ]]; then
-        dirs=(/etc/systemd/user /run/systemd/user /usr/local/lib/systemd/user /usr/lib/systemd/user)
-        dest=$USER_DEST
+        ret=("${USER_DIRS[@]}")
     else
-        dirs=(/etc/systemd/system /run/systemd/system /usr/local/lib/systemd/system /usr/lib/systemd/system)
-        dest=$SYSTEM_DEST
+        ret=("${SYSTEM_DIRS[@]}")
     fi
+}
+
+unit_dest() {
+    if [[ $scope == user || $global -eq 1 ]]; then
+        printf '%s\n' "$USER_DEST"
+    else
+        printf '%s\n' "$SYSTEM_DEST"
+    fi
+}
+
+sync_dropins() {
+    local unit=$1 dest=$2 dir conf i
+    local -a dirs
+    foreign_dirs dirs
+    mkdir -p "$dest"
+    # Lowest priority first, then overwrite by basename from higher-priority
+    # roots. This preserves systemd's drop-in override ordering while keeping
+    # the authoritative manager search root RustD-native.
+    for ((i=${#dirs[@]}-1; i>=0; i--)); do
+        dir=${dirs[$i]}
+        [[ -d "$dir/$unit.d" ]] || continue
+        mkdir -p "$dest/$unit.d"
+        for conf in "$dir/$unit.d"/*.conf; do
+            [[ -f $conf || -L $conf ]] || continue
+            ln -sfn "$conf" "$dest/$unit.d/${conf##*/}"
+        done
+    done
+}
+
+sync_unit() {
+    local unit=$1 source= dest dir
+    local -a dirs
+    foreign_dirs dirs
+    dest=$(unit_dest)
     for dir in "${dirs[@]}"; do
         if [[ -e "$dir/$unit" || -L "$dir/$unit" ]]; then
             source=$dir/$unit
@@ -34,6 +71,42 @@ sync_unit() {
     [[ -n $source ]] || return 0
     mkdir -p "$dest"
     ln -sfn "$source" "$dest/$unit"
+    sync_dropins "$unit" "$dest"
+}
+
+sync_all_units() {
+    local dir candidate unit link target
+    local -A seen=()
+    local -a dirs
+    foreign_dirs dirs
+    for dir in "${dirs[@]}"; do
+        [[ -d $dir ]] || continue
+        for candidate in "$dir"/*; do
+            [[ -e $candidate || -L $candidate ]] || continue
+            unit=${candidate##*/}
+            [[ $unit == *.d ]] && continue
+            case $unit in
+                *.service|*.socket|*.target|*.timer|*.path|*.mount|*.automount|*.swap|*.slice|*.scope)
+                    seen[$unit]=1
+                    ;;
+            esac
+        done
+    done
+    while IFS= read -r unit; do
+        [[ -n $unit ]] && sync_unit "$unit"
+    done < <(printf '%s\n' "${!seen[@]}" | sort)
+
+    # Clean only broken compatibility links. Native RustD files are never
+    # removed by this frontend.
+    local dest
+    dest=$(unit_dest)
+    [[ -d $dest ]] || return 0
+    while IFS= read -r -d '' link; do
+        target=$(readlink "$link" || true)
+        if [[ $target == */systemd/* && ! -e $link ]]; then
+            rm -f "$link"
+        fi
+    done < <(find "$dest" -type l -print0 2>/dev/null)
 }
 
 sync_units() {
@@ -68,11 +141,11 @@ global_enable() {
         [[ -e $source || -L $source ]] || continue
         while IFS= read -r target; do
             [[ -n $target ]] || continue
-            mkdir -p "/etc/rustd/user/$target.wants"
+            mkdir -p "$GLOBAL_USER_DEST/$target.wants"
             if [[ $enable -eq 1 ]]; then
-                ln -sfn "$source" "/etc/rustd/user/$target.wants/$unit"
+                ln -sfn "$source" "$GLOBAL_USER_DEST/$target.wants/$unit"
             else
-                rm -f "/etc/rustd/user/$target.wants/$unit"
+                rm -f "$GLOBAL_USER_DEST/$target.wants/$unit"
             fi
         done < <(awk '
             BEGIN { install=0 }
@@ -88,8 +161,12 @@ global_enable() {
 preset_action() {
     local unit=$1 dir file base line action pattern
     local -A chosen=()
-    local -a dirs=(/etc/systemd/system-preset /run/systemd/system-preset /usr/local/lib/systemd/system-preset /usr/lib/systemd/system-preset)
-    [[ $scope == user || $global -eq 1 ]] && dirs=(/etc/systemd/user-preset /run/systemd/user-preset /usr/local/lib/systemd/user-preset /usr/lib/systemd/user-preset)
+    local -a dirs
+    if [[ $scope == user || $global -eq 1 ]]; then
+        dirs=("${USER_PRESET_DIRS[@]}")
+    else
+        dirs=("${SYSTEM_PRESET_DIRS[@]}")
+    fi
     for dir in "${dirs[@]}"; do
         [[ -d $dir ]] || continue
         for file in "$dir"/*.preset; do
@@ -120,8 +197,8 @@ preset_action() {
 
 preset_units() {
     local unit action
+    sync_all_units
     for unit in "$@"; do
-        sync_unit "$unit"
         action=$(preset_action "$unit")
         case $action in
             enable)
@@ -161,11 +238,14 @@ command=${1:-}
 shift
 
 case $command in
-    daemon-reload) run_rustctl daemon-reload ;;
+    daemon-reload)
+        sync_all_units
+        run_rustctl daemon-reload
+        ;;
     daemon-reexec) run_rustctl daemon-reexec ;;
     preset) preset_units "$@" ;;
     enable|disable)
-        sync_units "$@"
+        [[ $command == enable ]] && sync_all_units || sync_units "$@"
         if [[ $global -eq 1 ]]; then
             [[ $command == enable ]] && global_enable 1 "$@" || global_enable 0 "$@"
         else
@@ -174,12 +254,16 @@ case $command in
             run_rustctl "${args[@]}" "$command" "$@"
         fi
         ;;
-    start|stop|restart|reload)
-        sync_units "$@"
+    start|restart|reload)
+        sync_all_units
         run_rustctl "$command" "$@"
         ;;
-    try-restart)
+    stop)
         sync_units "$@"
+        run_rustctl stop "$@"
+        ;;
+    try-restart)
+        sync_all_units
         for unit in "$@"; do
             if run_rustctl --quiet is-active "$unit" >/dev/null 2>&1; then
                 run_rustctl restart "$unit"
@@ -187,11 +271,11 @@ case $command in
         done
         ;;
     reload-or-restart)
+        sync_all_units
         if [[ $marked -eq 1 ]]; then
             shopt -s nullglob
             for marker in "$MARK_ROOT"/reload/* "$MARK_ROOT"/restart/*; do
                 unit=${marker##*/}
-                sync_unit "$unit"
                 if [[ $marker == "$MARK_ROOT/reload/"* ]]; then
                     run_rustctl reload "$unit" >/dev/null 2>&1 || run_rustctl restart "$unit"
                 elif run_rustctl --quiet is-active "$unit" >/dev/null 2>&1; then
@@ -200,7 +284,6 @@ case $command in
                 rm -f "$marker"
             done
         else
-            sync_units "$@"
             for unit in "$@"; do
                 run_rustctl reload "$unit" >/dev/null 2>&1 || run_rustctl restart "$unit"
             done
@@ -220,7 +303,6 @@ case $command in
         run_rustctl "$command" "$@"
         ;;
     list-units)
-        # Package helpers only need the loaded-unit list and may pass a glob.
         pattern=${1:-}
         if [[ -z $pattern ]]; then
             run_rustctl --no-legend list-units
