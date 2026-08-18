@@ -1,0 +1,8 @@
+schema=rustd-readwritepaths-cert-v1
+status=failure
+tested_sha=8736e45344adf7b8bd82cab8986322414173676b
+install_rc=0
+build_rc=101
+cert_rc=125
+protect_system=strict
+read_write_paths=production-spawn-v2
