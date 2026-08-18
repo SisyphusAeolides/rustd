@@ -1,4 +1,5 @@
 name: Diagnose sd-bus dispatch filter bridge
+# trigger
 
 on:
   push:
@@ -30,9 +31,7 @@ jobs:
           from pathlib import Path
           data=yaml.safe_load(Path('.github/workflows/fix-sd-bus-dispatch-filter.yml').read_text())
           step=next(x for x in data['jobs']['fix']['steps'] if x.get('name') == 'Patch and certify dispatch bridge')
-          script=step['run']
-          # Dependencies are already installed above; retaining apt lines is harmless but slow.
-          Path('/tmp/sd-bus-bridge-step.sh').write_text(script)
+          Path('/tmp/sd-bus-bridge-step.sh').write_text(step['run'])
           PY
           set +e
           bash /tmp/sd-bus-bridge-step.sh > /tmp/sd-bus-bridge.log 2>&1
