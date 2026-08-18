@@ -1,0 +1,77 @@
+name: Land Fedora ELF version namespace closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-fedora-elf-version-chain.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fedora-elf-version-chain
+  cancel-in-progress: true
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Build complete Fedora version-node chains
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential gfortran pkg-config libdbus-1-dev libudev-dev libjson-c-dev
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+
+          def normalize(path, prefix, versions):
+              p=Path(path)
+              text=p.read_text()
+              pattern=re.compile(rf'{prefix}_(\d+)\s*\{{(.*?)\}}\s*(?:{prefix}_\d+)?;', re.S)
+              found={int(m.group(1)):m.group(2).rstrip() for m in pattern.finditer(text)}
+              unexpected=sorted(set(found)-set(versions))
+              if unexpected:
+                  raise SystemExit(f'{path}: unexpected version nodes {unexpected}')
+              missing_existing=[v for v in found if not found[v].strip() and v in (versions[0],)]
+              if missing_existing:
+                  raise SystemExit(f'{path}: base version body unexpectedly empty')
+              out=[]
+              for i,version in enumerate(versions):
+                  body=found.get(version,'')
+                  parent='' if i == 0 else f' {prefix}_{versions[i-1]}'
+                  if body:
+                      out.append(f'{prefix}_{version} {{\n{body}\n}}{parent};\n')
+                  else:
+                      out.append(f'{prefix}_{version} {{\n}}{parent};\n')
+              p.write_text('\n'.join(out))
+
+          normalize('libs/maps/libsystemd.map','LIBSYSTEMD',[
+              209,211,213,214,216,217,219,220,221,222,226,227,229,230,231,232,
+              233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,
+              249,250,251,252,253,254,255,256,257,258,259])
+          normalize('libs/maps/libudev.map','LIBUDEV',[183,189,196,199,215,247])
+          PY
+          git diff --check
+          make clean
+          make compat
+          systemd_versions="$(readelf --version-info build/libs/libsystemd.so.0)"
+          for v in 209 211 213 214 216 217 219 220 221 222 226 227 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259; do
+            grep -Fq "LIBSYSTEMD_$v" <<<"$systemd_versions"
+          done
+          udev_versions="$(readelf --version-info build/libs/libudev.so.1)"
+          for v in 183 189 196 199 215 247; do
+            grep -Fq "LIBUDEV_$v" <<<"$udev_versions"
+          done
+          git fetch origin main
+          git rebase --autostash origin/main
+          git add libs/maps/libsystemd.map libs/maps/libudev.map
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Complete Fedora ELF version namespaces'
+          git push origin HEAD:main
