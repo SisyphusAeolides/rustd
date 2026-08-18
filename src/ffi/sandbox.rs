@@ -28,6 +28,17 @@ extern "C" {
         force_mount_namespace: c_int,
     ) -> c_int;
 
+    /// Re-open declared writable paths inside the private mount namespace.
+    ///
+    /// # Safety
+    /// `paths` must reference `n_paths` valid NUL-terminated strings for the
+    /// duration of the call. The caller must already be in its private mount
+    /// namespace when path exceptions are requested.
+    pub fn rustd_sandbox_make_writable_paths(
+        paths: *const *const libc::c_char,
+        n_paths: usize,
+    ) -> c_int;
+
     /// Bind-mount sensitive kernel paths read-only.
     ///
     /// # Safety
