@@ -46,6 +46,8 @@ typedef struct {
     uint32_t syscall_filter_default_action;
     int syscall_filter_enabled;
     int restrict_native_syscalls; /* SystemCallArchitectures=native */
+    const char * const *read_write_paths; /* absolute writable mount exceptions */
+    size_t n_read_write_paths;
 } rustd_spawn_sandbox;
 
 typedef struct {
