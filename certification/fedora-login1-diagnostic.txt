@@ -1,5 +1,5 @@
-schema=rustd-fedora-login1-diagnostic-v3
+schema=rustd-fedora-login1-diagnostic-v4
 status=failure
-tested_sha=4158173a7c52bd10728d64c9b6eff652286a7f93
+tested_sha=036b120cb879737f04ade7549ce72cadb7738ee4
 --- tail ---
 Login1 extraction is incomplete
