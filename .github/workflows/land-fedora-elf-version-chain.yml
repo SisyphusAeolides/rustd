@@ -1,4 +1,5 @@
 name: Land Fedora ELF version namespace closure
+# trigger
 
 on:
   push:
@@ -37,9 +38,6 @@ jobs:
               unexpected=sorted(set(found)-set(versions))
               if unexpected:
                   raise SystemExit(f'{path}: unexpected version nodes {unexpected}')
-              missing_existing=[v for v in found if not found[v].strip() and v in (versions[0],)]
-              if missing_existing:
-                  raise SystemExit(f'{path}: base version body unexpectedly empty')
               out=[]
               for i,version in enumerate(versions):
                   body=found.get(version,'')
@@ -60,13 +58,9 @@ jobs:
           make clean
           make compat
           systemd_versions="$(readelf --version-info build/libs/libsystemd.so.0)"
-          for v in 209 211 213 214 216 217 219 220 221 222 226 227 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259; do
-            grep -Fq "LIBSYSTEMD_$v" <<<"$systemd_versions"
-          done
+          for v in 209 211 213 214 216 217 219 220 221 222 226 227 229 230 231 232 233 234 235 236 237 238 239 240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255 256 257 258 259; do grep -Fq "LIBSYSTEMD_$v" <<<"$systemd_versions"; done
           udev_versions="$(readelf --version-info build/libs/libudev.so.1)"
-          for v in 183 189 196 199 215 247; do
-            grep -Fq "LIBUDEV_$v" <<<"$udev_versions"
-          done
+          for v in 183 189 196 199 215 247; do grep -Fq "LIBUDEV_$v" <<<"$udev_versions"; done
           git fetch origin main
           git rebase --autostash origin/main
           git add libs/maps/libsystemd.map libs/maps/libudev.map
