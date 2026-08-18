@@ -92,8 +92,8 @@ bash /tmp/apply-journal-filter.sh'''
               'git rebase --autostash origin/main')
           run = run.replace(
               'git add -A Makefile libs/compat/systemd.c',
-              'rm -f .github/workflows/final-abi-closure.yml \\\n  .github/workflows/land-journal-filter-abi.yml \\\n  .github/workflows/run-final-abi-closure.yml \\\n  .github/journal-filter-trigger\n'
-              'git add -A .github/workflows/final-abi-closure.yml \\\n  .github/workflows/land-journal-filter-abi.yml \\\n  .github/workflows/run-final-abi-closure.yml \\\n  .github/journal-filter-trigger Makefile libs/compat/systemd.c')
+              'rm -f .github/workflows/final-abi-closure.yml .github/workflows/land-journal-filter-abi.yml .github/workflows/run-final-abi-closure.yml .github/journal-filter-trigger\n'
+              'git add -A .github/workflows/final-abi-closure.yml .github/workflows/land-journal-filter-abi.yml .github/workflows/run-final-abi-closure.yml .github/journal-filter-trigger Makefile libs/compat/systemd.c')
           Path('/tmp/final-abi-closure.sh').write_text(run)
           PY
           bash /tmp/final-abi-closure.sh
@@ -107,7 +107,7 @@ bash /tmp/apply-journal-filter.sh'''
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-final-abi-diagnostic-v7\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-final-abi-diagnostic-v8\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
             tail -n 420 /tmp/final-abi-closure.log || true
           } > certification/final-abi-closure-diagnostic.txt
