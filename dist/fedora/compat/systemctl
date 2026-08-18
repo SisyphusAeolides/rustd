@@ -1,0 +1,238 @@
+#!/usr/bin/bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Fedora package-transaction compatibility frontend backed exclusively by RustD.
+set -euo pipefail
+
+RUSTCTL=${RUSTCTL:-/usr/bin/rustctl}
+SYSTEM_DEST=/run/rustd/system
+USER_DEST=/usr/lib/rustd/user
+MARK_ROOT=/run/rustd/fedora-update
+scope=system
+global=0
+now=0
+quiet=0
+marked=0
+
+mkdir -p "$MARK_ROOT/restart" "$MARK_ROOT/reload"
+
+sync_unit() {
+    local unit=$1 source= dest=
+    local -a dirs
+    if [[ $scope == user || $global -eq 1 ]]; then
+        dirs=(/etc/systemd/user /run/systemd/user /usr/local/lib/systemd/user /usr/lib/systemd/user)
+        dest=$USER_DEST
+    else
+        dirs=(/etc/systemd/system /run/systemd/system /usr/local/lib/systemd/system /usr/lib/systemd/system)
+        dest=$SYSTEM_DEST
+    fi
+    for dir in "${dirs[@]}"; do
+        if [[ -e "$dir/$unit" || -L "$dir/$unit" ]]; then
+            source=$dir/$unit
+            break
+        fi
+    done
+    [[ -n $source ]] || return 0
+    mkdir -p "$dest"
+    ln -sfn "$source" "$dest/$unit"
+}
+
+sync_units() {
+    local unit
+    for unit in "$@"; do
+        [[ $unit == -* ]] && continue
+        sync_unit "$unit"
+    done
+}
+
+rustctl_base() {
+    if [[ $scope == user ]]; then
+        printf '%s\0' "$RUSTCTL" --user
+    else
+        printf '%s\0' "$RUSTCTL"
+    fi
+}
+
+run_rustctl() {
+    local -a cmd
+    mapfile -d '' -t cmd < <(rustctl_base)
+    [[ $quiet -eq 1 ]] && cmd+=(--quiet)
+    "${cmd[@]}" "$@"
+}
+
+global_enable() {
+    local enable=$1 unit source target
+    shift
+    for unit in "$@"; do
+        sync_unit "$unit"
+        source="$USER_DEST/$unit"
+        [[ -e $source || -L $source ]] || continue
+        while IFS= read -r target; do
+            [[ -n $target ]] || continue
+            mkdir -p "/etc/rustd/user/$target.wants"
+            if [[ $enable -eq 1 ]]; then
+                ln -sfn "$source" "/etc/rustd/user/$target.wants/$unit"
+            else
+                rm -f "/etc/rustd/user/$target.wants/$unit"
+            fi
+        done < <(awk '
+            BEGIN { install=0 }
+            /^\[Install\][[:space:]]*$/ { install=1; next }
+            /^\[/ { install=0 }
+            install && /^WantedBy=/ {
+                sub(/^WantedBy=/, ""); gsub(/[[:space:]]+/, "\n"); print
+            }
+        ' "$source")
+    done
+}
+
+preset_action() {
+    local unit=$1 dir file base line action pattern
+    local -A chosen=()
+    local -a dirs=(/etc/systemd/system-preset /run/systemd/system-preset /usr/local/lib/systemd/system-preset /usr/lib/systemd/system-preset)
+    [[ $scope == user || $global -eq 1 ]] && dirs=(/etc/systemd/user-preset /run/systemd/user-preset /usr/local/lib/systemd/user-preset /usr/lib/systemd/user-preset)
+    for dir in "${dirs[@]}"; do
+        [[ -d $dir ]] || continue
+        for file in "$dir"/*.preset; do
+            [[ -f $file ]] || continue
+            base=${file##*/}
+            [[ -n ${chosen[$base]+x} ]] || chosen[$base]=$file
+        done
+    done
+    while IFS= read -r base; do
+        file=${chosen[$base]}
+        while IFS= read -r line || [[ -n $line ]]; do
+            line=${line%%#*}
+            line=${line#"${line%%[![:space:]]*}"}
+            line=${line%"${line##*[![:space:]]}"}
+            [[ -n $line ]] || continue
+            action=${line%%[[:space:]]*}
+            pattern=${line#"$action"}
+            pattern=${pattern#"${pattern%%[![:space:]]*}"}
+            [[ -n $pattern ]] || continue
+            if [[ $unit == $pattern ]]; then
+                printf '%s\n' "$action"
+                return 0
+            fi
+        done < "$file"
+    done < <(printf '%s\n' "${!chosen[@]}" | sort)
+    printf '%s\n' ignore
+}
+
+preset_units() {
+    local unit action
+    for unit in "$@"; do
+        sync_unit "$unit"
+        action=$(preset_action "$unit")
+        case $action in
+            enable)
+                if [[ $global -eq 1 ]]; then global_enable 1 "$unit"; else run_rustctl enable "$unit"; fi
+                ;;
+            disable)
+                if [[ $global -eq 1 ]]; then global_enable 0 "$unit"; else run_rustctl disable "$unit"; fi
+                ;;
+            ignore) : ;;
+            *) echo "systemctl(RustD): unsupported preset action '$action' for $unit" >&2; return 1 ;;
+        esac
+    done
+}
+
+# Parse the global options Fedora package scriptlets commonly pass.
+while (($#)); do
+    case $1 in
+        --no-reload|--no-warn|--no-pager|--plain|--no-block) shift ;;
+        --quiet|-q) quiet=1; shift ;;
+        --now) now=1; shift ;;
+        --user) scope=user; shift ;;
+        --system) scope=system; shift ;;
+        --global) global=1; scope=user; shift ;;
+        --marked) marked=1; shift ;;
+        --legend=no|--no-legend) shift ;;
+        --type=*|--state=*) shift ;;
+        --type|--state) shift 2 ;;
+        -M|--machine) echo "systemctl(RustD): --machine is not supported by the Fedora transaction shim" >&2; exit 95 ;;
+        --) shift; break ;;
+        -*) echo "systemctl(RustD): unsupported option $1" >&2; exit 64 ;;
+        *) break ;;
+    esac
+done
+
+command=${1:-}
+[[ -n $command ]] || { echo 'systemctl(RustD): command required' >&2; exit 64; }
+shift
+
+case $command in
+    daemon-reload) run_rustctl daemon-reload ;;
+    daemon-reexec) run_rustctl daemon-reexec ;;
+    preset) preset_units "$@" ;;
+    enable|disable)
+        sync_units "$@"
+        if [[ $global -eq 1 ]]; then
+            [[ $command == enable ]] && global_enable 1 "$@" || global_enable 0 "$@"
+        else
+            args=()
+            [[ $now -eq 1 ]] && args+=(--now)
+            run_rustctl "${args[@]}" "$command" "$@"
+        fi
+        ;;
+    start|stop|restart|reload)
+        sync_units "$@"
+        run_rustctl "$command" "$@"
+        ;;
+    try-restart)
+        sync_units "$@"
+        for unit in "$@"; do
+            if run_rustctl --quiet is-active "$unit" >/dev/null 2>&1; then
+                run_rustctl restart "$unit"
+            fi
+        done
+        ;;
+    reload-or-restart)
+        if [[ $marked -eq 1 ]]; then
+            shopt -s nullglob
+            for marker in "$MARK_ROOT"/reload/* "$MARK_ROOT"/restart/*; do
+                unit=${marker##*/}
+                sync_unit "$unit"
+                if [[ $marker == "$MARK_ROOT/reload/"* ]]; then
+                    run_rustctl reload "$unit" >/dev/null 2>&1 || run_rustctl restart "$unit"
+                elif run_rustctl --quiet is-active "$unit" >/dev/null 2>&1; then
+                    run_rustctl restart "$unit"
+                fi
+                rm -f "$marker"
+            done
+        else
+            sync_units "$@"
+            for unit in "$@"; do
+                run_rustctl reload "$unit" >/dev/null 2>&1 || run_rustctl restart "$unit"
+            done
+        fi
+        ;;
+    set-property)
+        unit=${1:?unit required}; shift
+        for property in "$@"; do
+            case $property in
+                Markers=+needs-restart) touch "$MARK_ROOT/restart/$unit" ;;
+                Markers=+needs-reload) touch "$MARK_ROOT/reload/$unit" ;;
+                *) echo "systemctl(RustD): unsupported transaction property $property" >&2; exit 95 ;;
+            esac
+        done
+        ;;
+    is-active|is-enabled|is-failed|status)
+        run_rustctl "$command" "$@"
+        ;;
+    list-units)
+        # Package helpers only need the loaded-unit list and may pass a glob.
+        pattern=${1:-}
+        if [[ -z $pattern ]]; then
+            run_rustctl --no-legend list-units
+        else
+            run_rustctl --no-legend list-units | while IFS= read -r line; do
+                unit=${line%%[[:space:]]*}
+                [[ $unit == $pattern ]] && printf '%s\n' "$line"
+            done
+        fi
+        ;;
+    *)
+        echo "systemctl(RustD): unsupported Fedora transaction verb '$command'" >&2
+        exit 95
+        ;;
+esac
