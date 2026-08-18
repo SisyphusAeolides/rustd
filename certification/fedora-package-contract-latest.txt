@@ -1,0 +1,6 @@
+schema=rustd-fedora-package-contract-v1
+status=success
+tested_sha=d5244126fcaf42daa72095ed5b730a959f7a2d14
+selinux_reference_policy=compiled
+rpm_specs=parsed
+provides_systemd=forbidden
