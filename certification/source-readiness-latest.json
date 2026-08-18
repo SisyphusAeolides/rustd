@@ -131,7 +131,7 @@
     "udev_new",
     "udev_unref"
   ],
-  "tested_sha": "77a1b1cf0d35ca9303cf487172963bb56f4f5f22",
+  "tested_sha": "d5ccb30b2bfd91f7eac7f3b32527b23557389e98",
   "unsupported": 60,
   "unsupported_symbols": [
     "sd_bus_add_filter",
