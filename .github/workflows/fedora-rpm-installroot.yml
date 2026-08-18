@@ -1,0 +1,103 @@
+name: Fedora zero-systemd RPM solver
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - certification/final-abi-closure-latest.txt
+      - scripts/rustd-resolved-revision.txt
+      - scripts/build-fedora-rpms.sh
+      - dist/fedora/**
+      - .github/workflows/fedora-rpm-installroot.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fedora-rpm-installroot
+  cancel-in-progress: true
+
+jobs:
+  solve:
+    runs-on: ubuntu-24.04
+    container: fedora:44
+    timeout-minutes: 60
+    steps:
+      - name: Install Fedora build and solver dependencies
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          dnf -y install \
+            git-core findutils make rpm-build rpmdevtools createrepo_c dnf-plugins-core \
+            selinux-policy selinux-policy-devel policycoreutils-devel bzip2 \
+            gcc gcc-gfortran python3 cargo rust pkgconf-pkg-config \
+            dbus-devel pam-devel json-c-devel openssl-devel liburing-devel \
+            tar gzip systemd-libs
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: SisyphusAeolides/rustd-resolved
+          path: rustd-resolved
+          fetch-depth: 0
+      - name: Bind resolver checkout to RustD pin
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          pinned="$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)"
+          [[ $pinned =~ ^[0-9a-f]{40}$ ]]
+          git -C rustd-resolved fetch origin "$pinned"
+          git -C rustd-resolved checkout --detach "$pinned"
+          test "$(git -C rustd-resolved rev-parse HEAD)" = "$pinned"
+      - name: Require complete RustD ABI candidate
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          voucher=certification/final-abi-closure-latest.txt
+          test -r "$voucher"
+          grep -Fxq 'status=pass' "$voucher"
+          grep -Fxq 'required=184' "$voucher"
+          grep -Fxq 'supported=184' "$voucher"
+          grep -Fxq 'unsupported=0' "$voucher"
+          grep -Fxq 'missing=0' "$voucher"
+          grep -Fxq 'systemd_headers=none' "$voucher"
+          grep -Fxq 'systemd_runtime_link=none' "$voucher"
+      - name: Build exact Fedora RPM set
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          RUSTD_RESOLVED_SOURCE_ROOT="$GITHUB_WORKSPACE/rustd-resolved" \
+            scripts/build-fedora-rpms.sh
+          test -s target/fedora-rpms/manifest.txt
+          grep -Fxq "rustd_sha=$(git rev-parse HEAD)" target/fedora-rpms/manifest.txt
+          grep -Fxq "resolved_sha=$(cat scripts/rustd-resolved-revision.txt)" target/fedora-rpms/manifest.txt
+      - name: Solve zero-systemd Fedora installroot
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          createrepo_c target/fedora-rpms
+          root=/tmp/rustd-fedora-root
+          rm -rf "$root"
+          mkdir -p "$root"
+          common=(
+            --installroot="$root"
+            --releasever=44
+            --setopt=install_weak_deps=False
+            --setopt=keepcache=False
+            --repofrompath=rustd,"file://$GITHUB_WORKSPACE/target/fedora-rpms"
+            --setopt=rustd.gpgcheck=0
+            --setopt=tsflags=noscripts
+          )
+          dnf -y "${common[@]}" install \
+            rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
+            --allowerasing
+          dnf -q "${common[@]}" check
+          for package in rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux; do
+            rpm --root "$root" -q "$package"
+          done
+          if rpm --root "$root" -qa --qf '%{NAME}\n' | grep -Eq '^systemd($|-)'; then
+            echo 'systemd RPM remains in solved Fedora cutover root' >&2
+            rpm --root "$root" -qa --qf '%{NAME}-%{EVR}.%{ARCH}\n' | grep '^systemd' >&2 || true
+            exit 1
+          fi
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libsystemd.so.0)" = rustd-compat-libs
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libudev.so.1)" = rustd-compat-libs
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = rustd
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/bin/systemctl)" = rustd-fedora-compat
