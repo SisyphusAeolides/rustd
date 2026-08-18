@@ -37,6 +37,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends gfortran
       - name: Build certification binary
+        id: build
         shell: bash
         run: |
           set -euo pipefail
@@ -45,26 +46,40 @@ jobs:
           test -n "$test_bin"
           printf '%s\n' "$test_bin" > "$RUNNER_TEMP/readwritepaths-test-bin"
       - name: Run production spawn certification as root
+        id: certify
+        if: steps.build.outcome == 'success'
         shell: bash
         run: |
           set -euo pipefail
           test_bin="$(cat "$RUNNER_TEMP/readwritepaths-test-bin")"
           sudo --preserve-env=RUST_BACKTRACE "$test_bin" --nocapture --test-threads=1
       - name: Publish exact-SHA certification voucher
+        if: always()
         shell: bash
+        env:
+          BUILD_OUTCOME: ${{ steps.build.outcome }}
+          CERT_OUTCOME: ${{ steps.certify.outcome }}
         run: |
           set -euo pipefail
           tested_sha="$GITHUB_SHA"
+          status=failure
+          if [ "$BUILD_OUTCOME" = success ] && [ "$CERT_OUTCOME" = success ]; then
+              status=pass
+          fi
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
           mkdir -p certification
-          printf 'schema=rustd-readwritepaths-cert-v1\nstatus=pass\ntested_sha=%s\nprotect_system=strict\nread_write_paths=production-spawn-v2\n' "$tested_sha" > certification/readwritepaths-latest.txt
+          printf 'schema=rustd-readwritepaths-cert-v1\nstatus=%s\ntested_sha=%s\nbuild_outcome=%s\ncert_outcome=%s\nprotect_system=strict\nread_write_paths=production-spawn-v2\n' \
+              "$status" "$tested_sha" "$BUILD_OUTCOME" "$CERT_OUTCOME" \
+              > certification/readwritepaths-latest.txt
           git add certification/readwritepaths-latest.txt
           if git diff --cached --quiet; then
-              exit 0
+              [ "$status" = pass ]
+              exit
           fi
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
-          git commit -m 'Record ReadWritePaths certification'
+          git commit -m "Record ReadWritePaths certification $status"
           git push origin HEAD:main
+          [ "$status" = pass ]
