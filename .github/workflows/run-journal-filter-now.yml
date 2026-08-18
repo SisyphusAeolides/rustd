@@ -1,0 +1,39 @@
+name: Run journal filter ABI landing now
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-journal-filter-now.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: compat-journal-filter
+  cancel-in-progress: false
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gfortran libsystemd-dev libudev-dev python3-yaml
+      - name: Execute canonical journal transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import yaml
+          from pathlib import Path
+          data=yaml.safe_load(Path('.github/workflows/land-journal-filter-abi.yml').read_text())
+          step=next(x for x in data['jobs']['land']['steps'] if x.get('name') == 'Apply native journal filtering and verify')
+          Path('/tmp/journal-filter.sh').write_text(step['run'])
+          PY
+          bash /tmp/journal-filter.sh
