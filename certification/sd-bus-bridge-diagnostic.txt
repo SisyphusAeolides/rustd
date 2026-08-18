@@ -1,6 +1,0 @@
-schema=rustd-sd-bus-diagnostic-v2
-status=failure
-tested_sha=b3bda3e21008b70440740f9ca897998596972626
-rc=128
---- tail ---
-fatal: pathspec 'certification/sd-bus-bridge-diagnostic.txt' did not match any files

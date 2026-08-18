@@ -239,6 +239,8 @@ static int rustd_dbus_error_result(const DBusError *error) {
     return -rustd_error_name_to_errno(error->name);
 }
 
+static int rustd_dispatch_message(sd_bus *bus, sd_bus_message *m);
+
 static sd_bus_message *rustd_message_wrap(sd_bus *bus, DBusMessage *message, bool take_ref) {
     sd_bus_message *wrapped;
     if (!message)
@@ -856,6 +858,23 @@ int sd_bus_new(sd_bus **ret) {
     return 0;
 }
 
+static DBusHandlerResult rustd_dbus_filter(DBusConnection *connection, DBusMessage *raw, void *userdata) {
+    sd_bus *bus = userdata;
+    sd_bus_message *message;
+    int r;
+    (void)connection;
+    if (!bus || !raw)
+        return DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+    message = rustd_message_wrap(bus, raw, true);
+    if (!message)
+        return DBUS_HANDLER_RESULT_NEED_MEMORY;
+    r = rustd_dispatch_message(bus, message);
+    sd_bus_message_unref(message);
+    if (r < 0)
+        return r == -ENOMEM ? DBUS_HANDLER_RESULT_NEED_MEMORY : DBUS_HANDLER_RESULT_HANDLED;
+    return r > 0 ? DBUS_HANDLER_RESULT_HANDLED : DBUS_HANDLER_RESULT_NOT_YET_HANDLED;
+}
+
 static int rustd_bus_open_kind(sd_bus **ret, DBusBusType type) {
     DBusError error = DBUS_ERROR_INIT;
     DBusConnection *connection;
@@ -878,6 +897,10 @@ static int rustd_bus_open_kind(sd_bus **ret, DBusBusType type) {
         return r;
     }
     bus->connection = connection;
+    if (!dbus_connection_add_filter(connection, rustd_dbus_filter, bus, NULL)) {
+        sd_bus_unref(bus);
+        return -ENOMEM;
+    }
     bus->started = true;
     *ret = bus;
     return 0;
@@ -1045,35 +1068,23 @@ static int rustd_dispatch_message(sd_bus *bus, sd_bus_message *m) {
 }
 
 int sd_bus_process(sd_bus *bus, sd_bus_message **ret) {
-    DBusMessage *raw;
-    sd_bus_message *message;
-    int r;
+    DBusDispatchStatus before;
+    DBusDispatchStatus after;
     if (ret)
         *ret = NULL;
     if (!bus)
         return -EINVAL;
     if (!bus->connection)
         return bus->input_fd >= 0 ? 0 : -ENOTCONN;
-    if (!dbus_connection_read_write(bus->connection, 0))
-        return -ECONNRESET;
-    raw = dbus_connection_pop_message(bus->connection);
-    if (!raw)
-        return 0;
-    message = rustd_message_wrap(bus, raw, false);
-    if (!message) {
-        dbus_message_unref(raw);
+    before = dbus_connection_get_dispatch_status(bus->connection);
+    if (before == DBUS_DISPATCH_NEED_MEMORY)
         return -ENOMEM;
-    }
-    r = rustd_dispatch_message(bus, message);
-    if (r < 0) {
-        sd_bus_message_unref(message);
-        return r;
-    }
-    if (ret)
-        *ret = message;
-    else
-        sd_bus_message_unref(message);
-    return 1;
+    if (!dbus_connection_read_write_dispatch(bus->connection, 0))
+        return -ECONNRESET;
+    after = dbus_connection_get_dispatch_status(bus->connection);
+    if (after == DBUS_DISPATCH_NEED_MEMORY)
+        return -ENOMEM;
+    return (before == DBUS_DISPATCH_DATA_REMAINS || after == DBUS_DISPATCH_DATA_REMAINS) ? 1 : 0;
 }
 
 int sd_bus_add_filter(sd_bus *bus, sd_bus_slot **ret_slot, sd_bus_message_handler_t callback, void *userdata) {
