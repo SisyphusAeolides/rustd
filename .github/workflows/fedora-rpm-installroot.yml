@@ -32,7 +32,7 @@ jobs:
             selinux-policy selinux-policy-devel policycoreutils-devel bzip2 \
             gcc gcc-gfortran python3 cargo rust pkgconf-pkg-config \
             dbus-devel pam-devel json-c-devel openssl-devel liburing-devel \
-            tar gzip systemd-libs
+            tar gzip systemd systemd-libs systemd-udev
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
@@ -49,6 +49,7 @@ jobs:
           git -C rustd-resolved fetch origin "$pinned"
           git -C rustd-resolved checkout --detach "$pinned"
           test "$(git -C rustd-resolved rev-parse HEAD)" = "$pinned"
+          printf '/rustd-resolved/\n' >> .git/info/exclude
       - name: Require complete RustD ABI candidate
         shell: 'bash --noprofile --norc -euo pipefail {0}'
         run: |
@@ -69,6 +70,12 @@ jobs:
           test -s target/fedora-rpms/manifest.txt
           grep -Fxq "rustd_sha=$(git rev-parse HEAD)" target/fedora-rpms/manifest.txt
           grep -Fxq "resolved_sha=$(cat scripts/rustd-resolved-revision.txt)" target/fedora-rpms/manifest.txt
+          manager_evr="$(sed -n 's/^systemd_reference_evr=//p' target/fedora-rpms/manifest.txt)"
+          libs_evr="$(sed -n 's/^systemd_libraries_reference_evr=//p' target/fedora-rpms/manifest.txt)"
+          udev_evr="$(sed -n 's/^systemd_udev_reference_evr=//p' target/fedora-rpms/manifest.txt)"
+          test -n "$manager_evr"
+          test "$manager_evr" = "$libs_evr"
+          test "$manager_evr" = "$udev_evr"
       - name: Solve zero-systemd Fedora installroot
         shell: 'bash --noprofile --norc -euo pipefail {0}'
         run: |
@@ -101,3 +108,4 @@ jobs:
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libudev.so.1)" = rustd-compat-libs
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = rustd
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/bin/systemctl)" = rustd-fedora-compat
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib/systemd/systemd-udevd)" = rustd-fedora-compat
