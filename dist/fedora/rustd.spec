@@ -6,7 +6,6 @@ License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
 Source0:        rustd-%{version}.tar.gz
 
-BuildRequires:  bash
 BuildRequires:  cargo >= 1.75
 BuildRequires:  rust >= 1.75
 BuildRequires:  gcc
@@ -17,16 +16,26 @@ BuildRequires:  pam-devel
 BuildRequires:  pkgconfig(dbus-1)
 
 Requires:       /usr/bin/dbus-daemon
-Requires:       authselect
-Requires:       python3
+Requires:       %{name}-cutover-tools%{?_isa} = %{version}-%{release}
 
 %description
 RustD is the native PID 1, service manager, device manager, journal, login
 manager, and supporting userspace for an exclusive RustD Linux installation.
-This package intentionally does not claim the RPM capability "systemd" and does
-not own Fedora's overlapping /usr/sbin/init path, so it can be staged alongside
-the running Fedora manager. The path-owning Fedora compatibility package performs
-the final conflict/swap only after PAM/NSS migration and the release gates pass.
+The main package owns Fedora protocol files that overlap the outgoing manager
+stack and is installed only during the final exclusive transaction. The
+nonconflicting cutover-tools subpackage is staged first so authentication and
+name service can be migrated and validated without removing systemd.
+
+%package cutover-tools
+Summary:        Nonconflicting Fedora authentication cutover tools
+Requires:       authselect
+Requires:       python3
+Requires:       rustd-resolved-nss%{?_isa} >= 0.2.3
+
+%description cutover-tools
+The RustD PAM module and fail-closed authselect migration helper. This package
+contains no systemd-owned pathname and can be staged on a running Fedora system
+before the exclusive PID 1 and compatibility-package transaction.
 
 %package devel
 Summary:        Development files for RustD native libraries
@@ -40,6 +49,7 @@ API. The systemd/udev compatibility SONAMEs are packaged separately.
 %autosetup -n rustd-%{version}
 test -f Cargo.lock
 test -f scripts/fedora-cutover-gate.sh
+test -f dist/fedora/compat/rustd-fedora-cutover
 
 %build
 export CARGO_NET_OFFLINE=true
@@ -48,8 +58,9 @@ export CARGO_NET_OFFLINE=true
 %check
 export CARGO_NET_OFFLINE=true
 make check-native check-packaging check-libs
-bash -n scripts/fedora-cutover-gate.sh
-bash -n dist/fedora/compat/rustd-fedora-cutover
+bash -n scripts/fedora-cutover-gate.sh \
+    scripts/fedora-vm-guest-cutover.sh \
+    dist/fedora/compat/rustd-fedora-cutover
 
 %install
 export CARGO_NET_OFFLINE=true
@@ -60,17 +71,12 @@ make DESTDIR=%{buildroot} \
      PKGCONFIGDIR=%{_libdir}/pkgconfig \
      PAMLIBDIR=%{_libdir}/security \
      install
-
-# The migration helper must be available during the nonconflicting staging
-# phase, before the exclusive Fedora compatibility RPM erases the old stack.
-install -d %{buildroot}%{_sbindir}
-install -m0755 dist/fedora/compat/rustd-fedora-cutover \
+install -Dm0755 dist/fedora/compat/rustd-fedora-cutover \
     %{buildroot}%{_sbindir}/rustd-fedora-cutover
 
 %files
 %license LICENSE*
 %doc README.md
-%{_sbindir}/rustd-fedora-cutover
 %{_bindir}/rust*
 %{_prefix}/lib/rustd/
 %{_prefix}/lib/tmpfiles.d/rustd.conf
@@ -78,12 +84,16 @@ install -m0755 dist/fedora/compat/rustd-fedora-cutover \
 %{_datadir}/dbus-1/system.d/*.conf
 %{_datadir}/polkit-1/actions/*.policy
 %{_datadir}/rustd/apparmor/
-%{_libdir}/security/pam_rustd.so
 %{_libdir}/librustd_service.so.1
 %{_libdir}/librustd_journal.so.1
 %{_libdir}/librustd_device.so.1
 %{_libdir}/librustd_login.so.1
 %{_libdir}/librustd_manager.so.1
+
+%files cutover-tools
+%license LICENSE*
+%{_sbindir}/rustd-fedora-cutover
+%{_libdir}/security/pam_rustd.so
 
 %files devel
 %{_includedir}/rustd/
@@ -96,5 +106,6 @@ install -m0755 dist/fedora/compat/rustd-fedora-cutover \
 
 %changelog
 * Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
-- Make the native RPM safe for staged PAM/NSS migration
+- Split nonconflicting PAM and authselect cutover tooling
+- Keep PID 1 and Fedora compatibility path ownership in the exclusive phase
 - Add Fedora native RustD package for staged and exclusive cutover testing

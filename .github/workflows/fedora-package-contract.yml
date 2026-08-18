@@ -1,5 +1,5 @@
 name: Fedora package and SELinux contract
-# Validate the versioned RPM capabilities used for the zero-systemd cutover.
+# Validate package ownership, replacement EVRs, and the fail-closed two-phase cutover.
 
 on:
   push:
@@ -7,6 +7,9 @@ on:
     paths:
       - dist/fedora/**
       - scripts/build-fedora-rpms.sh
+      - scripts/check-fedora-package-contract.sh
+      - scripts/fedora-vm-guest-cutover.sh
+      - scripts/rustd-resolved-revision.txt
       - .github/workflows/fedora-package-contract.yml
   workflow_dispatch:
 
@@ -33,73 +36,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Validate Fedora specs and SELinux module
+      - name: Validate Fedora package and staged-cutover contract
         id: contract
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           exec > >(tee /tmp/fedora-package-contract.log) 2>&1
-          reference_evr='1:999-1'
-          for spec in dist/fedora/*.spec; do
-            echo "==> $spec"
-            rpmspec -P --define "systemd_compat_evr $reference_evr" "$spec" \
-              >/tmp/"$(basename "$spec")".expanded
-            test -s /tmp/"$(basename "$spec")".expanded
-          done
-
-          mkdir -p /tmp/rustd-selinux-build
-          cp dist/fedora/selinux/rustd_fedora.te /tmp/rustd-selinux-build/
-          cp dist/fedora/selinux/rustd_fedora.fc /tmp/rustd-selinux-build/
-          make -C /tmp/rustd-selinux-build \
-            -f /usr/share/selinux/devel/Makefile rustd_fedora.pp
-          test -s /tmp/rustd-selinux-build/rustd_fedora.pp
-          semodule_package --help >/dev/null
-
-          grep -Fq 'Conflicts:      systemd-libs' dist/fedora/rustd-compat-libs.spec
-          grep -Fq 'Provides:       systemd-libs = %{systemd_compat_evr}' \
-            dist/fedora/rustd-compat-libs.spec
-          grep -Fq 'Provides:       systemd = %{systemd_compat_evr}' \
-            dist/fedora/rustd-fedora-compat.spec
-          grep -Fq 'Provides:       systemd-udev = %{systemd_compat_evr}' \
-            dist/fedora/rustd-fedora-compat.spec
-          grep -Fq 'Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}' \
-            dist/fedora/rustd-fedora-compat.spec
-          grep -Fq 'Requires:       authselect' dist/fedora/rustd.spec
-          grep -Fq '%{_sbindir}/rustd-fedora-cutover' dist/fedora/rustd.spec
-          ! grep -Fq '%{_sbindir}/init' dist/fedora/rustd.spec
-          grep -Fq '%{_sbindir}/init' dist/fedora/rustd-fedora-compat.spec
-          grep -Fq 'ln -s ../lib/rustd/rustd %{buildroot}%{_sbindir}/init' \
-            dist/fedora/rustd-fedora-compat.spec
-          test "$(grep -l -E '^Provides:[[:space:]]+systemd([[:space:]=]|$)' \
-            dist/fedora/*.spec)" = 'dist/fedora/rustd-fedora-compat.spec'
-          grep -Eq '^Provides:[[:space:]]+systemd = 1:999-1$' \
-            /tmp/rustd-fedora-compat.spec.expanded
-          grep -Eq '^Provides:[[:space:]]+systemd-udev = 1:999-1$' \
-            /tmp/rustd-fedora-compat.spec.expanded
-          grep -Eq '^Provides:[[:space:]]+systemd-libs = 1:999-1$' \
-            /tmp/rustd-compat-libs.spec.expanded
-
-          grep -Fq 'systemd_evr="$(rpm -q --qf' scripts/build-fedora-rpms.sh
-          grep -Fq 'systemd_libs_evr="$(rpm -q --qf' scripts/build-fedora-rpms.sh
-          grep -Fq 'systemd_udev_evr="$(rpm -q --qf' scripts/build-fedora-rpms.sh
-          grep -Fq 'rpm -q --qf '\''%{EVR}'\'' systemd ' scripts/build-fedora-rpms.sh
-          grep -Fq 'rpm -q --qf '\''%{EVR}'\'' systemd-libs ' scripts/build-fedora-rpms.sh
-          grep -Fq 'rpm -q --qf '\''%{EVR}'\'' systemd-udev ' scripts/build-fedora-rpms.sh
-          grep -Fq '"$systemd_evr" == "$systemd_libs_evr"' scripts/build-fedora-rpms.sh
-          grep -Fq '"$systemd_evr" == "$systemd_udev_evr"' scripts/build-fedora-rpms.sh
-          test "$(grep -Fc -- '--define "systemd_compat_evr $systemd_evr"' \
-            scripts/build-fedora-rpms.sh)" -eq 2
-
-          grep -Fq 'bash tests/fedora-transaction-compat.sh' \
-            dist/fedora/rustd-fedora-compat.spec
-          grep -Fq 'rustd-fedora-cutover' dist/fedora/rustd.spec
-          grep -Fq 'authselect create-profile rustd' \
-            dist/fedora/compat/rustd-fedora-cutover
-          grep -Fq 'pam_rustd.so' dist/fedora/compat/rustd-fedora-cutover
-          grep -Fq 'rustd_dns' dist/fedora/compat/rustd-fedora-cutover
-          bash -n scripts/build-fedora-rpms.sh scripts/fedora-cutover-gate.sh \
-            scripts/fedora-vm-guest-cutover.sh dist/fedora/compat/rustd-fedora-cutover
+          scripts/check-fedora-package-contract.sh 1:999-1
       - name: Publish exact package contract voucher
         if: always()
         shell: bash
@@ -122,12 +66,14 @@ jobs:
             printf 'capability.systemd_udev=rustd-fedora-compat\n'
             printf 'capability.systemd_libs=rustd-compat-libs\n'
             printf 'capability_evr=equal-build-host-systemd-stack\n'
-            printf 'base_stage=nonconflicting\n'
-            printf 'init_path=exclusive-rustd-fedora-compat\n'
-            printf 'authselect_cutover=pre-exclusive-validated\n'
+            printf 'stage.pam=rustd-cutover-tools\n'
+            printf 'stage.nss=rustd-resolved-nss\n'
+            printf 'stage.systemd_erasure=forbidden\n'
+            printf 'exclusive.pretrans_auth_guard=required\n'
+            printf 'owner.init=rustd-fedora-compat\n'
             if [[ "$outcome" != success ]]; then
               printf '%s\n' '--- tail ---'
-              tail -n 240 /tmp/fedora-package-contract.log || true
+              tail -n 300 /tmp/fedora-package-contract.log || true
             fi
           } > certification/fedora-package-contract-latest.txt
           git add certification/fedora-package-contract-latest.txt

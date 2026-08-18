@@ -7,6 +7,7 @@ on:
       - certification/final-abi-closure-latest.txt
       - scripts/rustd-resolved-revision.txt
       - scripts/build-fedora-rpms.sh
+      - scripts/fedora-vm-guest-cutover.sh
       - dist/fedora/**
       - .github/workflows/fedora-rpm-installroot.yml
   workflow_dispatch:
@@ -76,7 +77,7 @@ jobs:
           test -n "$manager_evr"
           test "$manager_evr" = "$libs_evr"
           test "$manager_evr" = "$udev_evr"
-      - name: Solve zero-systemd Fedora installroot
+      - name: Solve staged and exclusive Fedora transactions
         shell: 'bash --noprofile --norc -euo pipefail {0}'
         run: |
           createrepo_c target/fedora-rpms
@@ -92,22 +93,62 @@ jobs:
             --setopt=rustd.gpgcheck=0
             --setopt=tsflags=noscripts
           )
+
+          # Establish an ordinary Fedora manager/PAM stack first.
+          dnf -y "${common[@]}" install \
+            systemd systemd-libs systemd-udev systemd-pam authselect dbus-daemon
+          rpm --root "$root" -q systemd systemd-libs systemd-udev systemd-pam authselect
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = systemd
+          rpm --root "$root" -qa --qf '%{NAME}-%{EVR}.%{ARCH}\n' \
+            | sort > /tmp/installroot-before-stage.txt
+
+          # The first phase must coexist with the complete Fedora stack.
+          dnf -y "${common[@]}" install rustd-cutover-tools rustd-resolved-nss
+          rpm --root "$root" -qa --qf '%{NAME}-%{EVR}.%{ARCH}\n' \
+            | sort > /tmp/installroot-after-stage.txt
+          comm -23 /tmp/installroot-before-stage.txt /tmp/installroot-after-stage.txt \
+            > /tmp/installroot-stage-removed.txt
+          test ! -s /tmp/installroot-stage-removed.txt
+          rpm --root "$root" -q systemd systemd-libs systemd-udev systemd-pam
+          rpm --root "$root" -q rustd-cutover-tools rustd-resolved-nss
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = systemd
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/rustd-fedora-cutover)" = rustd-cutover-tools
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/security/pam_rustd.so)" = rustd-cutover-tools
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libnss_rustd_dns.so.2)" = rustd-resolved-nss
+          for package in rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux; do
+            ! rpm --root "$root" -q "$package" >/dev/null 2>&1
+          done
+
+          # Scriptlets are disabled in this solver root; the real VM executes
+          # the migration and exercises the compatibility RPM's pretrans guard.
           dnf -y "${common[@]}" install \
             rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
             --allowerasing
+          mapfile -t residual < <(
+            rpm --root "$root" -qa --qf '%{NAME}\n' \
+              | grep -E '^systemd($|-)' | sort -u || true
+          )
+          if ((${#residual[@]})); then
+            dnf -y "${common[@]}" remove --no-autoremove "${residual[@]}"
+          fi
           dnf -q "${common[@]}" check
-          for package in \
-            rustd rustd-resolved rustd-resolved-nss rustd-compat-libs rustd-fedora-compat rustd-selinux; do
+
+          for package in rustd rustd-cutover-tools rustd-resolved rustd-resolved-nss \
+                         rustd-compat-libs rustd-fedora-compat rustd-selinux; do
             rpm --root "$root" -q "$package"
           done
           if rpm --root "$root" -qa --qf '%{NAME}\n' | grep -Eq '^systemd($|-)'; then
             echo 'systemd RPM remains in solved Fedora cutover root' >&2
-            rpm --root "$root" -qa --qf '%{NAME}-%{EVR}.%{ARCH}\n' | grep '^systemd' >&2 || true
+            rpm --root "$root" -qa --qf '%{NAME}-%{EVR}.%{ARCH}\n' \
+              | grep '^systemd' >&2 || true
             exit 1
           fi
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libsystemd.so.0)" = rustd-compat-libs
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libudev.so.1)" = rustd-compat-libs
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = rustd-fedora-compat
-          test "$(readlink "$root/usr/sbin/init")" = ../lib/rustd/rustd
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/rustd-fedora-cutover)" = rustd-cutover-tools
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/security/pam_rustd.so)" = rustd-cutover-tools
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libnss_rustd_dns.so.2)" = rustd-resolved-nss
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/bin/systemctl)" = rustd-fedora-compat
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib/systemd/systemd-udevd)" = rustd-fedora-compat
+          test "$(readlink "$root/usr/sbin/init")" = ../lib/rustd/rustd

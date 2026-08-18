@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Static Fedora package ownership and two-phase cutover contract.
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REFERENCE_EVR=${1:-1:999-1}
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT HUP INT TERM
+
+need() {
+    command -v "$1" >/dev/null 2>&1 || {
+        printf 'Fedora package contract: missing command: %s\n' "$1" >&2
+        exit 1
+    }
+}
+for command in bash grep make python3 rpmspec semodule_package; do
+    need "$command"
+done
+
+cd "$ROOT"
+for spec in dist/fedora/*.spec; do
+    printf '==> %s\n' "$spec"
+    expanded="$WORK/$(basename "$spec").expanded"
+    rpmspec -P --define "systemd_compat_evr $REFERENCE_EVR" "$spec" > "$expanded"
+    test -s "$expanded"
+done
+
+mkdir -p "$WORK/selinux"
+cp dist/fedora/selinux/rustd_fedora.te "$WORK/selinux/"
+cp dist/fedora/selinux/rustd_fedora.fc "$WORK/selinux/"
+make -C "$WORK/selinux" \
+    -f /usr/share/selinux/devel/Makefile rustd_fedora.pp
+test -s "$WORK/selinux/rustd_fedora.pp"
+
+grep -Fq 'Conflicts:      systemd-libs' dist/fedora/rustd-compat-libs.spec
+grep -Fq 'Provides:       systemd-libs = %{systemd_compat_evr}' \
+    dist/fedora/rustd-compat-libs.spec
+grep -Fq 'Provides:       systemd = %{systemd_compat_evr}' \
+    dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Provides:       systemd-udev = %{systemd_compat_evr}' \
+    dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}' \
+    dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Requires:       rustd-cutover-tools%{?_isa} = %{version}-%{release}' \
+    dist/fedora/rustd-fedora-compat.spec
+
+mapfile -t manager_providers < <(
+    grep -l -E '^Provides:[[:space:]]+systemd([[:space:]=]|$)' dist/fedora/*.spec
+)
+[[ ${#manager_providers[@]} -eq 1 ]]
+[[ ${manager_providers[0]} == dist/fedora/rustd-fedora-compat.spec ]]
+grep -Eq "^Provides:[[:space:]]+systemd = ${REFERENCE_EVR//./\\.}$" \
+    "$WORK/rustd-fedora-compat.spec.expanded"
+grep -Eq "^Provides:[[:space:]]+systemd-udev = ${REFERENCE_EVR//./\\.}$" \
+    "$WORK/rustd-fedora-compat.spec.expanded"
+grep -Eq "^Provides:[[:space:]]+systemd-libs = ${REFERENCE_EVR//./\\.}$" \
+    "$WORK/rustd-compat-libs.spec.expanded"
+
+python3 - "$ROOT" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1])
+base = (root / "dist/fedora/rustd.spec").read_text()
+compat = (root / "dist/fedora/rustd-fedora-compat.spec").read_text()
+guest = (root / "scripts/fedora-vm-guest-cutover.sh").read_text()
+
+def between(text: str, start: str, end: str | None = None) -> str:
+    try:
+        body = text.split(start, 1)[1]
+    except IndexError as exc:
+        raise SystemExit(f"missing section marker: {start!r}") from exc
+    if end is not None:
+        try:
+            body = body.split(end, 1)[0]
+        except IndexError as exc:
+            raise SystemExit(f"missing section end marker: {end!r}") from exc
+    return body
+
+main_files = between(base, "\n%files\n", "\n%files cutover-tools\n")
+cutover_files = between(base, "\n%files cutover-tools\n", "\n%files devel\n")
+compat_files = between(compat, "\n%files\n", "\n%changelog\n")
+
+assert "%package cutover-tools" in base
+assert "Requires:       rustd-resolved-nss%{?_isa} >= 0.2.3" in base
+assert "%{_sbindir}/init" not in main_files
+assert "pam_rustd.so" not in main_files
+assert "%{_sbindir}/rustd-fedora-cutover" in cutover_files
+assert "%{_libdir}/security/pam_rustd.so" in cutover_files
+
+assert "%pretrans -p /bin/bash" in compat
+assert "authselect check" in compat
+assert "pam_systemd(_home|_loadkey)?" in compat
+assert "%{_sbindir}/init" in compat_files
+assert "%{_sbindir}/rustd-fedora-cutover" not in compat_files
+assert "Requires:       authselect" not in compat
+assert "Requires:       python3" not in compat
+
+stage = guest.index("install rustd-cutover-tools rustd-resolved-nss")
+migrate = guest.index("/usr/sbin/rustd-fedora-cutover", stage)
+exclusive = guest.index(
+    "install rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux",
+    migrate,
+)
+assert stage < migrate < exclusive
+assert "--allowerasing" not in guest[stage:migrate]
+assert "comm -23" in guest[stage:migrate]
+assert "packages-removed-during-stage.txt" in guest[stage:migrate]
+assert "--setopt=protected_packages=" in guest[migrate:exclusive + 500]
+assert re.search(
+    r"/usr/sbin/init\)\" = rustd-fedora-compat",
+    guest,
+)
+PY
+
+grep -Fq 'systemd_evr="$(rpm -q --qf' scripts/build-fedora-rpms.sh
+grep -Fq 'systemd_libs_evr="$(rpm -q --qf' scripts/build-fedora-rpms.sh
+grep -Fq 'systemd_udev_evr="$(rpm -q --qf' scripts/build-fedora-rpms.sh
+grep -Fq "rpm -q --qf '%{EVR}' systemd " scripts/build-fedora-rpms.sh
+grep -Fq "rpm -q --qf '%{EVR}' systemd-libs " scripts/build-fedora-rpms.sh
+grep -Fq "rpm -q --qf '%{EVR}' systemd-udev " scripts/build-fedora-rpms.sh
+grep -Fq '"$systemd_evr" == "$systemd_libs_evr"' scripts/build-fedora-rpms.sh
+grep -Fq '"$systemd_evr" == "$systemd_udev_evr"' scripts/build-fedora-rpms.sh
+test "$(grep -Fc -- '--define "systemd_compat_evr $systemd_evr"' \
+    scripts/build-fedora-rpms.sh)" -eq 2
+
+pinned="$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)"
+[[ $pinned =~ ^[0-9a-f]{40}$ ]]
+grep -Fq 'authselect create-profile rustd' \
+    dist/fedora/compat/rustd-fedora-cutover
+grep -Fq 'pam_systemd_loadkey' \
+    dist/fedora/compat/rustd-fedora-cutover
+grep -Fq 'pam_rustd.so' \
+    dist/fedora/compat/rustd-fedora-cutover
+grep -Fq 'rustd_dns' \
+    dist/fedora/compat/rustd-fedora-cutover
+
+bash -n \
+    scripts/build-fedora-rpms.sh \
+    scripts/check-fedora-package-contract.sh \
+    scripts/fedora-cutover-gate.sh \
+    scripts/fedora-vm-guest-cutover.sh \
+    dist/fedora/compat/rustd-fedora-cutover
+
+printf 'Fedora package ownership and two-phase cutover contract: PASS\n'
