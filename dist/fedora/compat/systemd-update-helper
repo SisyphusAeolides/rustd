@@ -1,0 +1,142 @@
+#!/usr/bin/bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Fedora RPM transaction helper implemented on the RustD control plane.
+set -euo pipefail
+
+SYSTEMCTL=${RUSTD_FEDORA_SYSTEMCTL:-/usr/bin/systemctl}
+RUSTCTL=${RUSTCTL:-/usr/bin/rustctl}
+MARK_ROOT=${RUSTD_FEDORA_MARK_ROOT:-/run/rustd/fedora-update}
+MANAGER_RUNTIME=${RUSTD_FEDORA_MANAGER_RUNTIME:-/run/rustd}
+
+command=${1:?transaction verb required}
+shift
+
+manager_live() {
+    [[ -S "$MANAGER_RUNTIME/ctl.sock" || -d "$MANAGER_RUNTIME/system" ]]
+}
+
+active_user_ids() {
+    "$RUSTCTL" --no-legend list-units 2>/dev/null |
+        sed -n -E 's/^user@([0-9]+)\.service[[:space:]].*/\1/p' |
+        sort -nu
+}
+
+user_rustctl() {
+    local uid=$1
+    shift
+    local entry home
+    entry=$(getent passwd "$uid" || true)
+    home=${entry#*:*:*:*:*:}
+    home=${home%%:*}
+    [[ -n $home && $home != "$entry" ]] || home=/
+    XDG_RUNTIME_DIR="/run/user/$uid" HOME="$home" "$RUSTCTL" --user "$@"
+}
+
+mark_user_units() {
+    local kind=$1 uid unit
+    shift
+    mkdir -p "$MARK_ROOT/user"
+    while IFS= read -r uid; do
+        [[ -n $uid ]] || continue
+        mkdir -p "$MARK_ROOT/user/$uid/$kind"
+        for unit in "$@"; do
+            : > "$MARK_ROOT/user/$uid/$kind/$unit"
+        done
+    done < <(active_user_ids)
+}
+
+process_user_markers() {
+    local uid marker unit
+    [[ -d "$MARK_ROOT/user" ]] || return 0
+    for uid_dir in "$MARK_ROOT/user"/[0-9]*; do
+        [[ -d $uid_dir ]] || continue
+        uid=${uid_dir##*/}
+        for marker in "$uid_dir/reload"/*; do
+            [[ -f $marker ]] || continue
+            unit=${marker##*/}
+            user_rustctl "$uid" reload "$unit" >/dev/null 2>&1 ||
+                user_rustctl "$uid" restart "$unit" >/dev/null 2>&1 || true
+            rm -f "$marker"
+        done
+        for marker in "$uid_dir/restart"/*; do
+            [[ -f $marker ]] || continue
+            unit=${marker##*/}
+            if user_rustctl "$uid" --quiet is-active "$unit" >/dev/null 2>&1; then
+                user_rustctl "$uid" restart "$unit" >/dev/null 2>&1 || true
+            fi
+            rm -f "$marker"
+        done
+    done
+}
+
+case "$command" in
+    install-system-units)
+        "$SYSTEMCTL" --no-reload preset "$@"
+        ;;
+    install-user-units)
+        "$SYSTEMCTL" --no-reload preset --global "$@"
+        ;;
+    remove-system-units)
+        if manager_live; then
+            "$SYSTEMCTL" --no-reload disable --now --no-warn "$@"
+        else
+            "$SYSTEMCTL" --no-reload disable --no-warn "$@"
+        fi
+        ;;
+    remove-user-units)
+        "$SYSTEMCTL" --global disable --no-warn "$@"
+        if manager_live; then
+            while IFS= read -r uid; do
+                [[ -n $uid ]] || continue
+                for unit in "$@"; do
+                    user_rustctl "$uid" stop "$unit" >/dev/null 2>&1 || true
+                done
+            done < <(active_user_ids)
+        fi
+        ;;
+    mark-restart-system-units)
+        manager_live || exit 0
+        for unit in "$@"; do
+            "$SYSTEMCTL" set-property "$unit" Markers=+needs-restart
+        done
+        ;;
+    mark-reload-system-units)
+        manager_live || exit 0
+        for unit in "$@"; do
+            "$SYSTEMCTL" set-property "$unit" Markers=+needs-reload
+        done
+        ;;
+    mark-restart-user-units)
+        manager_live || exit 0
+        mark_user_units restart "$@"
+        ;;
+    mark-reload-user-units)
+        manager_live || exit 0
+        mark_user_units reload "$@"
+        ;;
+    system-reload-restart|system-reload|system-restart)
+        (($# == 0)) || { echo "Unexpected arguments for '$command': $*" >&2; exit 2; }
+        manager_live || exit 0
+        [[ $command == *reload* ]] && "$SYSTEMCTL" daemon-reload
+        [[ $command == *restart* ]] && "$SYSTEMCTL" reload-or-restart --marked
+        ;;
+    user-reload-restart|user-reload|user-restart|user-reexec)
+        (($# == 0)) || { echo "Unexpected arguments for '$command': $*" >&2; exit 2; }
+        manager_live || exit 0
+        if [[ $command == *reexec* || $command == *reload* ]]; then
+            while IFS= read -r uid; do
+                [[ -n $uid ]] || continue
+                if [[ $command == *reexec* ]]; then
+                    user_rustctl "$uid" daemon-reexec >/dev/null 2>&1 || true
+                else
+                    user_rustctl "$uid" daemon-reload >/dev/null 2>&1 || true
+                fi
+            done < <(active_user_ids)
+        fi
+        [[ $command == *restart* ]] && process_user_markers
+        ;;
+    *)
+        echo "Unknown Fedora transaction verb '$command'" >&2
+        exit 3
+        ;;
+esac
