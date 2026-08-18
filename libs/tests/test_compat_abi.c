@@ -10,10 +10,7 @@
 #include <unistd.h>
 
 #include <libudev.h>
-#include <systemd/sd-bus.h>
-#include <systemd/sd-device.h>
-#include <systemd/sd-journal.h>
-#include <systemd/sd-login.h>
+#include "../compat/sd_core_abi.h"
 
 static void verify_function_types(void) {
     int (*login_new)(const char *, sd_login_monitor **) = sd_login_monitor_new;
@@ -37,6 +34,7 @@ static void verify_function_types(void) {
 }
 
 static void verify_bus_error_semantics(void) {
+    static const char invalid_args[] = "org.freedesktop.DBus.Error.InvalidArgs";
     sd_bus_error error = SD_BUS_ERROR_NULL;
     sd_bus_error unknown = SD_BUS_ERROR_NULL;
 
@@ -45,7 +43,7 @@ static void verify_bus_error_semantics(void) {
     assert(sd_bus_error_set_errno(NULL, EIO) == -EIO);
 
     assert(sd_bus_error_set_errno(&error, EINVAL) == -EINVAL);
-    assert(sd_bus_error_has_name(&error, SD_BUS_ERROR_INVALID_ARGS) > 0);
+    assert(sd_bus_error_has_name(&error, invalid_args) > 0);
     assert(sd_bus_error_get_errno(&error) == EINVAL);
     assert(error.message != NULL);
     assert(sd_bus_error_set_errno(&error, EIO) == -EINVAL);
@@ -62,11 +60,8 @@ static void verify_bus_error_semantics(void) {
 }
 
 static void verify_deprecated_seat_semantics(void) {
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
     assert(sd_seat_can_multi_session("seat0") > 0);
     assert(sd_seat_can_multi_session("arbitrary-seat") > 0);
-#pragma GCC diagnostic pop
 }
 
 int main(void) {
