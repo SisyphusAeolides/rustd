@@ -12,6 +12,7 @@ Source0:        rustd-%{version}.tar.gz
 
 BuildArch:      noarch
 BuildRequires:  make
+BuildRequires:  bzip2
 BuildRequires:  selinux-policy
 BuildRequires:  selinux-policy-devel
 Requires(post): selinux-policy-%{selinuxtype} >= %{_selinux_policy_version}
@@ -38,14 +39,11 @@ bzip2 -9 selinux-build/%{modulename}.pp
 
 %check
 test -s selinux-build/%{modulename}.pp.bz2
-bzip2 -dc selinux-build/%{modulename}.pp.bz2 > /tmp/%{modulename}.pp
-semodule_package -o /tmp/%{modulename}-roundtrip.pp \
-    -m <(checkmodule -M -m -o /dev/stdout dist/fedora/selinux/%{modulename}.te) \
-    -f dist/fedora/selinux/%{modulename}.fc || true
-# The Fedora devel Makefile is authoritative for reference-policy macros and
-# type resolution; the round-trip command above is only a lightweight syntax
-# probe because checkmodule alone does not expand reference-policy interfaces.
-test -s /tmp/%{modulename}.pp
+bzip2 -t selinux-build/%{modulename}.pp.bz2
+# Fedora's SELinux devel Makefile expands the reference-policy interfaces and
+# validates all referenced types against the installed Fedora policy. A raw
+# checkmodule invocation is deliberately not used here because it cannot
+# compile reference-policy interface macros in isolation.
 
 %install
 install -D -m0644 selinux-build/%{modulename}.pp.bz2 \
