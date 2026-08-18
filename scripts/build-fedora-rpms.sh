@@ -85,7 +85,9 @@ systemd_evr="$(rpm -q --qf '%{EVR}' systemd-libs 2>/dev/null || true)"
 rpmbuild_common=(--define "_topdir $TOPDIR")
 rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd.spec"
 rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd-selinux.spec"
-rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd-fedora-compat.spec"
+rpmbuild -ba "${rpmbuild_common[@]}" \
+    --define "systemd_compat_evr $systemd_evr" \
+    "$TOPDIR/SPECS/rustd-fedora-compat.spec"
 rpmbuild -ba "${rpmbuild_common[@]}" \
     --define "systemd_compat_evr $systemd_evr" \
     "$TOPDIR/SPECS/rustd-compat-libs.spec"
