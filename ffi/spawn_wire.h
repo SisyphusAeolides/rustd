@@ -19,7 +19,7 @@
  */
 
 #define RUSTD_SPAWN_WIRE_MAGIC UINT32_C(0x52535057) /* "RSPW" */
-#define RUSTD_SPAWN_WIRE_VERSION UINT32_C(1)
+#define RUSTD_SPAWN_WIRE_VERSION UINT32_C(2)
 
 /*
  * Request bounds.  Every count is validated on both sides so a malformed or
@@ -32,6 +32,7 @@
 #define RUSTD_SPAWN_MAX_RLIMITS 64u
 #define RUSTD_SPAWN_MAX_LISTEN_FDS 256
 #define RUSTD_SPAWN_MAX_SECCOMP_RULES 8192u
+#define RUSTD_SPAWN_MAX_READ_WRITE_PATHS 256u
 
 /*
  * File descriptor layout handed to the helper image.  Slots 3..5 are always
@@ -71,8 +72,9 @@
 /*
  * Fixed request header.  The payload that follows carries, in this order:
  * path, argv, environment, cwd, cgroup.procs path, SELinux context, AppArmor
- * profile, notify socket, rlimits, and compiled seccomp rules.  Optional
- * entries are present only when their flag bit is set.
+ * profile, notify socket, ReadWritePaths entries, rlimits, and compiled
+ * seccomp rules. Optional entries are present only when their flag bit/count
+ * indicates that they exist.
  */
 typedef struct {
     uint32_t magic;
@@ -85,6 +87,7 @@ typedef struct {
     uint32_t n_rlimits;
     uint32_t n_listen_fds;
     uint32_t n_seccomp_rules;
+    uint32_t n_read_write_paths;
     uint32_t seccomp_default_action;
     uint32_t uid;
     uint32_t gid;
