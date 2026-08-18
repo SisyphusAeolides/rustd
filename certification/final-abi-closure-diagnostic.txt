@@ -1,6 +1,6 @@
-schema=rustd-final-abi-diagnostic-v5
+schema=rustd-final-abi-diagnostic-v6
 status=failure
-tested_sha=589aafe789b1c8f800db6afd7d122480e86114fa
+tested_sha=0464c40397b709fc265daec245faed036ed29c9f
 --- tail ---
 + set -euo pipefail
 + cat
@@ -60,9 +60,8 @@ ln -sfn libsystemd.so.0 build/libs/libsystemd.so
 cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 libs/tests/test_compat_abi.c \
 	-Wl,-rpath,/home/runner/work/rustd/rustd/build/libs -Lbuild/libs \
 	-ludev -lsystemd -o build/test_compat_abi
-In file included from libs/tests/test_compat_abi.c:13:
-libs/tests/../compat/sd_core_abi.h:5:10: fatal error: rustd/device.h: No such file or directory
-    5 | #include <rustd/device.h>
-      |          ^~~~~~~~~~~~~~~~
-compilation terminated.
+/usr/bin/ld: build/libs/libsystemd.so: undefined reference to `rustd_journal_add_disjunction'
+/usr/bin/ld: build/libs/libsystemd.so: undefined reference to `rustd_journal_flush_matches'
+/usr/bin/ld: build/libs/libsystemd.so: undefined reference to `rustd_journal_add_match'
+collect2: error: ld returned 1 exit status
 make: *** [Makefile:139: check-compat] Error 1
