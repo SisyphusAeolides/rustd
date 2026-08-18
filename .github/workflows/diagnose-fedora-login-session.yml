@@ -1,5 +1,5 @@
 name: Diagnose Fedora Login1 session support
-# raw extraction for embedded Rust payload
+# rerun raw extraction on Fedora exact-stack candidate
 
 on:
   push:
