@@ -1,6 +1,6 @@
-schema=rustd-final-abi-diagnostic-v2
+schema=rustd-final-abi-diagnostic-v3
 status=failure
-tested_sha=412006117d7301ecb91d8f68b1e6263fce2eda4a
+tested_sha=e1672a8458e2772bf42adc09bdc5a28c568df317
 --- tail ---
 Traceback (most recent call last):
   File "<stdin>", line 3, in <module>
@@ -63,10 +63,10 @@ Traceback (most recent call last):
   File "/usr/lib/python3/dist-packages/yaml/scanner.py", line 291, in stale_possible_simple_keys
     raise ScannerError("while scanning a simple key", key.mark,
 yaml.scanner.ScannerError: while scanning a simple key
-  in "<unicode string>", line 97, column 1:
-    \t\tlibs/compat/journal_send_imp ... 
-    ^
+  in "<unicode string>", line 55, column 5:
+        char **resized;
+        ^
 could not find expected ':'
-  in "<unicode string>", line 98, column 1:
-    \t\tlibs/maps/libsystemd.map inc ... 
-    ^
+  in "<unicode string>", line 56, column 5:
+        char *copy;
+        ^
