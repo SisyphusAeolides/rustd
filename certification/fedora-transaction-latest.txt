@@ -1,0 +1,11 @@
+schema=rustd-fedora-transaction-v1
+status=failure
+tested_sha=1bff000cfa9958ac9742b1c602a9b14897ad8cbb
+systemctl=rustd-backed
+update_helper=rustd-backed
+tmpfiles=rustd-backed
+sysusers=rustd-backed
+sysctl=rustd-backed
+binfmt=rustd-backed
+udevadm=rustd-backed
+--- tail ---
