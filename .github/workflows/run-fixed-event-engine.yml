@@ -1,0 +1,44 @@
+name: Run fixed compatibility event engine
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-fixed-event-engine.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: compat-event-engine
+  cancel-in-progress: false
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gfortran libsystemd-dev libudev-dev python3-yaml
+      - name: Execute corrected canonical event transaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import yaml
+          from pathlib import Path
+          data=yaml.safe_load(Path('.github/workflows/land-compat-event-engine-v2.yml').read_text())
+          step=next(x for x in data['jobs']['land']['steps'] if x.get('name') == 'Apply and verify event compatibility engine')
+          script=step['run']
+          old='    if (ret) *ret = source; return 0;\\n'
+          new='    if (ret)\\n        *ret = source;\\n    return 0;\\n'
+          if old not in script:
+              raise SystemExit('event warning preimage missing')
+          Path('/tmp/event-fixed.sh').write_text(script.replace(old,new,1))
+          PY
+          bash /tmp/event-fixed.sh
