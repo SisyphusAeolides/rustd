@@ -1,0 +1,120 @@
+name: Integrate certified journal send ABI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/integrate-journal-send.yml
+
+permissions:
+  contents: write
+
+jobs:
+  integrate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential gfortran libudev-dev
+      - name: Integrate and verify journal send implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'status=pass' certification/journal-send-compat-latest.txt
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def remove_function(text: str, name: str) -> str:
+              needle = f'int {name}('
+              start = text.find(needle)
+              if start < 0:
+                  return text
+              brace = text.find('{', start)
+              if brace < 0:
+                  raise SystemExit(f'{name}: opening brace missing')
+              depth = 0
+              i = brace
+              while i < len(text):
+                  if text[i] == '{': depth += 1
+                  elif text[i] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          end = i + 1
+                          while end < len(text) and text[end] in ' \t': end += 1
+                          if end < len(text) and text[end] == '\n': end += 1
+                          if end < len(text) and text[end] == '\n': end += 1
+                          return text[:start] + text[end:]
+                  i += 1
+              raise SystemExit(f'{name}: closing brace missing')
+
+          p = Path('libs/compat/systemd.c')
+          s = p.read_text()
+          for name in (
+              'sd_journal_send',
+              'sd_journal_send_with_location',
+              'sd_journal_print_with_location',
+              'sd_journal_printv_with_location',
+          ):
+              s = remove_function(s, name)
+          p.write_text(s)
+
+          m = Path('Makefile')
+          ms = m.read_text()
+          old_dep = '''$(LIBS_DIR)/libsystemd.so.0: libs/compat/systemd.c libs/compat/sd_bus_stubs.c libs/maps/libsystemd.map \\\n'''
+          new_dep = '''$(LIBS_DIR)/libsystemd.so.0: libs/compat/systemd.c libs/compat/sd_bus_stubs.c libs/compat/journal_send_impl.c libs/maps/libsystemd.map \\\n'''
+          if 'libs/compat/journal_send_impl.c libs/maps/libsystemd.map' not in ms:
+              if old_dep not in ms: raise SystemExit('Makefile dependency preimage missing')
+              ms = ms.replace(old_dep, new_dep, 1)
+          old_src = '''\t\tlibs/compat/systemd.c libs/compat/sd_bus_stubs.c \\\n'''
+          new_src = '''\t\tlibs/compat/systemd.c libs/compat/sd_bus_stubs.c libs/compat/journal_send_impl.c \\\n'''
+          if 'libs/compat/systemd.c libs/compat/sd_bus_stubs.c libs/compat/journal_send_impl.c' not in ms:
+              if old_src not in ms: raise SystemExit('Makefile source preimage missing')
+              ms = ms.replace(old_src, new_src, 1)
+          m.write_text(ms)
+
+          c = Path('scripts/check-compat-closure.py')
+          cs = c.read_text()
+          cs = cs.replace('    "sd_journal_send_with_location",\n', '')
+          cs = cs.replace('    "sd_journal_print_with_location",\n', '')
+          cs = cs.replace('    "sd_journal_printv_with_location",\n', '')
+          anchor = '''        Path("libs/compat/systemd.c"),\n        STUB_SOURCE,\n        Path("libs/compat/udev.c"),\n'''
+          replacement = '''        Path("libs/compat/systemd.c"),\n        Path("libs/compat/journal_send_impl.c"),\n        STUB_SOURCE,\n        Path("libs/compat/udev.c"),\n'''
+          if 'Path("libs/compat/journal_send_impl.c")' not in cs:
+              if anchor not in cs: raise SystemExit('closure source list anchor missing')
+              cs = cs.replace(anchor, replacement, 1)
+          c.write_text(cs)
+
+          r = Path('scripts/check-compat-source-readiness.py')
+          rs = r.read_text()
+          anchor = '''        Path("libs/compat/systemd.c"),\n        Path("libs/compat/sd_bus_stubs.c"),\n        Path("libs/compat/udev.c"),\n'''
+          replacement = '''        Path("libs/compat/systemd.c"),\n        Path("libs/compat/journal_send_impl.c"),\n        Path("libs/compat/sd_bus_stubs.c"),\n        Path("libs/compat/udev.c"),\n'''
+          if 'Path("libs/compat/journal_send_impl.c")' not in rs:
+              if anchor not in rs: raise SystemExit('readiness source list anchor missing')
+              rs = rs.replace(anchor, replacement, 1)
+          r.write_text(rs)
+          PY
+          git diff --check
+          make clean
+          make check-compat
+          python3 scripts/check-compat-source-readiness.py --report target/compat-readiness.json
+          python3 - <<'PY'
+          import json
+          r=json.load(open('target/compat-readiness.json'))
+          if r['required'] != 184 or r['supported'] < 126 or r['unsupported'] > 58 or r['missing_source_definition'] != 0:
+              raise SystemExit(r)
+          for symbol in ('sd_journal_send_with_location','sd_journal_print_with_location'):
+              if symbol in r['unsupported_symbols'] or symbol in r['missing_symbols']:
+                  raise SystemExit(f'{symbol} not integrated')
+          PY
+          rm -f .github/workflows/integrate-journal-send.yml
+          git add -A Makefile libs/compat/systemd.c libs/compat/journal_send_impl.c scripts/check-compat-closure.py scripts/check-compat-source-readiness.py .github/workflows/integrate-journal-send.yml
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Integrate journal send compatibility ABI'
+          git push origin HEAD:main
