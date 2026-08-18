@@ -1,6 +1,5 @@
-schema=rustd-fedora-login1-diagnostic-v2
-status=success
-tested_sha=ea57622511f35e0b2a370fdd7be84f591592b031
+schema=rustd-fedora-login1-diagnostic-v3
+status=failure
+tested_sha=4158173a7c52bd10728d64c9b6eff652286a7f93
 --- tail ---
-/tmp/login1-step.sh: line 2: warning: here-document at line 1 delimited by end-of-file (wanted `PY')
-+ python3 -
+Login1 extraction is incomplete
