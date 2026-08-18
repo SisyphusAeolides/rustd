@@ -13,8 +13,8 @@ _commit='REPLACE_WITH_CERTIFIED_RUSTD_SHA'
 
 depends=('rustd' 'dbus' 'json-c')
 makedepends=('rust' 'gfortran' 'pkgconf' 'dbus' 'json-c' 'git')
-provides=('systemd-libs' 'libsystemd.so=0-64' 'libudev.so=1-64')
-conflicts=('systemd-libs')
+provides=('systemd-libs' 'libsystemd' 'libsystemd.so' 'libsystemd.so=0-64' 'libudev.so' 'libudev.so=1-64')
+conflicts=('systemd-libs' 'libsystemd')
 source=("rustd::git+${url}.git#commit=${_commit}")
 b2sums=('SKIP')
 
