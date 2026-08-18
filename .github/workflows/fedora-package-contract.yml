@@ -1,4 +1,5 @@
 name: Fedora package and SELinux contract
+# trigger
 
 on:
   push:
