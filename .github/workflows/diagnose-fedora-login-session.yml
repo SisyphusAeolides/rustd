@@ -1,5 +1,5 @@
 name: Diagnose Fedora Login1 session support
-# trigger
+# raw extraction for embedded Rust payload
 
 on:
   push:
@@ -25,7 +25,7 @@ jobs:
         shell: 'bash --noprofile --norc -euo pipefail {0}'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends gfortran libdbus-1-dev libpam0g-dev pkg-config python3-yaml
+          sudo apt-get install --yes --no-install-recommends gfortran libdbus-1-dev libpam0g-dev pkg-config
       - name: Run canonical Login1 patch and capture result
         id: test
         continue-on-error: true
@@ -33,14 +33,23 @@ jobs:
         run: |
           exec > >(tee /tmp/fedora-login1.log) 2>&1
           python3 - <<'PY'
-          import yaml
           from pathlib import Path
-          workflow=yaml.safe_load(Path('.github/workflows/land-fedora-login-session.yml').read_text())
-          step=next(x for x in workflow['jobs']['land']['steps'] if x.get('name') == 'Add complete Login1 session registration path')
-          script=step['run']
-          cut='git fetch origin main'
+          text = Path('.github/workflows/land-fedora-login-session.yml').read_text()
+          step = text.index('      - name: Add complete Login1 session registration path\n')
+          marker = '        run: |\n'
+          start = text.index(marker, step) + len(marker)
+          raw = text[start:]
+          lines = []
+          for line in raw.splitlines():
+              if line.startswith('          '):
+                  line = line[10:]
+              else:
+                  break
+              lines.append(line)
+          script = '\n'.join(lines) + '\n'
+          cut = 'git fetch origin main'
           if cut in script:
-              script=script[:script.index(cut)]
+              script = script[:script.index(cut)]
           Path('/tmp/login1-step.sh').write_text(script)
           PY
           bash -x /tmp/login1-step.sh
@@ -55,7 +64,7 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-login1-diagnostic-v1\n'
+            printf 'schema=rustd-fedora-login1-diagnostic-v2\n'
             printf 'status=%s\n' "$outcome"
             printf 'tested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
