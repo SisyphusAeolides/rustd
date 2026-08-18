@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 //! Native uevent daemon for `RustD`.
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use rustd::udev::{apply_rules, load_rules, persist_device, Device, Rule};
 use std::fs;
 use std::io::{self, Read};
@@ -12,12 +12,22 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const CONTROL_SOCKET: &str = "/run/udev/control";
 
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ResolveNames {
+    Early,
+    Late,
+    Never,
+}
+
 #[derive(Parser)]
 #[command(name = "rustd-udevd", about = "RustD device event daemon")]
 struct Arguments {
-    /// Do not daemonize; `RustD` services always use this mode.
+    /// Fork into the background after argument validation.
     #[arg(long)]
     daemon: bool,
+    /// Compatibility option used by dracut's udev startup path.
+    #[arg(long, value_enum, value_name = "MODE")]
+    resolve_names: Option<ResolveNames>,
     /// Do not create nodes or execute RUN rules.
     #[arg(long)]
     dry_run: bool,
@@ -25,7 +35,13 @@ struct Arguments {
 
 fn main() -> anyhow::Result<()> {
     let arguments = Arguments::parse();
-    let _ = arguments.daemon;
+    // RustD's native rule engine does not resolve owner/group names while
+    // handling kernel events, so every accepted compatibility mode is safe.
+    let _ = arguments.resolve_names;
+    if arguments.daemon {
+        daemonize()?;
+    }
+
     fs::create_dir_all("/run/udev/data")?;
     let listener = bind_control_socket()?;
     let netlink = open_uevent_socket()?;
@@ -84,6 +100,37 @@ fn main() -> anyhow::Result<()> {
         }
     }
     let _ = fs::remove_file(CONTROL_SOCKET);
+    Ok(())
+}
+
+fn daemonize() -> io::Result<()> {
+    let first = unsafe { libc::fork() };
+    if first < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if first > 0 {
+        unsafe { libc::_exit(0) };
+    }
+
+    if unsafe { libc::setsid() } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let second = unsafe { libc::fork() };
+    if second < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if second > 0 {
+        unsafe { libc::_exit(0) };
+    }
+
+    std::env::set_current_dir("/")?;
+    let null = fs::OpenOptions::new().read(true).write(true).open("/dev/null")?;
+    for fd in libc::STDIN_FILENO..=libc::STDERR_FILENO {
+        if unsafe { libc::dup2(null.as_raw_fd(), fd) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
     Ok(())
 }
 
@@ -162,4 +209,21 @@ fn handle_control(
         stopped.store(false, Ordering::Relaxed);
     }
     let _ = std::io::Write::write_all(&mut stream, b"OK\n");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_dracut_daemon_arguments() {
+        let args = Arguments::try_parse_from([
+            "rustd-udevd",
+            "--daemon",
+            "--resolve-names=never",
+        ])
+        .expect("dracut udev daemon arguments must parse");
+        assert!(args.daemon);
+        assert!(matches!(args.resolve_names, Some(ResolveNames::Never)));
+    }
 }
