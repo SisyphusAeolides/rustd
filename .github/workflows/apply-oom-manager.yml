@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           test "$(git hash-object src/manager.rs)" = 483f4e1dd7352c362c39becbeea9b17525c0095a
           test "$(git hash-object src/lib.rs)" = 13f01448678d4a1ef2f3ffb2b59603683b3b2a94
-          test "$(git hash-object src/oom.rs)" = e1de3dd89058bb7755ddefa5163d1aefe4410e69
+          test "$(git hash-object src/oom.rs)" = 2de5433c63bdbd7fc1cd1ee37c7c1be8701d1c6d
           base64 -d scripts/oom-manager.patch.gz.b64 | gzip -dc > "$RUNNER_TEMP/oom-manager.patch"
           printf '%s  %s\n' \
             4ad7518aac38eb53f7d7e9448ae4b7b010e164e9d66d50059b585d2c7f1437f4 \
