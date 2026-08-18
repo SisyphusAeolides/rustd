@@ -16,14 +16,14 @@ BuildRequires:  pam-devel
 BuildRequires:  pkgconfig(dbus-1)
 
 Requires:       /usr/bin/dbus-daemon
-Conflicts:      systemd
 
 %description
 RustD is the native PID 1, service manager, device manager, journal, login
 manager, and supporting userspace for an exclusive RustD Linux installation.
-This package intentionally does not claim the RPM capability "systemd".
-Fedora package-level systemd consumers must be resolved by the Fedora cutover
-preflight before the systemd RPM is removed.
+This package intentionally does not claim the RPM capability "systemd" and is
+safe to stage alongside Fedora's systemd package for VM certification. The
+path-owning Fedora compatibility package performs the final conflict/swap only
+after all release gates pass.
 
 %package devel
 Summary:        Development files for RustD native libraries
@@ -90,4 +90,4 @@ ln -s ../lib/rustd/rustd %{buildroot}%{_sbindir}/init
 
 %changelog
 * Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
-- Add Fedora native RustD package for exclusive cutover testing
+- Add Fedora native RustD package for staged and exclusive cutover testing
