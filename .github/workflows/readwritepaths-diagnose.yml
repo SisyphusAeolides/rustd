@@ -22,6 +22,7 @@ jobs:
         shell: bash
         run: |
           set -u
+          # This workflow is intentionally one-shot; the second commit triggers it.
           sudo apt-get update >/dev/null 2>&1
           sudo apt-get install --yes --no-install-recommends gfortran >/dev/null 2>&1
           rustup toolchain install 1.75.0 --profile minimal >/dev/null 2>&1
