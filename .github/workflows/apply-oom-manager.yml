@@ -1,0 +1,74 @@
+name: Apply exact OOM manager integration
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - scripts/oom-manager.patch.gz.b64
+      - .github/workflows/apply-oom-manager.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rustd-oom-manager-landing-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply-exact-manager-patch:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact staging commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Verify and apply exact manager integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object src/manager.rs)" = 483f4e1dd7352c362c39becbeea9b17525c0095a
+          test "$(git hash-object src/lib.rs)" = 13f01448678d4a1ef2f3ffb2b59603683b3b2a94
+          test "$(git hash-object src/oom.rs)" = e1de3dd89058bb7755ddefa5163d1aefe4410e69
+          base64 -d scripts/oom-manager.patch.gz.b64 | gzip -dc > "$RUNNER_TEMP/oom-manager.patch"
+          printf '%s  %s\n' \
+            4ad7518aac38eb53f7d7e9448ae4b7b010e164e9d66d50059b585d2c7f1437f4 \
+            "$RUNNER_TEMP/oom-manager.patch" > "$RUNNER_TEMP/oom-manager.patch.sha256"
+          sha256sum --check "$RUNNER_TEMP/oom-manager.patch.sha256"
+          git apply --check "$RUNNER_TEMP/oom-manager.patch"
+          git apply "$RUNNER_TEMP/oom-manager.patch"
+          test "$(git hash-object src/manager.rs)" = 01cac46bc41f2c9d9e025ace5dab1281d6b1954d
+          git diff --check
+
+      - name: Commit exact manager integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f \
+            .github/workflows/apply-oom-manager.yml \
+            .github/workflows/apply-oom-policy.yml \
+            scripts/oom-manager.patch.gz.b64 \
+            scripts/oom-policy.patch.gz
+          git add -A
+          git diff --cached --check
+          python3 - <<'PY'
+          import subprocess
+          allowed = {
+              '.github/workflows/apply-oom-manager.yml',
+              '.github/workflows/apply-oom-policy.yml',
+              'scripts/oom-manager.patch.gz.b64',
+              'scripts/oom-policy.patch.gz',
+              'src/manager.rs',
+          }
+          paths = set(subprocess.check_output(
+              ['git', 'diff', '--cached', '--name-only'], text=True
+          ).splitlines())
+          if paths != allowed:
+              raise SystemExit(f'unexpected OOM manager landing paths: {sorted(paths)}')
+          PY
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Integrate OOM policy handling'
+          git push origin HEAD:main
