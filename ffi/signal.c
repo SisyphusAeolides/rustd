@@ -3,11 +3,10 @@
 /*
  * signal.c — signal handler installation for PID 1.
  *
- * systemd PID 1 uses signalfd rather than async signal handlers; this
+ * RustD PID 1 uses signalfd rather than async signal handlers; this
  * module sets all managed signals to SIG_DFL, then the Rust event loop
  * opens a signalfd and blocks delivery via the process signal mask.
- * Stub — populated as the event loop is implemented against
- * src/core/main.c in the v261 baseline.
+ * These helpers are the native reset/blocking implementation used by PID 1.
  */
 
 #include <errno.h>
@@ -19,7 +18,7 @@ static const int managed_signals[] = {
     SIGUSR1, SIGUSR2, SIGWINCH, SIGPIPE,
     SIGPWR,
 #ifdef SIGRTMIN
-    /* SIGRTMIN+0 through SIGRTMIN+29 are used by systemd */
+    /* SIGRTMIN+0 through SIGRTMIN+29 are reserved for realtime control. */
 #endif
 };
 
