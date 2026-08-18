@@ -1,5 +1,5 @@
 name: Run final RustD ABI closure
-# rerun after native journal-filter export closure 2026-08-18
+# run the complete ABI transaction with an autostashed main-branch rebase
 
 defaults:
   run:
@@ -88,9 +88,12 @@ bash /tmp/apply-journal-filter.sh'''
               "s = s.replace('STUB_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'STUB_DATA_SYMBOLS = set()')",
               "s = s.replace('UNSUPPORTED_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'UNSUPPORTED_DATA_SYMBOLS = set()')")
           run = run.replace(
+              'git rebase origin/main',
+              'git rebase --autostash origin/main')
+          run = run.replace(
               'git add -A Makefile libs/compat/systemd.c',
-              'rm -f .github/workflows/final-abi-closure.yml .github/workflows/land-journal-filter-abi.yml\n'
-              'git add -A Makefile libs/compat/systemd.c')
+              'rm -f .github/workflows/final-abi-closure.yml \\\n  .github/workflows/land-journal-filter-abi.yml \\\n  .github/workflows/run-final-abi-closure.yml \\\n  .github/journal-filter-trigger\n'
+              'git add -A .github/workflows/final-abi-closure.yml \\\n  .github/workflows/land-journal-filter-abi.yml \\\n  .github/workflows/run-final-abi-closure.yml \\\n  .github/journal-filter-trigger Makefile libs/compat/systemd.c')
           Path('/tmp/final-abi-closure.sh').write_text(run)
           PY
           bash /tmp/final-abi-closure.sh
@@ -104,11 +107,12 @@ bash /tmp/apply-journal-filter.sh'''
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-final-abi-diagnostic-v4\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-final-abi-diagnostic-v7\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 360 /tmp/final-abi-closure.log || true
+            tail -n 420 /tmp/final-abi-closure.log || true
           } > certification/final-abi-closure-diagnostic.txt
           git add certification/final-abi-closure-diagnostic.txt
+          git diff --cached --check
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record final ABI closure diagnostic'
