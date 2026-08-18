@@ -122,7 +122,7 @@ native-install targets, but they do not substitute for the Fedora cutover gate.
 The Fedora target is deliberately stronger than an installroot dependency
 solver. A release candidate is not Fedora-certified until
 `certification/fedora-full-vm-latest.txt` records `status=pass` for the exact
-candidate SHA.
+RustD SHA and its pinned RustD-Resolved SHA.
 
 The Fedora campaign performs a destructive conversion of a disposable Fedora
 44 VM and requires all of the following:
@@ -131,16 +131,26 @@ The Fedora campaign performs a destructive conversion of a disposable Fedora
   frontends, and SELinux policy from one pinned source pair;
 - bind the replacement RPM capabilities to the exact Fedora `systemd`,
   `systemd-libs`, and `systemd-udev` EVR measured in the build environment;
-- migrate authselect-managed PAM and NSS configuration before removing the old
-  PAM package, preserving the selected profile/features and creating a rollback
-  backup;
+- stage only `rustd-cutover-tools` and `rustd-resolved-nss` first, with no
+  `--allowerasing`, and prove that no pre-existing package was removed or
+  replaced while systemd remains installed and continues to own PID 1;
+- migrate authselect-managed PAM and NSS configuration while the original stack
+  is still present, preserving the selected profile/features and creating a
+  rollback backup;
+- require the final `rustd-fedora-compat` RPM transaction to repeat the PAM,
+  NSS, authselect, and file checks in a fail-closed `%pretrans` guard before it
+  is allowed to erase the old stack;
 - reject unsupported `systemd-homed` and `pam_systemd_loadkey` configurations
   before the destructive phase rather than silently dropping their semantics;
 - remove every installed RPM whose name is `systemd` or begins `systemd-` and
   pass `dnf check` afterward;
-- require `/usr/sbin/init` to be owned by `rustd`, compatibility SONAMEs to be
-  owned by `rustd-compat-libs`, and legacy Fedora transaction entry points to be
-  owned by `rustd-fedora-compat`;
+- require `/usr/sbin/init` and the legacy Fedora transaction entry points to be
+  owned by `rustd-fedora-compat`, compatibility SONAMEs to be owned by
+  `rustd-compat-libs`, the PAM migration helper and module to be owned by
+  `rustd-cutover-tools`, and the DNS NSS module to be owned by
+  `rustd-resolved-nss`;
+- require `/usr/sbin/init` to resolve to `/usr/lib/rustd/rustd` and the legacy
+  udev daemon pathname to resolve to RustD's native `rustd-udevd`;
 - rebuild the Fedora initramfs without systemd implementation modules or
   executables, while allowing only explicitly tested compatibility pathnames
   that resolve to RustD code;
@@ -149,10 +159,11 @@ The Fedora campaign performs a destructive conversion of a disposable Fedora
   RustD-Resolved, NSS/DNS, DNF, udev settling, service control, and RustD
   poweroff remain functional.
 
-The cutover helper is installed as `/usr/sbin/rustd-fedora-cutover`. It is a
-fail-closed migration tool for the disposable certification machine and for
-administrators who deliberately choose the same conversion path; it is not a
-reason to perform an unverified in-place conversion on an irreplaceable host.
+The cutover helper is installed as `/usr/sbin/rustd-fedora-cutover` by the
+nonconflicting `rustd-cutover-tools` package. It is a fail-closed migration tool
+for the disposable certification machine and for administrators who deliberately
+choose the same conversion path; it is not a reason to perform an unverified
+in-place conversion on an irreplaceable host.
 
 ## Language boundaries
 
