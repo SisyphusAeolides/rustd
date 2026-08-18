@@ -1,0 +1,580 @@
+name: Land legacy manager D-Bus identity
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-legacy-manager-dbus.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: land-legacy-manager-dbus
+  cancel-in-progress: true
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install native dependencies
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential gfortran pkg-config libdbus-1-dev libpam0g-dev \
+            libjson-c-dev python3
+      - name: Apply and verify legacy manager bridge
+        id: verify
+        continue-on-error: true
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          exec > >(tee /tmp/rustd-legacy-manager.log) 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+
+          legacy = r'''// SPDX-License-Identifier: LGPL-2.1-or-later
+//! Compatibility D-Bus identities for applications that address the legacy
+//! Linux service-manager interfaces directly.
+//!
+//! RustD's native `io.rustd.Manager1` API remains authoritative. These wrappers
+//! reuse the same manager objects and dispatch logic; they do not create a
+//! second service manager.
+
+use crate::dbus::job_iface::JobInterface;
+use crate::dbus::manager_iface::{ManagerInterfaceApi, ManagerSignal};
+use crate::dbus::service_iface::ServiceInterface;
+use crate::dbus::unit_iface::UnitInterface;
+
+pub const LEGACY_BUS_NAME: &str = "org.freedesktop.systemd1";
+pub const LEGACY_OBJECT_PATH: &str = "/org/freedesktop/systemd1";
+pub const LEGACY_MANAGER_INTERFACE: &str = "org.freedesktop.systemd1.Manager";
+pub const LEGACY_UNIT_INTERFACE: &str = "org.freedesktop.systemd1.Unit";
+pub const LEGACY_SERVICE_INTERFACE: &str = "org.freedesktop.systemd1.Service";
+pub const LEGACY_JOB_INTERFACE: &str = "org.freedesktop.systemd1.Job";
+
+macro_rules! legacy_interface {
+    ($wrapper:ident, $inner:ty, $name:expr) => {
+        pub struct $wrapper {
+            inner: $inner,
+        }
+
+        impl $wrapper {
+            #[must_use]
+            pub fn new(inner: $inner) -> Self {
+                Self { inner }
+            }
+
+            pub fn inner_mut(&mut self) -> &mut $inner {
+                &mut self.inner
+            }
+        }
+
+        #[zbus::export::async_trait::async_trait]
+        impl zbus::object_server::Interface for $wrapper {
+            fn name() -> zbus::names::InterfaceName<'static> {
+                zbus::names::InterfaceName::try_from($name)
+                    .expect("legacy D-Bus interface name is valid")
+            }
+
+            async fn get(
+                &self,
+                property_name: &str,
+            ) -> Option<zbus::fdo::Result<zbus::zvariant::OwnedValue>> {
+                <$inner as zbus::object_server::Interface>::get(
+                    &self.inner,
+                    property_name,
+                )
+                .await
+            }
+
+            async fn get_all(
+                &self,
+            ) -> zbus::fdo::Result<
+                std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+            > {
+                <$inner as zbus::object_server::Interface>::get_all(&self.inner).await
+            }
+
+            fn set<'call>(
+                &'call self,
+                property_name: &'call str,
+                value: &'call zbus::zvariant::Value<'_>,
+                ctxt: &'call zbus::object_server::SignalContext<'_>,
+            ) -> zbus::object_server::DispatchResult<'call> {
+                <$inner as zbus::object_server::Interface>::set(
+                    &self.inner,
+                    property_name,
+                    value,
+                    ctxt,
+                )
+            }
+
+            async fn set_mut(
+                &mut self,
+                property_name: &str,
+                value: &zbus::zvariant::Value<'_>,
+                ctxt: &zbus::object_server::SignalContext<'_>,
+            ) -> Option<zbus::fdo::Result<()>> {
+                <$inner as zbus::object_server::Interface>::set_mut(
+                    &mut self.inner,
+                    property_name,
+                    value,
+                    ctxt,
+                )
+                .await
+            }
+
+            fn call<'call>(
+                &'call self,
+                server: &'call zbus::ObjectServer,
+                connection: &'call zbus::Connection,
+                message: &'call zbus::message::Message,
+                name: zbus::names::MemberName<'call>,
+            ) -> zbus::object_server::DispatchResult<'call> {
+                <$inner as zbus::object_server::Interface>::call(
+                    &self.inner,
+                    server,
+                    connection,
+                    message,
+                    name,
+                )
+            }
+
+            fn call_mut<'call>(
+                &'call mut self,
+                server: &'call zbus::ObjectServer,
+                connection: &'call zbus::Connection,
+                message: &'call zbus::message::Message,
+                name: zbus::names::MemberName<'call>,
+            ) -> zbus::object_server::DispatchResult<'call> {
+                <$inner as zbus::object_server::Interface>::call_mut(
+                    &mut self.inner,
+                    server,
+                    connection,
+                    message,
+                    name,
+                )
+            }
+
+            fn introspect_to_writer(
+                &self,
+                writer: &mut dyn std::fmt::Write,
+                level: usize,
+            ) {
+                let mut generated = String::new();
+                <$inner as zbus::object_server::Interface>::introspect_to_writer(
+                    &self.inner,
+                    &mut generated,
+                    level,
+                );
+                let native = <$inner as zbus::object_server::Interface>::name();
+                let legacy = <Self as zbus::object_server::Interface>::name();
+                let translated = generated.replace(native.as_str(), legacy.as_str());
+                writer
+                    .write_str(&translated)
+                    .expect("writing D-Bus introspection XML cannot fail");
+            }
+        }
+    };
+}
+
+legacy_interface!(
+    LegacyManagerInterface,
+    ManagerInterfaceApi,
+    LEGACY_MANAGER_INTERFACE
+);
+legacy_interface!(LegacyUnitInterface, UnitInterface, LEGACY_UNIT_INTERFACE);
+legacy_interface!(
+    LegacyServiceInterface,
+    ServiceInterface,
+    LEGACY_SERVICE_INTERFACE
+);
+legacy_interface!(LegacyJobInterface, JobInterface, LEGACY_JOB_INTERFACE);
+
+impl LegacyJobInterface {
+    pub fn set_state(&mut self, state: String) {
+        self.inner_mut().set_state(state);
+    }
+}
+
+pub async fn emit_manager_signal(conn: &zbus::Connection, signal: &ManagerSignal) {
+    match signal {
+        ManagerSignal::UnitNew { id, path } => {
+            if let Ok(path) = zbus::zvariant::ObjectPath::try_from(path.as_str()) {
+                let _ = conn
+                    .emit_signal(
+                        None::<&str>,
+                        LEGACY_OBJECT_PATH,
+                        LEGACY_MANAGER_INTERFACE,
+                        "UnitNew",
+                        &(id.as_str(), path),
+                    )
+                    .await;
+            }
+        }
+        ManagerSignal::UnitRemoved { id, path } => {
+            if let Ok(path) = zbus::zvariant::ObjectPath::try_from(path.as_str()) {
+                let _ = conn
+                    .emit_signal(
+                        None::<&str>,
+                        LEGACY_OBJECT_PATH,
+                        LEGACY_MANAGER_INTERFACE,
+                        "UnitRemoved",
+                        &(id.as_str(), path),
+                    )
+                    .await;
+            }
+        }
+        ManagerSignal::JobNew { job, path } => {
+            if let Ok(path) = zbus::zvariant::ObjectPath::try_from(path.as_str()) {
+                let _ = conn
+                    .emit_signal(
+                        None::<&str>,
+                        LEGACY_OBJECT_PATH,
+                        LEGACY_MANAGER_INTERFACE,
+                        "JobNew",
+                        &(job.id, path, job.unit_name.as_str()),
+                    )
+                    .await;
+            }
+        }
+        ManagerSignal::JobRemoved { job, path, result } => {
+            if let Ok(path) = zbus::zvariant::ObjectPath::try_from(path.as_str()) {
+                let _ = conn
+                    .emit_signal(
+                        None::<&str>,
+                        LEGACY_OBJECT_PATH,
+                        LEGACY_MANAGER_INTERFACE,
+                        "JobRemoved",
+                        &(
+                            job.id,
+                            path,
+                            job.unit_name.as_str(),
+                            result.as_str(),
+                        ),
+                    )
+                    .await;
+            }
+        }
+        ManagerSignal::Reloading { active } => {
+            let _ = conn
+                .emit_signal(
+                    None::<&str>,
+                    LEGACY_OBJECT_PATH,
+                    LEGACY_MANAGER_INTERFACE,
+                    "Reloading",
+                    &(*active,),
+                )
+                .await;
+        }
+        ManagerSignal::UnitFilesChanged => {
+            let _ = conn
+                .emit_signal(
+                    None::<&str>,
+                    LEGACY_OBJECT_PATH,
+                    LEGACY_MANAGER_INTERFACE,
+                    "UnitFilesChanged",
+                    &(),
+                )
+                .await;
+        }
+        ManagerSignal::StartupFinished {
+            firmware,
+            loader,
+            kernel,
+            initrd,
+            userspace,
+            total,
+        } => {
+            let _ = conn
+                .emit_signal(
+                    None::<&str>,
+                    LEGACY_OBJECT_PATH,
+                    LEGACY_MANAGER_INTERFACE,
+                    "StartupFinished",
+                    &(*firmware, *loader, *kernel, *initrd, *userspace, *total),
+                )
+                .await;
+        }
+        ManagerSignal::JobStateChanged { .. } => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::object_server::Interface;
+
+    #[test]
+    fn legacy_names_are_valid() {
+        assert_eq!(LegacyManagerInterface::name().as_str(), LEGACY_MANAGER_INTERFACE);
+        assert_eq!(LegacyUnitInterface::name().as_str(), LEGACY_UNIT_INTERFACE);
+        assert_eq!(LegacyServiceInterface::name().as_str(), LEGACY_SERVICE_INTERFACE);
+        assert_eq!(LegacyJobInterface::name().as_str(), LEGACY_JOB_INTERFACE);
+    }
+}
+'''
+          Path('src/dbus/legacy_iface.rs').write_text(legacy)
+
+          mod = Path('src/dbus/mod.rs')
+          text = mod.read_text()
+          marker = 'pub mod job_iface;\n'
+          if 'pub mod legacy_iface;' not in text:
+              if marker not in text:
+                  raise SystemExit('src/dbus/mod.rs insertion point is missing')
+              text = text.replace(marker, marker + 'pub mod legacy_iface;\n', 1)
+          mod.write_text(text)
+
+          manager = Path('src/dbus/manager_iface.rs')
+          text = manager.read_text()
+          old = '/// The `io.rustd.Manager1.Manager` interface object.\npub struct ManagerInterface {'
+          new = '/// The `io.rustd.Manager1.Manager` interface object.\n#[derive(Clone)]\npub struct ManagerInterface {'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('ManagerInterface declaration is missing')
+          manager.write_text(text)
+
+          server = Path('src/dbus/server.rs')
+          text = server.read_text()
+          import_marker = 'use crate::dbus::job_iface::JobInterface;\n'
+          imports = '''use crate::dbus::legacy_iface::{
+              emit_manager_signal as emit_legacy_manager_signal, LegacyJobInterface,
+              LegacyManagerInterface, LegacyServiceInterface, LegacyUnitInterface,
+              LEGACY_BUS_NAME, LEGACY_OBJECT_PATH,
+          };
+          '''
+          if 'LegacyManagerInterface' not in text:
+              if import_marker not in text:
+                  raise SystemExit('server legacy import insertion point is missing')
+              text = text.replace(import_marker, import_marker + imports, 1)
+
+          native_registration = '''    conn.object_server()
+              .at(RUSTD_OBJECT_PATH, ManagerInterfaceApi::new(manager))
+              .await
+              .map_err(|e| anyhow!("dbus: failed to register manager object: {e}"))?;
+          '''
+          legacy_registration = '''    let legacy_manager = LegacyManagerInterface::new(
+              ManagerInterfaceApi::new(manager.clone()),
+          );
+              conn.object_server()
+              .at(RUSTD_OBJECT_PATH, ManagerInterfaceApi::new(manager))
+              .await
+              .map_err(|e| anyhow!("dbus: failed to register manager object: {e}"))?;
+              conn.object_server()
+              .at(LEGACY_OBJECT_PATH, legacy_manager)
+              .await
+              .map_err(|e| anyhow!("dbus: failed to register legacy manager object: {e}"))?;
+          '''
+          if native_registration in text:
+              text = text.replace(native_registration, legacy_registration, 1)
+          elif 'LEGACY_OBJECT_PATH, legacy_manager' not in text:
+              raise SystemExit('manager registration block is missing')
+
+          native_name = '''    conn.request_name(RUSTD_BUS_NAME)
+              .await
+              .map_err(|e| anyhow!("dbus: failed to request bus name '{RUSTD_BUS_NAME}': {e}"))?;
+          '''
+          names = native_name + '''
+              if let Err(error) = conn.request_name(LEGACY_BUS_NAME).await {
+              if scope == ManagerScope::System && std::process::id() == 1 {
+                  return Err(anyhow!(
+                      "dbus: failed to request compatibility bus name '{LEGACY_BUS_NAME}': {error}"
+                  ));
+              }
+              eprintln!(
+                  "dbus: compatibility bus name '{LEGACY_BUS_NAME}' unavailable: {error}"
+              );
+          }
+          '''
+          if native_name in text and 'request_name(LEGACY_BUS_NAME)' not in text:
+              text = text.replace(native_name, names, 1)
+
+          function = text.index('async fn register_unit_object_at(')
+          unit_start = text.index('    let unit_iface = UnitInterface {', function)
+          unit_end = text.index('    };', unit_start) + len('    };')
+          unit_literal = text[unit_start:unit_end]
+          native_at = '    let _ = conn.object_server().at(path.clone(), unit_iface).await;'
+          if native_at in text[unit_end:]:
+              legacy_literal = unit_literal.replace(
+                  'let unit_iface =', 'let legacy_unit_inner =', 1
+              )
+              insertion = (
+                  native_at + '\n' + legacy_literal + '\n'
+                  '    let _ = conn\n'
+                  '        .object_server()\n'
+                  '        .at(path.clone(), LegacyUnitInterface::new(legacy_unit_inner))\n'
+                  '        .await;'
+              )
+              text = text[:unit_end] + text[unit_end:].replace(native_at, insertion, 1)
+          elif 'LegacyUnitInterface::new(legacy_unit_inner)' not in text:
+              raise SystemExit('unit interface registration block is missing')
+
+          function = text.index('async fn register_unit_object_at(')
+          service_start = text.index('        let service_iface = ServiceInterface {', function)
+          service_end = text.index('        };', service_start) + len('        };')
+          service_literal = text[service_start:service_end]
+          service_at = '        let _ = conn.object_server().at(path, service_iface).await;'
+          if service_at in text[service_end:]:
+              legacy_service = service_literal.replace(
+                  'let service_iface =', 'let legacy_service_inner =', 1
+              )
+              insertion = (
+                  '        let _ = conn.object_server().at(path.clone(), service_iface).await;\n'
+                  + legacy_service + '\n'
+                  '        let _ = conn\n'
+                  '            .object_server()\n'
+                  '            .at(path, LegacyServiceInterface::new(legacy_service_inner))\n'
+                  '            .await;'
+              )
+              text = text[:service_end] + text[service_end:].replace(service_at, insertion, 1)
+          elif 'LegacyServiceInterface::new(legacy_service_inner)' not in text:
+              raise SystemExit('service interface registration block is missing')
+
+          job_native = '''    let interface = JobInterface::new(info.clone(), jobs.clone(), Arc::clone(queue), wake.clone());
+              let _ = conn.object_server().at(path, interface).await;
+          '''
+          job_legacy = '''    let interface = JobInterface::new(info.clone(), jobs.clone(), Arc::clone(queue), wake.clone());
+              let legacy_interface = LegacyJobInterface::new(JobInterface::new(
+              info.clone(),
+              jobs.clone(),
+              Arc::clone(queue),
+              wake.clone(),
+          ));
+              let _ = conn.object_server().at(path.clone(), interface).await;
+              let _ = conn.object_server().at(path, legacy_interface).await;
+          '''
+          if job_native in text:
+              text = text.replace(job_native, job_legacy, 1)
+          elif 'let legacy_interface = LegacyJobInterface::new' not in text:
+              raise SystemExit('job registration block is missing')
+
+          for native, legacy_type in (
+              ('ServiceInterface', 'LegacyServiceInterface'),
+              ('UnitInterface', 'LegacyUnitInterface'),
+              ('JobInterface', 'LegacyJobInterface'),
+          ):
+              needle = f'.remove::<{native}, _>(path.as_str())\n                .await;'
+              addition = (
+                  needle + '\n            let _ = conn\n'
+                  '                .object_server()\n'
+                  f'                .remove::<{legacy_type}, _>(path.as_str())\n'
+                  '                .await;'
+              )
+              text = text.replace(needle, addition)
+
+          dispatch = text.index('async fn dispatch_signal(')
+          match_pos = text.index('    match sig {', dispatch)
+          if 'emit_legacy_manager_signal(conn, &sig).await;' not in text[dispatch:match_pos]:
+              text = text[:match_pos] + '    emit_legacy_manager_signal(conn, &sig).await;\n' + text[match_pos:]
+
+          state_set = '                interface.set_state(job.state);'
+          if state_set in text:
+              text = text.replace(state_set, '                interface.set_state(job.state.clone());', 1)
+              anchor = '''                let _ = interface
+                      .state_changed(&job.state)
+                      .await;
+              }
+          '''
+              if anchor in text:
+                  text = text.replace(
+                      anchor,
+                      anchor + '''            if let Ok(interface_ref) = conn
+                  .object_server()
+                  .interface::<_, LegacyJobInterface>(path.as_str())
+                  .await
+              {
+                  let mut interface = interface_ref.get_mut().await;
+                  interface.set_state(job.state.clone());
+              }
+          ''',
+                      1,
+                  )
+          server.write_text(text)
+
+          policy = Path('packaging/dbus/io.rustd.Manager1.conf')
+          text = policy.read_text()
+          own = '    <allow own="io.rustd.Manager1"/>\n'
+          legacy_policy = '''    <allow own="org.freedesktop.systemd1"/>
+              <allow send_destination="org.freedesktop.systemd1"/>
+              <allow receive_sender="org.freedesktop.systemd1"/>
+          '''
+          if 'own="org.freedesktop.systemd1"' not in text:
+              if own not in text:
+                  raise SystemExit('D-Bus policy insertion point is missing')
+              text = text.replace(own, own + legacy_policy, 1)
+          policy.write_text(text)
+
+          makefile = Path('Makefile')
+          text = makefile.read_text()
+          text = text.replace(
+              "org\\.freedesktop\\.systemd1|/usr/lib/systemd|/run/systemd|systemd-udevd|systemd-libs",
+              "/usr/lib/systemd|/run/systemd|systemd-udevd|systemd-libs",
+          )
+          marker = "\tgrep -Fq '<allow own=\"io.rustd.Manager1\"/>' packaging/dbus/io.rustd.Manager1.conf; \\\n"
+          checks = marker + "\tgrep -Fq '<allow own=\"org.freedesktop.systemd1\"/>' packaging/dbus/io.rustd.Manager1.conf; \\\n\tgrep -Fq 'LEGACY_BUS_NAME: &str = \"org.freedesktop.systemd1\"' src/dbus/legacy_iface.rs; \\\n"
+          if marker in text and 'LEGACY_BUS_NAME: &str' not in text:
+              text = text.replace(marker, checks, 1)
+          makefile.write_text(text)
+          PY
+
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features --locked -- -D warnings
+          cargo test --all-targets --all-features --locked -- --test-threads=1
+          make check-packaging
+          git diff --check
+      - name: Publish bridge failure diagnostic
+        if: steps.verify.outcome != 'success'
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          git reset --hard HEAD
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-legacy-manager-dbus-diagnostic-v1\n'
+            printf 'status=failure\n'
+            printf 'tested_sha=%s\n' "$GITHUB_SHA"
+            printf '%s\n' '--- tail ---'
+            tail -n 600 /tmp/rustd-legacy-manager.log || true
+          } > certification/legacy-manager-dbus-diagnostic.txt
+          git add certification/legacy-manager-dbus-diagnostic.txt
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Record legacy manager D-Bus diagnostic'
+          git push origin HEAD:main
+          exit 1
+      - name: Land verified bridge
+        if: steps.verify.outcome == 'success'
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          mkdir -p certification
+          {
+            printf 'schema=rustd-legacy-manager-dbus-v1\n'
+            printf 'status=pass\n'
+            printf 'tested_base_sha=%s\n' "$GITHUB_SHA"
+            printf 'legacy_bus=org.freedesktop.systemd1\n'
+            printf 'native_bus=io.rustd.Manager1\n'
+            printf 'shared_dispatch=yes\n'
+            printf 'lifecycle_signals=yes\n'
+          } > certification/legacy-manager-dbus-latest.txt
+          rm -f \
+            .github/workflows/land-legacy-manager-dbus.yml \
+            certification/legacy-manager-dbus-diagnostic.txt
+          git fetch origin main
+          git rebase --autostash origin/main
+          cargo fmt --all -- --check
+          git add -A
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Serve legacy manager D-Bus identity'
+          git push origin HEAD:main
