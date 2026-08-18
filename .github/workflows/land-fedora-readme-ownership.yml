@@ -1,0 +1,56 @@
+name: Land Fedora init ownership documentation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-fedora-readme-ownership.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: land-fedora-readme-ownership
+  cancel-in-progress: false
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Correct staged/exclusive Fedora ownership text
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('README.md')
+          text = path.read_text()
+          old = '''- require `/usr/sbin/init` to be owned by `rustd`, compatibility SONAMEs to be
+  owned by `rustd-compat-libs`, and legacy Fedora transaction entry points to be
+  owned by `rustd-fedora-compat`;'''
+          new = '''- require `/usr/sbin/init` to be owned by `rustd-fedora-compat` and resolve to
+  `/usr/lib/rustd/rustd`, compatibility SONAMEs to be owned by
+  `rustd-compat-libs`, and legacy Fedora transaction entry points to be owned by
+  `rustd-fedora-compat`;'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one stale Fedora init-ownership paragraph, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+          grep -Fq '`/usr/sbin/init` to be owned by `rustd-fedora-compat`' README.md
+          grep -Fq '`/usr/lib/rustd/rustd`, compatibility SONAMEs' README.md
+          ! grep -Fq '`/usr/sbin/init` to be owned by `rustd`,' README.md
+          git diff --check
+      - name: Commit documentation correction
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          rm .github/workflows/land-fedora-readme-ownership.yml
+          git fetch origin main
+          git rebase --autostash origin/main
+          git add -A README.md .github/workflows/land-fedora-readme-ownership.yml
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Document exclusive Fedora init ownership'
+          git push origin HEAD:main
