@@ -1,0 +1,43 @@
+name: Diagnose ReadWritePaths build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/readwritepaths-diagnose.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Capture Rust 1.75 build diagnostics
+        shell: bash
+        run: |
+          set -u
+          sudo apt-get update >/dev/null 2>&1
+          sudo apt-get install --yes --no-install-recommends gfortran >/dev/null 2>&1
+          rustup toolchain install 1.75.0 --profile minimal >/dev/null 2>&1
+          set +e
+          cargo +1.75.0 test --locked --test read_write_paths --no-run >"$RUNNER_TEMP/readwritepaths-build.log" 2>&1
+          rc=$?
+          set -e
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          rm -f .github/workflows/readwritepaths-diagnose.yml
+          mkdir -p certification
+          tail -n 120 "$RUNNER_TEMP/readwritepaths-build.log" > certification/readwritepaths-build-diagnostic.txt
+          printf '\nbuild_rc=%s\ntested_sha=%s\n' "$rc" "$GITHUB_SHA" >> certification/readwritepaths-build-diagnostic.txt
+          git add -A .github/workflows/readwritepaths-diagnose.yml certification/readwritepaths-build-diagnostic.txt
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Capture ReadWritePaths build diagnostic'
+          git push origin HEAD:main
