@@ -1,0 +1,78 @@
+name: JSON Varlink staged certification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - libs/compat/sd_json_varlink_impl.c
+      - libs/compat/sd_json_varlink_abi.h
+      - libs/tests/test_sd_json_varlink_impl.c
+      - .github/workflows/sd-json-varlink-staged-cert.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sd-json-varlink-staged-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Build and test staged engine
+        id: test
+        shell: bash
+        run: |
+          set -o pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libjson-c-dev
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('libs/compat/sd_json_varlink_impl.c')
+          s=p.read_text()
+          s=s.replace('#include <systemd/sd-json.h>\n#include <systemd/sd-varlink.h>\n', '#include "sd_json_varlink_abi.h"\n')
+          p.write_text(s)
+          PY
+          cc -std=c17 -Wall -Wextra -Werror -fPIC -Ilibs/compat $(pkg-config --cflags json-c) \
+             libs/tests/test_sd_json_varlink_impl.c libs/compat/sd_json_varlink_impl.c \
+             $(pkg-config --libs json-c) -o /tmp/test-json-varlink 2>&1 | tee /tmp/json-varlink.log
+          /tmp/test-json-varlink 2>&1 | tee -a /tmp/json-varlink.log
+      - name: Publish voucher and land header independence
+        if: always()
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          set -euo pipefail
+          status=failure
+          [ "$OUTCOME" = success ] && status=pass
+          tested_sha="$GITHUB_SHA"
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          printf 'schema=rustd-json-varlink-staged-v1\nstatus=%s\ntested_sha=%s\nbehavior_outcome=%s\nbackend=json-c+af-unix\nsystemd_headers=none\n' "$status" "$tested_sha" "$OUTCOME" > certification/json-varlink-staged-latest.txt
+          if [ "$status" = failure ]; then
+            tail -n 160 /tmp/json-varlink.log > certification/json-varlink-staged-diagnostic.txt 2>/dev/null || true
+          else
+            rm -f certification/json-varlink-staged-diagnostic.txt
+            python3 - <<'PY'
+          from pathlib import Path
+          p=Path('libs/compat/sd_json_varlink_impl.c')
+          s=p.read_text()
+          s=s.replace('#include <systemd/sd-json.h>\n#include <systemd/sd-varlink.h>\n', '#include "sd_json_varlink_abi.h"\n')
+          p.write_text(s)
+          PY
+          fi
+          git add -A certification/json-varlink-staged-latest.txt certification/json-varlink-staged-diagnostic.txt libs/compat/sd_json_varlink_impl.c
+          if ! git diff --cached --quiet; then
+            git config user.name 'Kenny Glowner'
+            git config user.email 'SisyphusAeolides@pm.me'
+            git commit -m "Record JSON Varlink staged $status"
+            git push origin HEAD:main
+          fi
+          [ "$status" = pass ]
