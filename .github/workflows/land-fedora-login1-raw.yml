@@ -1,0 +1,100 @@
+name: Land Fedora Login1 source from raw certified payload
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-fedora-login1-raw.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fedora-login1-raw-landing
+  cancel-in-progress: true
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.75.0
+          components: rustfmt,clippy
+      - name: Install native dependencies
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            gfortran libdbus-1-dev libpam0g-dev pkg-config
+      - name: Apply and certify complete Login1 implementation
+        id: landing
+        continue-on-error: true
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          exec > >(tee /tmp/fedora-login1-landing.log) 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+          text=Path('.github/workflows/land-fedora-login-session.yml').read_text()
+          step=text.index('      - name: Add complete Login1 session registration path\n')
+          marker='        run: |\n'
+          start=text.index(marker, step)+len(marker)
+          raw=text[start:]
+          script='\n'.join(line[10:] if line.startswith('          ') else line for line in raw.splitlines())+'\n'
+          cut='git fetch origin main'
+          if cut in script:
+              script=script[:script.index(cut)]
+          required=('pub fn prepare_user_runtime','async fn create_session',
+                    'cargo check --locked --bin rustd-logind',
+                    'cargo clippy --locked --bin rustd-logind',
+                    'cargo test --locked --lib logind')
+          if not all(x in script for x in required):
+              raise SystemExit('raw Login1 payload is incomplete')
+          Path('/tmp/login1-patch.sh').write_text(script)
+          PY
+          bash -x /tmp/login1-patch.sh
+          git diff --check
+          git fetch origin main
+          git rebase --autostash origin/main
+          cargo fmt --all
+          cargo check --locked --bin rustd-logind
+          cargo clippy --locked --bin rustd-logind -- \
+            -D warnings -A unknown-lints -A renamed-and-removed-lints
+          cargo test --locked --lib logind
+          rm -f \
+            .github/workflows/land-fedora-login-session.yml \
+            .github/workflows/diagnose-fedora-login-session.yml \
+            .github/workflows/land-fedora-login1-raw.yml
+          git add -A src/logind/mod.rs src/bin/rustd-logind.rs \
+            .github/workflows/land-fedora-login-session.yml \
+            .github/workflows/diagnose-fedora-login-session.yml \
+            .github/workflows/land-fedora-login1-raw.yml
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Implement Fedora Login1 session registration'
+          git push origin HEAD:main
+      - name: Publish Login1 landing failure
+        if: steps.landing.outcome != 'success'
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          git reset --hard HEAD
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-fedora-login1-landing-v1\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf '%s\n' '--- tail ---'
+            tail -n 420 /tmp/fedora-login1-landing.log || true
+          } > certification/fedora-login1-diagnostic.txt
+          git add certification/fedora-login1-diagnostic.txt
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Record Fedora Login1 landing failure' || exit 0
+          git push origin HEAD:main
+          exit 1
