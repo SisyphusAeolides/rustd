@@ -1,5 +1,5 @@
 name: Run final RustD ABI closure
-# rerun on Fedora cutover candidate
+# rerun on Fedora exact-stack candidate feb422b
 
 defaults:
   run:
