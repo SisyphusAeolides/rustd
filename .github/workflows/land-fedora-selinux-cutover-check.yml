@@ -1,0 +1,46 @@
+name: Land Fedora SELinux cutover enforcement
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-fedora-selinux-cutover-check.yml
+
+permissions:
+  contents: write
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Add enforcing-mode release checks
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/fedora-cutover-gate.sh')
+          s=p.read_text()
+          old='''for cmd in rpm dnf readelf nm rustctl rustd-resolvectl; do require_cmd "$cmd"; done\n\n# Full release means zero installed systemd RPMs, not merely a different PID 1.\n'''
+          new='''for cmd in rpm dnf readelf nm rustctl rustd-resolvectl getenforce semodule; do require_cmd "$cmd"; done\n\n# Fedora production cutover must preserve SELinux enforcement and load the\n# RustD policy extension. A permissive/unloaded policy is never release-green.\nselinux_mode="$(getenforce 2>/dev/null || true)"\nif [[ $selinux_mode == Enforcing ]]; then\n    pass 'SELinux is enforcing'\nelse\n    fail "SELinux is not enforcing (mode=${selinux_mode:-unknown})"\nfi\nif rpm -q rustd-selinux >/dev/null 2>&1; then\n    pass 'rustd-selinux RPM installed'\nelse\n    fail 'rustd-selinux RPM is not installed'\nfi\nif semodule -l 2>/dev/null | awk '{print $1}' | grep -Fxq rustd_fedora; then\n    pass 'rustd_fedora SELinux module loaded'\nelse\n    fail 'rustd_fedora SELinux module is not loaded'\nfi\n\n# Full release means zero installed systemd RPMs, not merely a different PID 1.\n'''
+          if new not in s:
+              if old not in s:
+                  raise SystemExit('Fedora gate insertion preimage missing')
+              s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          bash -n scripts/fedora-cutover-gate.sh
+          grep -Fq "selinux_mode=\"\$(getenforce" scripts/fedora-cutover-gate.sh
+          grep -Fq "rpm -q rustd-selinux" scripts/fedora-cutover-gate.sh
+          grep -Fq "grep -Fxq rustd_fedora" scripts/fedora-cutover-gate.sh
+          git diff --check
+          git fetch origin main
+          git rebase --autostash origin/main
+          git add scripts/fedora-cutover-gate.sh
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Require enforcing SELinux for Fedora cutover'
+          git push origin HEAD:main
