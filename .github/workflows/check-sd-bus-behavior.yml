@@ -1,0 +1,68 @@
+name: Check staged sd-bus behavior
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - libs/compat/sd_bus_impl.c
+      - libs/tests/test_sd_bus_impl.c
+      - .github/workflows/check-sd-bus-behavior.yml
+      - .github/sd-bus-behavior-trigger
+
+permissions:
+  contents: write
+
+concurrency:
+  group: staged-sd-bus-behavior
+  cancel-in-progress: true
+
+jobs:
+  behavior:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gcc libdbus-1-dev libsystemd-dev dbus-daemon
+      - name: Build and run staged transport tests
+        id: behavior
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong \
+             -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 \
+             $(pkg-config --cflags dbus-1) \
+             libs/compat/sd_bus_impl.c libs/tests/test_sd_bus_impl.c \
+             $(pkg-config --libs dbus-1) -o /tmp/test-sd-bus-impl
+          dbus-run-session -- /tmp/test-sd-bus-impl 2>&1 | tee /tmp/sd-bus-behavior.log
+      - name: Publish behavior voucher
+        if: always()
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.behavior.outcome }}
+        run: |
+          set -euo pipefail
+          status=failure
+          if [ "$OUTCOME" = success ]; then status=pass; fi
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          printf 'schema=rustd-sd-bus-behavior-v1\nstatus=%s\ntested_sha=%s\nbehavior_outcome=%s\nbackend=libdbus-1\nsession_bus=end-to-end\nmessage_codec=recursive\n' \
+             "$status" "$GITHUB_SHA" "$OUTCOME" > certification/sd-bus-behavior-latest.txt
+          if [ -f /tmp/sd-bus-behavior.log ]; then
+             tail -n 160 /tmp/sd-bus-behavior.log > certification/sd-bus-behavior-diagnostic.txt
+          fi
+          git add certification/sd-bus-behavior-latest.txt certification/sd-bus-behavior-diagnostic.txt
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m "Record staged sd-bus behavior $status"
+          git push origin HEAD:main
