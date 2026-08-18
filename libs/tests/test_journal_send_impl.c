@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* certification trigger */
 #include <assert.h>
 #include <stdarg.h>
 #include <stdint.h>
