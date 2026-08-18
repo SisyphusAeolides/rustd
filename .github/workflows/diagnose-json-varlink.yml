@@ -1,0 +1,65 @@
+name: Diagnose JSON Varlink compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/diagnose-json-varlink.yml
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libjson-c-dev
+      - name: Compile and test with diagnostic
+        shell: bash
+        run: |
+          set -uo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('libs/compat/sd_json_varlink_impl.c')
+          s=p.read_text()
+          s=s.replace('#include <systemd/sd-json.h>\n#include <systemd/sd-varlink.h>\n', '#include "sd_json_varlink_abi.h"\n')
+          p.write_text(s)
+          PY
+          set +e
+          {
+            cc -std=c17 -Wall -Wextra -Werror -fPIC -Ilibs/compat $(pkg-config --cflags json-c) \
+              libs/tests/test_sd_json_varlink_impl.c libs/compat/sd_json_varlink_impl.c \
+              $(pkg-config --libs json-c) -o /tmp/test-json-varlink && \
+            /tmp/test-json-varlink
+          } > /tmp/json-varlink.log 2>&1
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            mkdir -p certification
+            printf 'schema=rustd-json-varlink-staged-v1\nstatus=pass\ntested_sha=%s\nbehavior_outcome=success\nbackend=json-c+af-unix\nsystemd_headers=none\n' "$GITHUB_SHA" > certification/json-varlink-staged-latest.txt
+            rm -f certification/json-varlink-staged-diagnostic.txt
+            git add libs/compat/sd_json_varlink_impl.c certification/json-varlink-staged-latest.txt certification/json-varlink-staged-diagnostic.txt
+            git config user.name 'Kenny Glowner'
+            git config user.email 'SisyphusAeolides@pm.me'
+            git commit -m 'Certify JSON Varlink compatibility engine'
+            git push origin HEAD:main
+            exit 0
+          fi
+          git checkout -- libs/compat/sd_json_varlink_impl.c
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          { printf 'schema=rustd-json-varlink-diagnostic-v1\nstatus=failure\ntested_sha=%s\nrc=%s\n--- tail ---\n' "$GITHUB_SHA" "$rc"; tail -n 200 /tmp/json-varlink.log; } > certification/json-varlink-staged-diagnostic.txt
+          git add certification/json-varlink-staged-diagnostic.txt
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Record JSON Varlink diagnostic'
+          git push origin HEAD:main
+          exit "$rc"
