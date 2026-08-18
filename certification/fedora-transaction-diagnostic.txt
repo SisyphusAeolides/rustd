@@ -1,0 +1,10 @@
+schema=rustd-fedora-transaction-diagnostic-v1
+status=failure
+tested_sha=f1f432fcf4a731c15ed1ca336f0d8d8c1eb614ab
+--- tail ---
+Fedora RPM transaction compatibility: PASS
+From https://github.com/SisyphusAeolides/rustd
+ * branch            main       -> FETCH_HEAD
+   f1f432f..aec0fe1  main       -> origin/main
+error: cannot rebase: You have unstaged changes.
+error: Please commit or stash them.
