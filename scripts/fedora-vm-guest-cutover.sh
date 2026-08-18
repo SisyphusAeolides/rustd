@@ -32,7 +32,7 @@ dnf -y \
 # autoremove to prune unrelated Fedora packages.
 mapfile -t residual < <(rpm -qa --qf '%{NAME}\n' | grep -E '^systemd($|-)' | sort -u || true)
 if ((${#residual[@]})); then
-    dnf -y remove --noautoremove "${residual[@]}"
+    dnf -y remove --no-autoremove "${residual[@]}"
 fi
 
 dnf -q check
