@@ -1,5 +1,5 @@
 name: Fix staged sd-bus dispatch filter bridge
-# trigger-v2
+# trigger-v3
 
 on:
   push:
@@ -53,7 +53,8 @@ jobs:
           cc -std=c17 -Wall -Wextra -Werror -Ilibs/compat -Iinclude $(pkg-config --cflags dbus-1) libs/tests/test_sd_bus_impl.c libs/compat/sd_bus_impl.c $(pkg-config --libs dbus-1) -o /tmp/test-sd-bus-impl
           dbus-run-session -- /tmp/test-sd-bus-impl
           rm -f certification/sd-bus-header-independence-diagnostic.txt certification/sd-bus-bridge-diagnostic.txt
-          git add -A libs/compat/sd_bus_impl.c certification/sd-bus-header-independence-diagnostic.txt certification/sd-bus-bridge-diagnostic.txt
+          git add libs/compat/sd_bus_impl.c
+          git add -A certification
           git diff --cached --check
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
