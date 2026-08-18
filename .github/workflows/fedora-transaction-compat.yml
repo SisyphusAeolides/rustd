@@ -1,0 +1,70 @@
+name: Fedora RPM transaction compatibility
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - dist/fedora/**
+      - tests/fedora-transaction-compat.sh
+      - .github/workflows/fedora-transaction-compat.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fedora-transaction-compat
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Exercise Fedora package scriptlet compatibility
+        id: test
+        continue-on-error: true
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          exec > >(tee /tmp/fedora-transaction.log) 2>&1
+          for file in dist/fedora/compat/* tests/fedora-transaction-compat.sh; do
+            bash -n "$file"
+          done
+          bash tests/fedora-transaction-compat.sh
+      - name: Publish exact transaction voucher
+        if: always()
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          outcome='${{ steps.test.outcome }}'
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-fedora-transaction-v1\n'
+            if [[ "$outcome" == success ]]; then
+              printf 'status=pass\n'
+            else
+              printf 'status=failure\n'
+            fi
+            printf 'tested_sha=%s\n' "$GITHUB_SHA"
+            printf 'systemctl=rustd-backed\n'
+            printf 'update_helper=rustd-backed\n'
+            printf 'tmpfiles=rustd-backed\n'
+            printf 'sysusers=rustd-backed\n'
+            printf 'sysctl=rustd-backed\n'
+            printf 'binfmt=rustd-backed\n'
+            printf 'udevadm=rustd-backed\n'
+            if [[ "$outcome" != success ]]; then
+              printf '%s\n' '--- tail ---'
+              tail -n 180 /tmp/fedora-transaction.log || true
+            fi
+          } > certification/fedora-transaction-latest.txt
+          git add certification/fedora-transaction-latest.txt
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m "Record Fedora transaction ${outcome}" || exit 0
+          git push origin HEAD:main
+          [[ "$outcome" == success ]]
