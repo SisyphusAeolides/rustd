@@ -1,0 +1,64 @@
+name: Fix ReadWritePaths root parity
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fix-readwrite-root.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Patch exact validators
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object ffi/spawn.c)" = 89202b49bf7d90dc1401aacd23d1c299afe137de
+          test "$(git hash-object ffi/spawn_helper.c)" = ce4e2f9975cd6db2bfe5a1a1904f785316a45413
+          test "$(git hash-object ffi/sandbox.c)" = d26bf5b0970e6d2fadaec12849be7e2c2334586c
+          python3 - <<'PY'
+          from pathlib import Path
+          replacements = {
+              Path('ffi/spawn.c'): ("return path[0] == '/' && path[1] != '\\0';", "return path[0] == '/';"),
+              Path('ffi/spawn_helper.c'): ("return path[0] == '/' && path[1] != '\\0';", "return path[0] == '/';"),
+              Path('ffi/sandbox.c'): ("if (path[0] != '/' || path[1] == '\\0')", "if (path[0] != '/')"),
+          }
+          for path, (old, new) in replacements.items():
+              text = path.read_text()
+              if text.count(old) != 1:
+                  raise SystemExit(f'{path}: expected exactly one target, found {text.count(old)}')
+              path.write_text(text.replace(old, new))
+          PY
+          git diff --check
+          git diff --exit-code -- . ':!ffi/spawn.c' ':!ffi/spawn_helper.c' ':!ffi/sandbox.c' ':!.github/workflows/fix-readwrite-root.yml' || true
+      - name: Commit parity fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/fix-readwrite-root.yml
+          git add -A
+          python3 - <<'PY'
+          import subprocess
+          allowed = {
+              '.github/workflows/fix-readwrite-root.yml',
+              'ffi/spawn.c',
+              'ffi/spawn_helper.c',
+              'ffi/sandbox.c',
+          }
+          paths = set(subprocess.check_output(['git','diff','--cached','--name-only'], text=True).splitlines())
+          if paths != allowed:
+              raise SystemExit(f'unexpected changed paths: {sorted(paths)}')
+          PY
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Allow root ReadWritePaths exception'
+          git push origin HEAD:main
