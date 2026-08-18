@@ -1,5 +1,5 @@
 name: Diagnose Fedora Login1 session support
-# execute the complete canonical Login1 patch
+# raw step extraction preserves zero-indented embedded Rust
 
 on:
   push:
@@ -39,23 +39,18 @@ jobs:
           marker = '        run: |\n'
           start = text.index(marker, step) + len(marker)
           raw = text[start:]
-          lines = []
-          for line in raw.splitlines():
-              if line.startswith('      - name: ') or line.startswith('      - uses: '):
-                  break
-              if line.startswith('          '):
-                  line = line[10:]
-              elif line.strip():
-                  break
-              else:
-                  line = ''
-              lines.append(line)
+          # The canonical file is intentionally treated as a raw payload because
+          # embedded Rust heredoc lines are not YAML-indented. Remove the workflow
+          # block indentation where present, but preserve zero-indented payload.
+          lines = [line[10:] if line.startswith('          ') else line for line in raw.splitlines()]
           script = '\n'.join(lines) + '\n'
           cut = 'git fetch origin main'
           if cut in script:
               script = script[:script.index(cut)]
           required = (
               'from pathlib import Path',
+              'pub fn prepare_user_runtime',
+              'async fn create_session',
               'cargo check --locked --bin rustd-logind',
               'cargo clippy --locked --bin rustd-logind',
               'cargo test --locked --lib logind',
@@ -76,11 +71,11 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-login1-diagnostic-v4\n'
+            printf 'schema=rustd-fedora-login1-diagnostic-v5\n'
             printf 'status=%s\n' "$outcome"
             printf 'tested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 360 /tmp/fedora-login1.log || true
+            tail -n 420 /tmp/fedora-login1.log || true
           } > certification/fedora-login1-diagnostic.txt
           git add certification/fedora-login1-diagnostic.txt
           git config user.name 'Kenny Glowner'
