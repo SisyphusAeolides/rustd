@@ -20,6 +20,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: readwritepaths-certification-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   production-spawn-sandbox:
     runs-on: ubuntu-24.04
@@ -71,6 +75,15 @@ jobs:
           git checkout main
           git pull --ff-only origin main
           mkdir -p certification
+          existing_sha=""
+          if [ -f certification/readwritepaths-latest.txt ]; then
+              existing_sha="$(sed -n 's/^tested_sha=//p' certification/readwritepaths-latest.txt | head -n1)"
+          fi
+          if [ -n "$existing_sha" ] && git cat-file -e "$existing_sha^{commit}" 2>/dev/null \
+              && git merge-base --is-ancestor "$tested_sha" "$existing_sha"; then
+              echo "newer ReadWritePaths voucher already exists for $existing_sha; not overwriting with $tested_sha"
+              exit 0
+          fi
           printf 'schema=rustd-readwritepaths-cert-v1\nstatus=%s\ntested_sha=%s\nbuild_outcome=%s\ncert_outcome=%s\nprotect_system=strict\nread_write_paths=production-spawn-v2\n' \
               "$status" "$tested_sha" "$BUILD_OUTCOME" "$CERT_OUTCOME" \
               > certification/readwritepaths-latest.txt
