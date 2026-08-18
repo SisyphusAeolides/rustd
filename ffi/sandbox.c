@@ -213,7 +213,7 @@ int rustd_sandbox_make_writable_paths(const char *const *paths, size_t n_paths) 
             return -EINVAL;
         int ignore_missing = raw[0] == '-';
         const char *path = ignore_missing ? raw + 1 : raw;
-        if (path[0] != '/' || path[1] == '\0')
+        if (path[0] != '/')
             return -EINVAL;
 
         int r = writable_bind(path);

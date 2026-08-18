@@ -194,7 +194,7 @@ static int valid_read_write_path(const char *value) {
     if (!value || value[0] == '\0')
         return 0;
     const char *path = value[0] == '-' ? value + 1 : value;
-    return path[0] == '/' && path[1] != '\0';
+    return path[0] == '/';
 }
 
 static void request_release(rustd_spawn_request *request) {
