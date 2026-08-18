@@ -237,6 +237,25 @@ command=${1:-}
 [[ -n $command ]] || { echo 'systemctl(RustD): command required' >&2; exit 64; }
 shift
 
+# Normalize options supplied after the verb by Fedora/third-party RPM scriptlets.
+while (($#)); do
+    case $1 in
+        --no-reload|--no-warn|--no-pager|--plain|--no-block) shift ;;
+        --quiet|-q) quiet=1; shift ;;
+        --now) now=1; shift ;;
+        --user) scope=user; shift ;;
+        --system) scope=system; shift ;;
+        --global) global=1; scope=user; shift ;;
+        --marked) marked=1; shift ;;
+        --legend=no|--no-legend) shift ;;
+        --type=*|--state=*) shift ;;
+        --type|--state) shift 2 ;;
+        --) shift; break ;;
+        -*) echo "systemctl(RustD): unsupported command option $1" >&2; exit 64 ;;
+        *) break ;;
+    esac
+done
+
 case $command in
     daemon-reload)
         sync_all_units
