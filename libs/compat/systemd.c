@@ -6,6 +6,9 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <limits.h>
+#include <poll.h>
+#include <time.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -575,10 +578,16 @@ struct sd_device {
     rustd_device_list_entry *property_cursor;
 };
 
+struct sd_event;
+static void rustd_event_free(struct sd_event *event);
+
 struct sd_device_monitor {
     unsigned refs;
     rustd_device_ctx *ctx;
     rustd_device_monitor *monitor;
+    struct sd_event *event;
+    int (*callback)(struct sd_device_monitor *, struct sd_device *, void *);
+    void *callback_userdata;
 };
 
 static int sd_device_alloc(struct sd_device **ret) {
@@ -723,6 +732,7 @@ struct sd_device_monitor *sd_device_monitor_unref(struct sd_device_monitor *moni
         return NULL;
     if (--monitor->refs > 0U)
         return NULL;
+    rustd_event_free(monitor->event);
     rustd_device_monitor_unref(monitor->monitor);
     rustd_device_ctx_unref(monitor->ctx);
     free(monitor);
@@ -737,44 +747,99 @@ int sd_device_monitor_filter_add_match_subsystem_devtype(
         monitor->monitor, subsystem, devtype);
 }
 
+struct sd_event_source {
+    uint64_t deadline_usec;
+    int (*callback)(struct sd_event_source *, uint64_t, void *);
+    void *userdata;
+    struct sd_event_source *next;
+};
+
+struct sd_event {
+    struct sd_device_monitor *monitor;
+    struct sd_event_source *timers;
+    int exit_requested;
+    int exit_code;
+};
+
+static void rustd_event_free(struct sd_event *event) {
+    struct sd_event_source *source;
+    if (!event) return;
+    source = event->timers;
+    while (source) { struct sd_event_source *next = source->next; free(source); source = next; }
+    free(event);
+}
+
+static uint64_t rustd_event_monotonic_usec(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0) return 0;
+    return (uint64_t)ts.tv_sec * UINT64_C(1000000) + (uint64_t)ts.tv_nsec / UINT64_C(1000);
+}
+
 int sd_device_monitor_start(struct sd_device_monitor *monitor, void *callback, void *userdata) {
-    (void)callback;
-    (void)userdata;
-    if (!monitor)
-        return -EINVAL;
+    if (!monitor || !callback) return -EINVAL;
+    monitor->callback = (int (*)(struct sd_device_monitor *, struct sd_device *, void *))callback;
+    monitor->callback_userdata = userdata;
     return rustd_device_monitor_enable_receiving(monitor->monitor);
 }
 
-/* sd_event stubs used by a few desktop consumers; fail closed. */
-struct sd_event;
-
 struct sd_event *sd_device_monitor_get_event(struct sd_device_monitor *monitor) {
-    (void)monitor;
-    return NULL;
+    if (!monitor) return NULL;
+    if (!monitor->event) {
+        monitor->event = calloc(1, sizeof(*monitor->event));
+        if (!monitor->event) return NULL;
+        monitor->event->monitor = monitor;
+    }
+    return monitor->event;
 }
 
-int sd_event_add_time_relative(
-    struct sd_event *event, void **ret, int clock, uint64_t usec, uint64_t accuracy,
-    void *callback, void *userdata) {
-    (void)event;
-    (void)ret;
-    (void)clock;
-    (void)usec;
-    (void)accuracy;
-    (void)callback;
-    (void)userdata;
-    return -ENOSYS;
+int sd_event_add_time_relative(struct sd_event *event, void **ret, int clock, uint64_t usec, uint64_t accuracy, void *callback, void *userdata) {
+    struct sd_event_source *source; uint64_t now; (void)accuracy;
+    if (!event || !callback) return -EINVAL;
+    if (clock != CLOCK_MONOTONIC && clock != CLOCK_BOOTTIME) return -EOPNOTSUPP;
+    now = rustd_event_monotonic_usec();
+    if (UINT64_MAX - now < usec) return -ERANGE;
+    source = calloc(1, sizeof(*source)); if (!source) return -ENOMEM;
+    source->deadline_usec = now + usec;
+    source->callback = (int (*)(struct sd_event_source *, uint64_t, void *))callback;
+    source->userdata = userdata; source->next = event->timers; event->timers = source;
+    if (ret)
+        *ret = source;
+    return 0;
 }
 
-int sd_event_exit(struct sd_event *event, int code) {
-    (void)event;
-    (void)code;
-    return -ENOSYS;
+int sd_event_exit(struct sd_event *event, int code) { if (!event) return -EINVAL; event->exit_requested = 1; event->exit_code = code; return 0; }
+
+static int rustd_event_dispatch_timers(struct sd_event *event, uint64_t now) {
+    struct sd_event_source **cursor = &event->timers;
+    while (*cursor) {
+        struct sd_event_source *source = *cursor;
+        if (source->deadline_usec > now) { cursor = &source->next; continue; }
+        *cursor = source->next;
+        if (source->callback) { int r = source->callback(source, now, source->userdata); free(source); if (r < 0) return r; } else free(source);
+    }
+    return 0;
 }
 
 int sd_event_loop(struct sd_event *event) {
-    (void)event;
-    return -ENOSYS;
+    if (!event) return -EINVAL;
+    while (!event->exit_requested) {
+        struct pollfd pfd = {.fd = -1, .events = POLLIN}; uint64_t now = rustd_event_monotonic_usec(); uint64_t nearest = UINT64_MAX;
+        struct sd_event_source *source; int timeout = -1; int r;
+        for (source = event->timers; source; source = source->next) if (source->deadline_usec < nearest) nearest = source->deadline_usec;
+        if (nearest != UINT64_MAX) { uint64_t delta = nearest > now ? nearest - now : 0; timeout = delta / 1000U > (uint64_t)INT_MAX ? INT_MAX : (int)((delta + 999U) / 1000U); }
+        if (event->monitor && event->monitor->monitor) pfd.fd = rustd_device_monitor_get_fd(event->monitor->monitor);
+        if (pfd.fd < 0 && timeout < 0) return event->exit_code;
+        r = poll(pfd.fd >= 0 ? &pfd : NULL, pfd.fd >= 0 ? 1U : 0U, timeout);
+        if (r < 0) { if (errno == EINTR) continue; return -errno; }
+        now = rustd_event_monotonic_usec(); r = rustd_event_dispatch_timers(event, now); if (r < 0) return r;
+        if (pfd.fd >= 0 && (pfd.revents & POLLIN) && event->monitor->callback) {
+            rustd_device *native = rustd_device_monitor_receive_device(event->monitor->monitor);
+            if (native) { struct sd_device *device = calloc(1, sizeof(*device)); if (!device) { rustd_device_unref(native); return -ENOMEM; }
+                device->refs = 1U; device->ctx = rustd_device_ctx_ref(event->monitor->ctx); device->dev = native;
+                r = event->monitor->callback(event->monitor, device, event->monitor->callback_userdata); sd_device_unref(device); if (r < 0) return r; }
+        }
+    }
+    return event->exit_code;
 }
 
 int sd_notifyf(int unset_environment, const char *format, ...) {

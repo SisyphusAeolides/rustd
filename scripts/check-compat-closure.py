@@ -31,8 +31,6 @@ SEMANTIC_PLACEHOLDERS = {
     "sd_journal_send_with_location",
     "sd_journal_print_with_location",
     "sd_journal_printv_with_location",
-    "sd_device_monitor_start",
-    "sd_device_monitor_get_event",
 }
 
 
