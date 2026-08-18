@@ -1,4 +1,5 @@
 LIBSYSTEMD_209 {
+
   global:
     sd_booted;
     sd_get_sessions;
@@ -57,22 +58,38 @@ LIBSYSTEMD_209 {
     *;
 };
 
-LIBSYSTEMD_213 {
-  global:
-    sd_uid_get_display;
+LIBSYSTEMD_211 {
 } LIBSYSTEMD_209;
 
+LIBSYSTEMD_213 {
+
+  global:
+    sd_uid_get_display;
+} LIBSYSTEMD_211;
+
 LIBSYSTEMD_214 {
+
   global:
     sd_pid_notify;
 } LIBSYSTEMD_213;
 
-LIBSYSTEMD_220 {
-  global:
-    sd_pid_get_user_slice;
+LIBSYSTEMD_216 {
 } LIBSYSTEMD_214;
 
+LIBSYSTEMD_217 {
+} LIBSYSTEMD_216;
+
+LIBSYSTEMD_219 {
+} LIBSYSTEMD_217;
+
+LIBSYSTEMD_220 {
+
+  global:
+    sd_pid_get_user_slice;
+} LIBSYSTEMD_219;
+
 LIBSYSTEMD_221 {
+
   global:
     sd_event_add_child;
     sd_event_add_io;
@@ -131,28 +148,63 @@ LIBSYSTEMD_221 {
     sd_bus_unref;
 } LIBSYSTEMD_220;
 
-LIBSYSTEMD_226 {
-  global:
-    sd_pid_get_cgroup;
+LIBSYSTEMD_222 {
 } LIBSYSTEMD_221;
 
-LIBSYSTEMD_233 {
+LIBSYSTEMD_226 {
+
   global:
-    sd_id128_get_machine_app_specific;
+    sd_pid_get_cgroup;
+} LIBSYSTEMD_222;
+
+LIBSYSTEMD_227 {
 } LIBSYSTEMD_226;
 
+LIBSYSTEMD_229 {
+} LIBSYSTEMD_227;
+
+LIBSYSTEMD_230 {
+} LIBSYSTEMD_229;
+
+LIBSYSTEMD_231 {
+} LIBSYSTEMD_230;
+
+LIBSYSTEMD_232 {
+} LIBSYSTEMD_231;
+
+LIBSYSTEMD_233 {
+
+  global:
+    sd_id128_get_machine_app_specific;
+} LIBSYSTEMD_232;
+
+LIBSYSTEMD_234 {
+} LIBSYSTEMD_233;
+
+LIBSYSTEMD_235 {
+} LIBSYSTEMD_234;
+
+LIBSYSTEMD_236 {
+} LIBSYSTEMD_235;
+
 LIBSYSTEMD_237 {
+
   global:
     sd_bus_match_signal;
     sd_bus_match_signal_async;
-} LIBSYSTEMD_233;
+} LIBSYSTEMD_236;
 
-LIBSYSTEMD_239 {
-  global:
-    sd_event_add_inotify;
+LIBSYSTEMD_238 {
 } LIBSYSTEMD_237;
 
+LIBSYSTEMD_239 {
+
+  global:
+    sd_event_add_inotify;
+} LIBSYSTEMD_238;
+
 LIBSYSTEMD_240 {
+
   global:
     sd_device_get_devname;
     sd_device_get_is_initialized;
@@ -176,34 +228,64 @@ LIBSYSTEMD_240 {
     sd_hwdb_unref;
 } LIBSYSTEMD_239;
 
-LIBSYSTEMD_243 {
-  global:
-    sd_bus_object_vtable_format;
+LIBSYSTEMD_241 {
 } LIBSYSTEMD_240;
 
-LIBSYSTEMD_247 {
+LIBSYSTEMD_242 {
+} LIBSYSTEMD_241;
+
+LIBSYSTEMD_243 {
+
   global:
-    sd_event_add_time_relative;
+    sd_bus_object_vtable_format;
+} LIBSYSTEMD_242;
+
+LIBSYSTEMD_244 {
 } LIBSYSTEMD_243;
 
+LIBSYSTEMD_245 {
+} LIBSYSTEMD_244;
+
+LIBSYSTEMD_246 {
+} LIBSYSTEMD_245;
+
+LIBSYSTEMD_247 {
+
+  global:
+    sd_event_add_time_relative;
+} LIBSYSTEMD_246;
+
 LIBSYSTEMD_248 {
+
   global:
     sd_device_get_action;
 } LIBSYSTEMD_247;
 
+LIBSYSTEMD_249 {
+} LIBSYSTEMD_248;
+
+LIBSYSTEMD_250 {
+} LIBSYSTEMD_249;
+
 LIBSYSTEMD_251 {
+
   global:
     sd_device_new_from_devname;
     sd_device_open;
-} LIBSYSTEMD_248;
+} LIBSYSTEMD_250;
+
+LIBSYSTEMD_252 {
+} LIBSYSTEMD_251;
 
 LIBSYSTEMD_253 {
+
   global:
     sd_pidfd_get_owner_uid;
     sd_pidfd_get_session;
-} LIBSYSTEMD_251;
+} LIBSYSTEMD_252;
 
 LIBSYSTEMD_254 {
+
   global:
     sd_session_get_leader;
     sd_session_get_start_time;
@@ -211,7 +293,14 @@ LIBSYSTEMD_254 {
     sd_uid_get_login_time;
 } LIBSYSTEMD_253;
 
+LIBSYSTEMD_255 {
+} LIBSYSTEMD_254;
+
+LIBSYSTEMD_256 {
+} LIBSYSTEMD_255;
+
 LIBSYSTEMD_257 {
+
   global:
     sd_json_variant_by_index;
     sd_json_variant_by_key;
@@ -222,10 +311,14 @@ LIBSYSTEMD_257 {
     sd_varlink_collect;
     sd_varlink_connect_address;
     sd_varlink_unref;
-} LIBSYSTEMD_254;
+} LIBSYSTEMD_256;
 
 LIBSYSTEMD_258 {
+
   global:
     sd_varlink_idl_parse;
     sd_varlink_interface_free;
 } LIBSYSTEMD_257;
+
+LIBSYSTEMD_259 {
+} LIBSYSTEMD_258;

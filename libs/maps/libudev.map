@@ -1,4 +1,5 @@
 LIBUDEV_183 {
+
   global:
     udev_device_get_action;
     udev_device_get_devlinks_list_entry;
@@ -66,19 +67,28 @@ LIBUDEV_183 {
     *;
 };
 
+LIBUDEV_189 {
+} LIBUDEV_183;
+
 LIBUDEV_196 {
+
   global:
     udev_hwdb_get_properties_list_entry;
     udev_hwdb_new;
     udev_hwdb_unref;
-} LIBUDEV_183;
+} LIBUDEV_189;
 
 LIBUDEV_199 {
+
   global:
     udev_device_set_sysattr_value;
 } LIBUDEV_196;
 
+LIBUDEV_215 {
+} LIBUDEV_199;
+
 LIBUDEV_247 {
+
   global:
     udev_device_get_current_tags_list_entry;
-} LIBUDEV_199;
+} LIBUDEV_215;
