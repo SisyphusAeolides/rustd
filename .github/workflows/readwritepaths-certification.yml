@@ -12,6 +12,7 @@ on:
       - ffi/spawn_wire.h
       - src/ffi/spawn.rs
       - src/sandbox.rs
+      - src/manager.rs
       - tests/read_write_paths.rs
       - .github/workflows/readwritepaths-certification.yml
   workflow_dispatch:
@@ -41,7 +42,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo test --locked --test read_write_paths --no-run
+          cargo +1.75.0 test --locked --test read_write_paths --no-run
           test_bin="$(find target/debug/deps -maxdepth 1 -type f -name 'read_write_paths-*' -perm -111 | head -n1)"
           test -n "$test_bin"
           printf '%s\n' "$test_bin" > "$RUNNER_TEMP/readwritepaths-test-bin"
@@ -73,7 +74,10 @@ jobs:
           printf 'schema=rustd-readwritepaths-cert-v1\nstatus=%s\ntested_sha=%s\nbuild_outcome=%s\ncert_outcome=%s\nprotect_system=strict\nread_write_paths=production-spawn-v2\n' \
               "$status" "$tested_sha" "$BUILD_OUTCOME" "$CERT_OUTCOME" \
               > certification/readwritepaths-latest.txt
-          git add certification/readwritepaths-latest.txt
+          if [ "$status" = pass ]; then
+              rm -f certification/readwritepaths-build-diagnostic.txt
+          fi
+          git add -A certification/readwritepaths-latest.txt certification/readwritepaths-build-diagnostic.txt
           if git diff --cached --quiet; then
               [ "$status" = pass ]
               exit
