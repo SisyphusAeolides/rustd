@@ -25,4 +25,8 @@ for arg in "$@"; do
     esac
 done
 
-exec "$RUSTD_TMPFILES" "${args[@]}"
+if [[ -n ${stdin_file:-} ]]; then
+    "$RUSTD_TMPFILES" "${args[@]}"
+else
+    exec "$RUSTD_TMPFILES" "${args[@]}"
+fi
