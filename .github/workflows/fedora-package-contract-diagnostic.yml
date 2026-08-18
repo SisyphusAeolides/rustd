@@ -1,5 +1,5 @@
 name: Fedora package contract diagnostic
-# trigger
+# Validate the versioned RPM capabilities used for the zero-systemd cutover.
 
 on:
   push:
@@ -33,11 +33,14 @@ jobs:
                 dbus-devel pam-devel json-c-devel
               cp -a /source /tmp/rustd
               cd /tmp/rustd
+              reference_evr="1:999-1"
               for spec in dist/fedora/*.spec; do
                 echo "==> $spec"
-                rpmspec -P "$spec" > /tmp/"$(basename "$spec")".expanded
+                rpmspec -P --define "systemd_compat_evr $reference_evr" "$spec" \
+                  > /tmp/"$(basename "$spec")".expanded
                 test -s /tmp/"$(basename "$spec")".expanded
               done
+
               rm -rf /tmp/rustd-selinux-build
               mkdir -p /tmp/rustd-selinux-build
               cp dist/fedora/selinux/rustd_fedora.te /tmp/rustd-selinux-build/
@@ -45,8 +48,27 @@ jobs:
               make -C /tmp/rustd-selinux-build \
                 -f /usr/share/selinux/devel/Makefile rustd_fedora.pp
               test -s /tmp/rustd-selinux-build/rustd_fedora.pp
+
               grep -Fq "Conflicts:      systemd-libs" dist/fedora/rustd-compat-libs.spec
-              ! grep -Eq "^Provides:[[:space:]]+systemd([[:space:]=]|$)" dist/fedora/*.spec
+              grep -Fq "Provides:       systemd-libs = %{systemd_compat_evr}" \
+                dist/fedora/rustd-compat-libs.spec
+              grep -Fq "Provides:       systemd = %{systemd_compat_evr}" \
+                dist/fedora/rustd-fedora-compat.spec
+              grep -Fq "Provides:       systemd-udev = %{systemd_compat_evr}" \
+                dist/fedora/rustd-fedora-compat.spec
+              grep -Fq "Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}" \
+                dist/fedora/rustd-fedora-compat.spec
+              test "$(grep -l -E "^Provides:[[:space:]]+systemd([[:space:]=]|$)" \
+                dist/fedora/*.spec)" = "dist/fedora/rustd-fedora-compat.spec"
+              grep -Eq "^Provides:[[:space:]]+systemd = 1:999-1$" \
+                /tmp/rustd-fedora-compat.spec.expanded
+              grep -Eq "^Provides:[[:space:]]+systemd-udev = 1:999-1$" \
+                /tmp/rustd-fedora-compat.spec.expanded
+              grep -Eq "^Provides:[[:space:]]+systemd-libs = 1:999-1$" \
+                /tmp/rustd-compat-libs.spec.expanded
+              grep -Fq "systemd_evr=\"\$(rpm -q --qf" scripts/build-fedora-rpms.sh
+              test "$(grep -Fc -- "--define \"systemd_compat_evr \$systemd_evr\"" \
+                scripts/build-fedora-rpms.sh)" -eq 2
               bash -n scripts/build-fedora-rpms.sh scripts/fedora-cutover-gate.sh
             '
       - name: Publish Fedora contract result
@@ -60,13 +82,16 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-package-contract-v2\n'
+            printf 'schema=rustd-fedora-package-contract-v3\n'
             printf 'status=%s\n' "$outcome"
             printf 'tested_sha=%s\n' "$GITHUB_SHA"
             if [[ "$outcome" == success ]]; then
               printf 'selinux_reference_policy=compiled\n'
               printf 'rpm_specs=parsed\n'
-              printf 'provides_systemd=forbidden\n'
+              printf 'capability.systemd=rustd-fedora-compat\n'
+              printf 'capability.systemd_udev=rustd-fedora-compat\n'
+              printf 'capability.systemd_libs=rustd-compat-libs\n'
+              printf 'capability_evr=build-host-systemd-libs\n'
             else
               printf '%s\n' '--- tail ---'
               tail -n 320 /tmp/fedora-package-contract.log || true
