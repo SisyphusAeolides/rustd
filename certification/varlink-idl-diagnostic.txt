@@ -1,7 +1,0 @@
-schema=rustd-varlink-idl-diagnostic-v1
-status=failure
-tested_sha=f5b6bdd43df3ddcf6f68b50ad427de306d4eb58d
-rc=134
---- tail ---
-test-varlink-idl: libs/tests/test_sd_varlink_idl_impl.c:23: expect_invalid: Assertion `r < 0' failed.
-/home/runner/work/_temp/6e546999-77e2-4191-a23a-7644c5e6c5f8.sh: line 18:  2255 Aborted                 (core dumped) /tmp/test-varlink-idl

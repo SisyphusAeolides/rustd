@@ -98,6 +98,11 @@ static int parser_ident(struct idl_parser *p, int upper, char **ret) {
     parser_take(p);
     while (isalnum((unsigned char)parser_peek(p)) || parser_peek(p) == '_')
         parser_take(p);
+    if (upper) {
+        for (size_t i = start; i < p->pos; ++i)
+            if (p->text[i] == '_')
+                return parser_fail(p);
+    }
     length = p->pos - start;
     if (upper) {
         for (size_t i = start; i < p->pos; ++i)

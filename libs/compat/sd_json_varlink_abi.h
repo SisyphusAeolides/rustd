@@ -77,3 +77,6 @@ int sd_varlink_callb(sd_varlink *v, const char *method,
                      sd_json_variant **ret_parameters, const char **ret_error_id, ...);
 int sd_varlink_collect(sd_varlink *v, const char *method, sd_json_variant *parameters,
                        sd_json_variant **ret_parameters, const char **ret_error_id);
+int sd_varlink_idl_parse(const char *text, unsigned *reterr_line,
+                         unsigned *reterr_column, sd_varlink_interface **ret);
+sd_varlink_interface *sd_varlink_interface_free(sd_varlink_interface *interface);
