@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Migrate Fedora's authselect-managed PAM/NSS configuration to RustD while
+# preserving the selected identity profile and its enabled features.
+set -Eeuo pipefail
+
+fail() {
+    printf 'rustd-fedora-cutover: %s\n' "$*" >&2
+    exit 1
+}
+
+[[ ${EUID:-$(id -u)} -eq 0 ]] || fail 'must run as root'
+command -v authselect >/dev/null 2>&1 || fail 'authselect is required on Fedora'
+[[ -e /usr/lib64/security/pam_rustd.so || -e /usr/lib/security/pam_rustd.so ]] \
+    || fail 'pam_rustd.so is not installed'
+[[ -e /usr/lib64/libnss_rustd_dns.so.2 || -e /usr/lib/libnss_rustd_dns.so.2 ]] \
+    || fail 'libnss_rustd_dns.so.2 is not installed'
+
+authselect check >/dev/null || fail 'current authselect configuration is not valid; refusing to overwrite administrator changes'
+raw="$(authselect current --raw)"
+[[ -n "$raw" ]] || fail 'no active authselect profile'
+read -r -a selection <<<"$raw"
+profile="${selection[0]}"
+features=("${selection[@]:1}")
+
+for feature in "${features[@]}"; do
+    [[ $feature != with-systemd-homed ]] \
+        || fail 'with-systemd-homed is enabled; RustD does not yet provide a homed replacement'
+done
+
+if [[ $profile == custom/rustd ]]; then
+    grep -Eq '^hosts:.*(^|[[:space:]])rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
+        || fail 'custom/rustd is active but rustd_dns is missing from hosts NSS configuration'
+    ! grep -R -E -q 'pam_systemd(_home)?\.so' /etc/pam.d \
+        || fail 'custom/rustd is active but a systemd PAM module is still referenced'
+    grep -R -Fq 'pam_rustd.so' /etc/pam.d \
+        || fail 'custom/rustd is active but pam_rustd.so is not referenced'
+    exit 0
+fi
+
+profile_dir=/etc/authselect/custom/rustd
+[[ ! -e $profile_dir ]] || fail "$profile_dir already exists; refusing to replace an administrator profile"
+authselect create-profile rustd --base-on="$profile"
+[[ -d $profile_dir ]] || fail 'authselect did not create custom/rustd'
+
+python3 - "$profile_dir" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+root = Path(sys.argv[1])
+
+for name in ("system-auth", "password-auth", "smartcard-auth", "fingerprint-auth", "postlogin"):
+    path = root / name
+    if not path.exists() or path.is_symlink():
+        continue
+    lines = []
+    for line in path.read_text().splitlines(keepends=True):
+        # systemd-homed semantics are intentionally not emulated. The caller
+        # rejects an enabled homed feature before creating this profile, so
+        # conditional homed lines can be removed from the cloned template.
+        if "pam_systemd_home.so" in line:
+            continue
+        line = line.replace("pam_systemd.so", "pam_rustd.so")
+        lines.append(line)
+    path.write_text("".join(lines))
+
+nss = root / "nsswitch.conf"
+if not nss.exists() or nss.is_symlink():
+    raise SystemExit("custom profile does not contain an editable nsswitch.conf template")
+
+out = []
+changed = False
+for line in nss.read_text().splitlines(keepends=True):
+    if not re.match(r"^hosts:\s", line):
+        out.append(line)
+        continue
+    newline = "\n" if line.endswith("\n") else ""
+    body = line[:-1] if newline else line
+    # Remove backends shipped by the removed implementation together with an
+    # immediately-associated NSS action clause, then add the native RustD DNS
+    # backend immediately before the ordinary dns fallback.
+    body = re.sub(r"\s+(?:myhostname|resolve|systemd)(?:\s+\[[^]]+\])?", "", body)
+    body = re.sub(r"\s+rustd_dns(?:\s+\[[^]]+\])?", "", body)
+    match = re.search(r"\s+dns(?=\s|$)", body)
+    if match:
+        body = body[:match.start()] + " rustd_dns [!UNAVAIL=return]" + body[match.start():]
+    else:
+        body += " rustd_dns [!UNAVAIL=return] dns"
+    out.append(body + newline)
+    changed = True
+
+if not changed:
+    raise SystemExit("custom profile has no hosts: entry")
+nss.write_text("".join(out))
+PY
+
+# Validate the generated configuration before authselect changes /etc.
+test_args=(custom/rustd "${features[@]}")
+authselect test --nsswitch "${test_args[@]}" > /tmp/rustd-authselect-nss.$$
+authselect test --system-auth "${test_args[@]}" > /tmp/rustd-authselect-pam.$$
+trap 'rm -f /tmp/rustd-authselect-nss.$$ /tmp/rustd-authselect-pam.$$' EXIT
+
+grep -Eq '^hosts:.*(^|[[:space:]])rustd_dns([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
+    || fail 'generated nsswitch.conf does not contain rustd_dns'
+! grep -E -q '(^|[[:space:]])(myhostname|resolve|systemd)([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
+    || fail 'generated nsswitch.conf still references a removed NSS backend'
+grep -Fq 'pam_rustd.so' /tmp/rustd-authselect-pam.$$ \
+    || fail 'generated system-auth does not contain pam_rustd.so'
+! grep -E -q 'pam_systemd(_home)?\.so' /tmp/rustd-authselect-pam.$$ \
+    || fail 'generated system-auth still references a systemd PAM module'
+
+backup="rustd-cutover-$(date -u +%Y%m%dT%H%M%SZ)"
+authselect select custom/rustd "${features[@]}" --force --backup="$backup"
+authselect check >/dev/null || fail 'authselect rejected the activated RustD profile'
+
+grep -Eq '^hosts:.*(^|[[:space:]])rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
+    || fail 'active nsswitch.conf does not contain rustd_dns'
+! grep -E -q '^hosts:.*(^|[[:space:]])(myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
+    || fail 'active hosts NSS configuration still references a removed backend'
+grep -R -Fq 'pam_rustd.so' /etc/pam.d \
+    || fail 'active PAM configuration does not contain pam_rustd.so'
+! grep -R -E -q 'pam_systemd(_home)?\.so' /etc/pam.d \
+    || fail 'active PAM configuration still references a systemd PAM module'
+
+printf 'RustD authselect cutover complete; rollback backup: %s\n' "$backup"
