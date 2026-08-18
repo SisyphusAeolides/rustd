@@ -1,9 +1,14 @@
-schema=rustd-fedora-package-contract-v3
+schema=rustd-fedora-package-contract-v5
 status=success
-tested_sha=6bc30d1b77107f3efef6c373ec8d910d912468f1
+tested_sha=13880fa9e3129e378eb4c0e7c9d85058c2d5906a
 selinux_reference_policy=compiled
 rpm_specs=parsed
 capability.systemd=rustd-fedora-compat
 capability.systemd_udev=rustd-fedora-compat
 capability.systemd_libs=rustd-compat-libs
-capability_evr=build-host-systemd-libs
+capability_evr=equal-build-host-systemd-stack
+stage.pam=rustd-cutover-tools
+stage.nss=rustd-resolved-nss
+stage.systemd_erasure=forbidden
+exclusive.pretrans_auth_guard=required
+owner.init=rustd-fedora-compat
