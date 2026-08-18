@@ -1,0 +1,66 @@
+name: Fix sd-bus async completion polling
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/fix-sd-bus-async-poll.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libdbus-1-dev dbus
+      - name: Patch and certify async completion
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('libs/compat/sd_bus_impl.c')
+          s=p.read_text()
+
+          # Async pending calls are completed by sd_bus_process(), not by libdbus
+          # notification dispatch. This keeps ordinary signals/method calls on
+          # RustD's existing queue while still delivering replies exactly once.
+          old='''    if (!dbus_pending_call_set_notify(pending, rustd_async_notify, slot, NULL)) {\n        sd_bus_slot_unref(slot);\n        return -ENOMEM;\n    }\n    if (ret_slot)\n        *ret_slot = slot;\n    return 0;\n}'''
+          new='''    if (ret_slot)\n        *ret_slot = slot;\n    return 0;\n}'''
+          if old in s:
+              s=s.replace(old,new,1)
+          elif 'dbus_pending_call_set_notify(pending, rustd_async_notify' in s:
+              raise SystemExit('unexpected async notify layout')
+
+          start=s.index('int sd_bus_process(sd_bus *bus, sd_bus_message **ret) {')
+          end=s.index('\nint sd_bus_add_filter(', start)
+          current=s[start:end]
+          if 'dbus_pending_call_get_completed' not in current:
+              marker='''    if (!dbus_connection_read_write(bus->connection, 0))\n        return -ECONNRESET;\n'''
+              addition=marker+'''    {\n        sd_bus_slot *slot;\n        for (slot = bus->slots; slot; slot = slot->next) {\n            if (slot->kind == RUSTD_SLOT_ASYNC && slot->pending &&\n                dbus_pending_call_get_completed(slot->pending)) {\n                DBusPendingCall *pending = slot->pending;\n                slot->pending = NULL;\n                rustd_async_notify(pending, slot);\n                dbus_pending_call_unref(pending);\n                return 1;\n            }\n        }\n    }\n'''
+              if marker not in current:
+                  raise SystemExit('sd_bus_process read_write anchor missing')
+              current=current.replace(marker,addition,1)
+              s=s[:start]+current+s[end:]
+          p.write_text(s)
+          PY
+          git diff --check
+          cc -std=c17 -Wall -Wextra -Werror -fPIC -Ilibs/compat $(pkg-config --cflags dbus-1) -c libs/compat/sd_bus_impl.c -o /tmp/sd_bus_impl.o
+          cc -std=c17 -Wall -Wextra -Werror -Ilibs/compat $(pkg-config --cflags dbus-1) libs/tests/test_sd_bus_impl.c libs/compat/sd_bus_impl.c $(pkg-config --libs dbus-1) -o /tmp/test-sd-bus-impl
+          dbus-run-session -- /tmp/test-sd-bus-impl
+          rm -f certification/sd-bus-behavior-diagnostic.txt certification/sd-bus-header-independence-diagnostic.txt certification/sd-bus-bridge-diagnostic.txt
+          rm -f .github/workflows/fix-sd-bus-async-poll.yml .github/workflows/fix-sd-bus-async-dispatch.yml .github/workflows/fix-sd-bus-dispatch-filter.yml .github/workflows/diagnose-sd-bus-dispatch-filter.yml
+          git add -A libs/compat/sd_bus_impl.c certification .github/workflows
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Fix sd-bus async completion processing'
+          git push origin HEAD:main
