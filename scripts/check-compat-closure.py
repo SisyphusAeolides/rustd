@@ -17,7 +17,8 @@ FUNCTION = re.compile(
 )
 UNSUPPORTED_MARKERS = ("ENOSYS", "rustd_bus_enosys")
 STUB_SOURCE = Path("libs/compat/sd_bus_stubs.c")
-STUB_DATA_SYMBOLS = {"sd_bus_object_vtable_format"}
+DATA_SYMBOLS = {"sd_bus_object_vtable_format"}
+UNSUPPORTED_DATA_SYMBOLS = {"sd_bus_object_vtable_format"}
 SUPPORTED_STUB_FUNCTIONS = {
     "sd_bus_error_set_errno",
     "sd_bus_error_free",
@@ -65,7 +66,7 @@ def function_body(source: str, start: int) -> str:
 
 
 def unsupported_symbols(root: Path) -> set[str]:
-    unsupported = set(STUB_DATA_SYMBOLS)
+    unsupported = set(UNSUPPORTED_DATA_SYMBOLS)
     unsupported.update(SEMANTIC_PLACEHOLDERS)
     for relative in (
         Path("libs/compat/systemd.c"),
