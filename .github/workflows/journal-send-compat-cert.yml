@@ -1,0 +1,56 @@
+name: Journal send compatibility certification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - libs/compat/journal_send_impl.c
+      - libs/tests/test_journal_send_impl.c
+      - .github/workflows/journal-send-compat-cert.yml
+
+permissions:
+  contents: write
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Build and exercise journal send contract
+        id: test
+        shell: bash
+        run: |
+          set -o pipefail
+          cc -std=c17 -Wall -Wextra -Werror -Iinclude \
+             libs/tests/test_journal_send_impl.c libs/compat/journal_send_impl.c \
+             -o /tmp/test-journal-send 2>&1 | tee /tmp/journal-send.log
+          /tmp/test-journal-send 2>&1 | tee -a /tmp/journal-send.log
+      - name: Publish exact-SHA voucher
+        if: always()
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          set -euo pipefail
+          status=failure
+          [ "$OUTCOME" = success ] && status=pass
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          printf 'schema=rustd-journal-send-compat-v1\nstatus=%s\ntested_sha=%s\nbehavior_outcome=%s\nvarargs=null-terminated-fields\nlocation=code-file-line-func\n' "$status" "$GITHUB_SHA" "$OUTCOME" > certification/journal-send-compat-latest.txt
+          if [ "$status" = failure ]; then
+            tail -n 160 /tmp/journal-send.log > certification/journal-send-compat-diagnostic.txt 2>/dev/null || true
+          else
+            rm -f certification/journal-send-compat-diagnostic.txt
+          fi
+          git add -A certification/journal-send-compat-latest.txt certification/journal-send-compat-diagnostic.txt
+          if ! git diff --cached --quiet; then
+            git config user.name 'Kenny Glowner'
+            git config user.email 'SisyphusAeolides@pm.me'
+            git commit -m "Record journal send compatibility $status"
+            git push origin HEAD:main
+          fi
+          [ "$status" = pass ]
