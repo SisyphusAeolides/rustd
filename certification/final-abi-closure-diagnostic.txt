@@ -1,72 +1,67 @@
-schema=rustd-final-abi-diagnostic-v3
+schema=rustd-final-abi-diagnostic-v5
 status=failure
-tested_sha=e1672a8458e2772bf42adc09bdc5a28c568df317
+tested_sha=ece52450a7d84ef2be5dd35b9bdea5f6031bde4b
 --- tail ---
-Traceback (most recent call last):
-  File "<stdin>", line 3, in <module>
-  File "/usr/lib/python3/dist-packages/yaml/__init__.py", line 125, in safe_load
-    return load(stream, SafeLoader)
-           ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/__init__.py", line 81, in load
-    return loader.get_single_data()
-           ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/constructor.py", line 49, in get_single_data
-    node = self.get_single_node()
-           ^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 36, in get_single_node
-    document = self.compose_document()
-               ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 55, in compose_document
-    node = self.compose_node(None, None)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 84, in compose_node
-    node = self.compose_mapping_node(anchor)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 133, in compose_mapping_node
-    item_value = self.compose_node(node, item_key)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 84, in compose_node
-    node = self.compose_mapping_node(anchor)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 133, in compose_mapping_node
-    item_value = self.compose_node(node, item_key)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 84, in compose_node
-    node = self.compose_mapping_node(anchor)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 133, in compose_mapping_node
-    item_value = self.compose_node(node, item_key)
-                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 82, in compose_node
-    node = self.compose_sequence_node(anchor)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 111, in compose_sequence_node
-    node.value.append(self.compose_node(node, index))
-                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 84, in compose_node
-    node = self.compose_mapping_node(anchor)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/composer.py", line 127, in compose_mapping_node
-    while not self.check_event(MappingEndEvent):
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/parser.py", line 98, in check_event
-    self.current_event = self.state()
-                         ^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/parser.py", line 428, in parse_block_mapping_key
-    if self.check_token(KeyToken):
-       ^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/scanner.py", line 115, in check_token
-    while self.need_more_tokens():
-          ^^^^^^^^^^^^^^^^^^^^^^^
-  File "/usr/lib/python3/dist-packages/yaml/scanner.py", line 152, in need_more_tokens
-    self.stale_possible_simple_keys()
-  File "/usr/lib/python3/dist-packages/yaml/scanner.py", line 291, in stale_possible_simple_keys
-    raise ScannerError("while scanning a simple key", key.mark,
-yaml.scanner.ScannerError: while scanning a simple key
-  in "<unicode string>", line 55, column 5:
-        char **resized;
-        ^
-could not find expected ':'
-  in "<unicode string>", line 56, column 5:
-        char *copy;
-        ^
++ set -euo pipefail
++ cat
++ bash /tmp/apply-journal-filter.sh
+mkdir -p build/libs
+cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
+	ffi/native.c ffi/notify.c libs/service/abi.c \
+	-Wl,--version-script=libs/maps/librustd_service.map \
+	-Wl,-soname,librustd_service.so.1 -Wl,-z,relro,-z,now \
+	-o build/libs/librustd_service.so.1
+mkdir -p build/libs
+cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
+	libs/journal/journal.c \
+	-Wl,--version-script=libs/maps/librustd_journal.map \
+	-Wl,-soname,librustd_journal.so.1 -Wl,-z,relro,-z,now \
+	-o build/libs/librustd_journal.so.1
+mkdir -p build/libs
+cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
+	libs/device/device.c \
+	-Wl,--version-script=libs/maps/librustd_device.map \
+	-Wl,-soname,librustd_device.so.1 -Wl,-z,relro,-z,now \
+	-o build/libs/librustd_device.so.1
+mkdir -p build/libs
+cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
+	libs/login/login.c \
+	-Wl,--version-script=libs/maps/librustd_login.map \
+	-Wl,-soname,librustd_login.so.1 -Wl,-z,relro,-z,now \
+	-o build/libs/librustd_login.so.1
+mkdir -p build/libs
+cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
+	libs/manager/manager.c \
+	-Wl,--version-script=libs/maps/librustd_manager.map \
+	-Wl,-soname,librustd_manager.so.1 -Wl,-z,relro,-z,now \
+	-o build/libs/librustd_manager.so.1
+ln -sfn librustd_service.so.1 build/libs/librustd_service.so
+ln -sfn librustd_journal.so.1 build/libs/librustd_journal.so
+ln -sfn librustd_device.so.1 build/libs/librustd_device.so
+ln -sfn librustd_login.so.1 build/libs/librustd_login.so
+ln -sfn librustd_manager.so.1 build/libs/librustd_manager.so
+mkdir -p build/libs
+cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
+	libs/compat/udev.c \
+	-Wl,--version-script=libs/maps/libudev.map \
+	-Wl,-soname,libudev.so.1 -Wl,-z,relro,-z,now \
+	-Wl,-rpath,'$ORIGIN' -Lbuild/libs -l:librustd_device.so.1 \
+	-o build/libs/libudev.so.1
+mkdir -p build/libs
+cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
+	libs/compat/systemd.c libs/compat/sd_bus_stubs.c \
+	-Wl,--version-script=libs/maps/libsystemd.map \
+	-Wl,-soname,libsystemd.so.0 -Wl,-z,relro,-z,now \
+	-Wl,-rpath,'$ORIGIN' -Lbuild/libs \
+	-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 \
+	-o build/libs/libsystemd.so.0
+ln -sfn libudev.so.1 build/libs/libudev.so
+ln -sfn libsystemd.so.0 build/libs/libsystemd.so
+cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 libs/tests/test_compat_abi.c \
+	-Wl,-rpath,/home/runner/work/rustd/rustd/build/libs -Lbuild/libs \
+	-ludev -lsystemd -o build/test_compat_abi
+libs/tests/test_compat_abi.c:13:10: fatal error: systemd/sd-bus.h: No such file or directory
+   13 | #include <systemd/sd-bus.h>
+      |          ^~~~~~~~~~~~~~~~~~
+compilation terminated.
+make: *** [Makefile:139: check-compat] Error 1
