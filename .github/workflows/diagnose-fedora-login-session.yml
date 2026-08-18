@@ -1,5 +1,5 @@
 name: Diagnose Fedora Login1 session support
-# rerun raw extraction on Fedora exact-stack candidate
+# preserve blank lines in embedded Login1 patch
 
 on:
   push:
@@ -41,15 +41,21 @@ jobs:
           raw = text[start:]
           lines = []
           for line in raw.splitlines():
+              if line.startswith('      - name: ') or line.startswith('      - uses: '):
+                  break
               if line.startswith('          '):
                   line = line[10:]
-              else:
+              elif line.strip():
                   break
+              else:
+                  line = ''
               lines.append(line)
           script = '\n'.join(lines) + '\n'
           cut = 'git fetch origin main'
           if cut in script:
               script = script[:script.index(cut)]
+          if "from pathlib import Path" not in script or "cargo test --all-targets" not in script:
+              raise SystemExit('Login1 extraction is incomplete')
           Path('/tmp/login1-step.sh').write_text(script)
           PY
           bash -x /tmp/login1-step.sh
@@ -64,11 +70,11 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-login1-diagnostic-v2\n'
+            printf 'schema=rustd-fedora-login1-diagnostic-v3\n'
             printf 'status=%s\n' "$outcome"
             printf 'tested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 260 /tmp/fedora-login1.log || true
+            tail -n 320 /tmp/fedora-login1.log || true
           } > certification/fedora-login1-diagnostic.txt
           git add certification/fedora-login1-diagnostic.txt
           git config user.name 'Kenny Glowner'
