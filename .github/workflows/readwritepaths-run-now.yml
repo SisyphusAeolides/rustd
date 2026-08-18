@@ -1,0 +1,71 @@
+name: Run ReadWritePaths certification now
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/readwritepaths-run-now.yml
+
+permissions:
+  contents: write
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Execute and publish certification result
+        shell: bash
+        run: |
+          set -u
+          tested_sha="$GITHUB_SHA"
+          install_rc=0
+          build_rc=0
+          cert_rc=0
+
+          sudo apt-get update && sudo apt-get install --yes --no-install-recommends gfortran || install_rc=$?
+          if [ "$install_rc" -eq 0 ]; then
+              rustup toolchain install 1.75.0 --profile minimal || install_rc=$?
+          fi
+
+          if [ "$install_rc" -eq 0 ]; then
+              cargo +1.75.0 test --locked --test read_write_paths --no-run || build_rc=$?
+          else
+              build_rc=125
+          fi
+
+          if [ "$build_rc" -eq 0 ]; then
+              test_bin="$(find target/debug/deps -maxdepth 1 -type f -name 'read_write_paths-*' -perm -111 | head -n1)"
+              if [ -z "$test_bin" ]; then
+                  cert_rc=126
+              else
+                  sudo "$test_bin" --nocapture --test-threads=1 || cert_rc=$?
+              fi
+          else
+              cert_rc=125
+          fi
+
+          status=failure
+          if [ "$install_rc" -eq 0 ] && [ "$build_rc" -eq 0 ] && [ "$cert_rc" -eq 0 ]; then
+              status=pass
+          fi
+
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          rm -f .github/workflows/readwritepaths-run-now.yml
+          mkdir -p certification
+          printf 'schema=rustd-readwritepaths-cert-v1\nstatus=%s\ntested_sha=%s\ninstall_rc=%s\nbuild_rc=%s\ncert_rc=%s\nprotect_system=strict\nread_write_paths=production-spawn-v2\n' \
+              "$status" "$tested_sha" "$install_rc" "$build_rc" "$cert_rc" \
+              > certification/readwritepaths-latest.txt
+          git add -A .github/workflows/readwritepaths-run-now.yml certification/readwritepaths-latest.txt
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m "Record ReadWritePaths certification $status"
+          git push origin HEAD:main
+          [ "$status" = pass ]
