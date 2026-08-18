@@ -1,4 +1,5 @@
 name: Fedora package contract diagnostic
+# trigger
 
 on:
   push:
