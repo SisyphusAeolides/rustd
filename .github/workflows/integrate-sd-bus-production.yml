@@ -38,20 +38,21 @@ jobs:
           from pathlib import Path
           m=Path('Makefile')
           s=m.read_text()
-          s=s.replace('libs/compat/systemd.c libs/compat/sd_bus_stubs.c libs/compat/journal_send_impl.c',
-                      'libs/compat/systemd.c libs/compat/sd_bus_impl.c libs/compat/journal_send_impl.c')
-          s=s.replace('libs/compat/systemd.c libs/compat/sd_bus_stubs.c libs/maps/libsystemd.map',
-                      'libs/compat/systemd.c libs/compat/sd_bus_impl.c libs/maps/libsystemd.map')
-          s=s.replace('libs/compat/systemd.c libs/compat/sd_bus_stubs.c \\\n',
-                      'libs/compat/systemd.c libs/compat/sd_bus_impl.c \\\n')
-          marker='''\t\t-Wl,--version-script=libs/maps/libsystemd.map \\\n'''
-          if '$(shell pkg-config --cflags dbus-1)' not in s:
-              s=s.replace('\t$(CC) $(CFLAGS) $(CPPFLAGS) -shared \\\n',
-                          '\t$(CC) $(CFLAGS) $(CPPFLAGS) $(shell pkg-config --cflags dbus-1) -shared \\\n', 1)
-          libline='''\t\t-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 \\\n'''
-          if '$(shell pkg-config --libs dbus-1)' not in s:
-              if libline not in s: raise SystemExit('libsystemd link line missing')
-              s=s.replace(libline, libline.rstrip('\\\n')+' $(shell pkg-config --libs dbus-1) \\\n',1)
+          start=s.index('$(LIBS_DIR)/libsystemd.so.0:')
+          end=s.index('\n$(LIBS_DIR)/librustd_service.so.1:', start)
+          block=s[start:end]
+          block=block.replace('libs/compat/sd_bus_stubs.c', 'libs/compat/sd_bus_impl.c')
+          compile_old='''\t$(CC) $(CFLAGS) -fPIC $(LIB_CPPFLAGS) -shared \\\n'''
+          compile_new='''\t$(CC) $(CFLAGS) -fPIC $(LIB_CPPFLAGS) $(shell pkg-config --cflags dbus-1) -shared \\\n'''
+          if '$(shell pkg-config --cflags dbus-1)' not in block:
+              if compile_old not in block: raise SystemExit('libsystemd compile line missing')
+              block=block.replace(compile_old, compile_new, 1)
+          lib_old='''\t\t-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 \\\n'''
+          lib_new='''\t\t-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 $(shell pkg-config --libs dbus-1) \\\n'''
+          if '$(shell pkg-config --libs dbus-1)' not in block:
+              if lib_old not in block: raise SystemExit('libsystemd link line missing')
+              block=block.replace(lib_old, lib_new, 1)
+          s=s[:start]+block+s[end:]
           m.write_text(s)
 
           c=Path('scripts/check-compat-closure.py')
