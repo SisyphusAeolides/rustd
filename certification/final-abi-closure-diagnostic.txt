@@ -1,0 +1,4 @@
+schema=rustd-final-abi-diagnostic-v1
+status=failure
+tested_sha=1f99213bf5357b971fce265eaef29c91addbd352
+--- tail ---
