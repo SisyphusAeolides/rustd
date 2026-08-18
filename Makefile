@@ -214,7 +214,7 @@ check-formal:
 
 check-packaging:
 	bash -n scripts/boot-smoke.sh scripts/install-rustd-names.sh scripts/check-reproducible-release.sh scripts/installed-certification.sh scripts/performance-promotion.sh scripts/exclusive-cutover-gate.sh scripts/ci-pid1-initramfs.sh scripts/check-native-libs.sh
-	python3 -m py_compile scripts/executable_contract.py scripts/check-executable-inventory.py scripts/install-executable-surfaces.py
+	python3 -m py_compile scripts/executable_contract.py scripts/check-executable-inventory.py scripts/install-executable-surfaces.py scripts/validate-resolver-certification-report.py
 	@set -eu; \
 	work=$$(mktemp -d); \
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
