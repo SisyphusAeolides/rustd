@@ -63,6 +63,10 @@ pub struct SdSpawnSandbox {
     pub syscall_filter_enabled: libc::c_int,
     /// Boolean: reject non-native syscall architectures.
     pub restrict_native_syscalls: libc::c_int,
+    /// Absolute writable mount exceptions from `ReadWritePaths=`.
+    pub read_write_paths: *const *const libc::c_char,
+    /// Number of entries in `read_write_paths`.
+    pub n_read_write_paths: usize,
 }
 
 impl Default for SdSpawnSandbox {
@@ -89,6 +93,8 @@ impl Default for SdSpawnSandbox {
             syscall_filter_default_action: SECCOMP_ACTION_ALLOW,
             syscall_filter_enabled: 0,
             restrict_native_syscalls: 0,
+            read_write_paths: std::ptr::null(),
+            n_read_write_paths: 0,
         }
     }
 }
@@ -179,7 +185,7 @@ extern "C" {
     /// Returns the child PID on success, or a negative errno on failure.
     ///
     /// # Safety
-    /// `p` must be a valid pointer to an initialised `SdSpawnParams`.
+    /// `p` must be a valid pointer to an initialised [`SdSpawnParams`].
     /// All pointer fields within `p` must be valid for the duration of
     /// the call (they are not accessed after `rustd_spawn` returns).
     pub fn rustd_spawn(p: *const SdSpawnParams) -> pid_t;
