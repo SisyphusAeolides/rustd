@@ -74,17 +74,17 @@ case "$command" in
         "$SYSTEMCTL" --no-reload preset "$@"
         ;;
     install-user-units)
-        "$SYSTEMCTL" --no-reload preset --global "$@"
+        "$SYSTEMCTL" --no-reload --global preset "$@"
         ;;
     remove-system-units)
         if manager_live; then
-            "$SYSTEMCTL" --no-reload disable --now --no-warn "$@"
+            "$SYSTEMCTL" --no-reload --now --no-warn disable "$@"
         else
-            "$SYSTEMCTL" --no-reload disable --no-warn "$@"
+            "$SYSTEMCTL" --no-reload --no-warn disable "$@"
         fi
         ;;
     remove-user-units)
-        "$SYSTEMCTL" --global disable --no-warn "$@"
+        "$SYSTEMCTL" --global --no-warn disable "$@"
         if manager_live; then
             while IFS= read -r uid; do
                 [[ -n $uid ]] || continue
@@ -118,7 +118,7 @@ case "$command" in
         (($# == 0)) || { echo "Unexpected arguments for '$command': $*" >&2; exit 2; }
         manager_live || exit 0
         [[ $command == *reload* ]] && "$SYSTEMCTL" daemon-reload
-        [[ $command == *restart* ]] && "$SYSTEMCTL" reload-or-restart --marked
+        [[ $command == *restart* ]] && "$SYSTEMCTL" --marked reload-or-restart
         ;;
     user-reload-restart|user-reload|user-restart|user-reexec)
         (($# == 0)) || { echo "Unexpected arguments for '$command': $*" >&2; exit 2; }
