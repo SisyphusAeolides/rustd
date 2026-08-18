@@ -1,0 +1,4 @@
+#!/usr/bin/bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+set -euo pipefail
+exec "${RUSTD_UDEVADM:-/usr/bin/rustudevadm}" "$@"
