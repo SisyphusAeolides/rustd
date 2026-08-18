@@ -11,9 +11,12 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: rustd-oom-policy-landing-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   apply-and-validate:
-    if: github.event.head_commit.message == 'Retry OOM policy implementation'
     runs-on: ubuntu-22.04
     timeout-minutes: 55
     env:
