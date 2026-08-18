@@ -1,4 +1,5 @@
 name: Diagnose event compatibility engine
+# trigger
 
 on:
   push:
