@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #define _GNU_SOURCE
 #include <dbus/dbus.h>
-#include <systemd/sd-bus.h>
+#include "sd_bus_abi.h"
 
 #include <errno.h>
 #include <fcntl.h>

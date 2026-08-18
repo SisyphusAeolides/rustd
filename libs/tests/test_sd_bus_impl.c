@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <systemd/sd-bus.h>
+#include "sd_bus_abi.h"
 
 static int async_called;
 static int async_saw_dbus;
