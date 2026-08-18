@@ -1,5 +1,5 @@
 name: Land Fedora cutover security and dependency preflight
-# trigger
+# trigger with autostash
 
 on:
   push:
@@ -80,7 +80,7 @@ fi
           grep -Fq 'rpm -q --whatrequires systemd' scripts/fedora-cutover-gate.sh
           git diff --check
           git fetch origin main
-          git rebase origin/main
+          git rebase --autostash origin/main
           bash -n scripts/fedora-cutover-gate.sh
           rm -f .github/workflows/land-fedora-cutover-hardening.yml
           git add -A scripts/fedora-cutover-gate.sh .github/workflows/land-fedora-cutover-hardening.yml
