@@ -76,6 +76,7 @@ make_source "$RESOLVED_ROOT" "$resolved_sha" rustd-resolved "$resolved_version" 
 cp "$SOURCE_ROOT/dist/fedora/rustd.spec" "$TOPDIR/SPECS/"
 cp "$SOURCE_ROOT/dist/fedora/rustd-fedora-compat.spec" "$TOPDIR/SPECS/"
 cp "$SOURCE_ROOT/dist/fedora/rustd-compat-libs.spec" "$TOPDIR/SPECS/"
+cp "$SOURCE_ROOT/dist/fedora/rustd-selinux.spec" "$TOPDIR/SPECS/"
 cp "$RESOLVED_ROOT/dist/fedora/rustd-resolved.spec" "$TOPDIR/SPECS/"
 
 systemd_evr="$(rpm -q --qf '%{EVR}' systemd-libs 2>/dev/null || true)"
@@ -83,6 +84,7 @@ systemd_evr="$(rpm -q --qf '%{EVR}' systemd-libs 2>/dev/null || true)"
 
 rpmbuild_common=(--define "_topdir $TOPDIR")
 rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd.spec"
+rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd-selinux.spec"
 rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd-fedora-compat.spec"
 rpmbuild -ba "${rpmbuild_common[@]}" \
     --define "systemd_compat_evr $systemd_evr" \
