@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
+/* certification trigger */
 #include <assert.h>
 #include <string.h>
 
@@ -11,7 +12,6 @@ static void expect_valid(const char *text, const char *name) {
     assert(r == 0);
     assert(interface != NULL);
     assert(line == 0U && column == 0U);
-    /* Public ABI starts with the borrowed/owned interface name pointer. */
     assert(strcmp(*(const char * const *)interface, name) == 0);
     assert(sd_varlink_interface_free(interface) == NULL);
 }
