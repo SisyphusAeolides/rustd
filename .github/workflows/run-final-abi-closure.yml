@@ -1,5 +1,5 @@
 name: Run final RustD ABI closure
-# rerun with full diagnostic capture
+# execute raw closure block without parsing malformed legacy YAML
 
 defaults:
   run:
@@ -41,13 +41,25 @@ jobs:
           exec > >(tee /tmp/final-abi-closure.log) 2>&1
           python3 - <<'PY'
           from pathlib import Path
-          import yaml
-          data = yaml.safe_load(Path('.github/workflows/final-abi-closure.yml').read_text())
-          step = next(x for x in data['jobs']['close']['steps'] if x.get('name') == 'Apply certified compatibility engines')
-          run = step['run']
+
+          text = Path('.github/workflows/final-abi-closure.yml').read_text()
+          step = text.index('      - name: Apply certified compatibility engines\n')
+          marker = '        run: |\n'
+          start = text.index(marker, step) + len(marker)
+          raw = text[start:]
+          lines = []
+          for line in raw.splitlines():
+              if line.startswith('          '):
+                  line = line[10:]
+              lines.append(line)
+          run = '\n'.join(lines) + '\n'
           run = run.replace(
               "s = s.replace('STUB_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'STUB_DATA_SYMBOLS = set()')",
               "s = s.replace('UNSUPPORTED_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'UNSUPPORTED_DATA_SYMBOLS = set()')")
+          run = run.replace(
+              'git add -A Makefile libs/compat/systemd.c',
+              'rm -f .github/workflows/final-abi-closure.yml\n'
+              'git add -A Makefile libs/compat/systemd.c')
           Path('/tmp/final-abi-closure.sh').write_text(run)
           PY
           bash /tmp/final-abi-closure.sh
@@ -61,9 +73,9 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-final-abi-diagnostic-v2\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-final-abi-diagnostic-v3\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 260 /tmp/final-abi-closure.log || true
+            tail -n 300 /tmp/final-abi-closure.log || true
           } > certification/final-abi-closure-diagnostic.txt
           git add certification/final-abi-closure-diagnostic.txt
           git config user.name 'Kenny Glowner'
