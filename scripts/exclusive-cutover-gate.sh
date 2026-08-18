@@ -7,6 +7,7 @@
 
 set -Eeuo pipefail
 
+SOURCE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ROOT="${RUSTD_CUTOVER_ROOT:-/}"
 RUSTCTL="${RUSTCTL:-${ROOT%/}/usr/bin/rustctl}"
 MODE=audit
@@ -107,16 +108,24 @@ scan_live_processes() {
 }
 
 check_certification_report() {
+    local rustd_sha resolved_sha
     if [[ -z "$CERT_REPORT" || ! -r "$CERT_REPORT" ]]; then
         pending "completed installed-certification report not supplied"
         return
     fi
-    if grep -Eq '"status":"(fail|pending|skip)"' "$CERT_REPORT"; then
-        fail "certification report contains fail, pending, or skipped gates"
-    elif grep -q '"status":"pass"' "$CERT_REPORT"; then
-        pass "installed certification report contains only completed passing gates"
+    rustd_sha="$(git -C "$SOURCE_ROOT" rev-parse HEAD 2>/dev/null || true)"
+    resolved_sha="$(tr -d '[:space:]' <"$SOURCE_ROOT/scripts/rustd-resolved-revision.txt" 2>/dev/null || true)"
+    if [[ ! "$rustd_sha" =~ ^[0-9a-f]{40}$ || ! "$resolved_sha" =~ ^[0-9a-f]{40}$ ]]; then
+        fail "exact RustD/resolver revisions are unavailable for cutover validation"
+        return
+    fi
+    if python3 "$SOURCE_ROOT/scripts/validate-installed-certification-report.py" \
+        "$CERT_REPORT" \
+        --expected-rustd-sha "$rustd_sha" \
+        --expected-resolved-sha "$resolved_sha" >/dev/null; then
+        pass "installed certification report matches the exact complete RustD stack"
     else
-        fail "certification report has no passing gates"
+        fail "installed certification report is stale, incomplete, insecure, or for another stack revision"
     fi
 }
 
