@@ -21,6 +21,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Exact postimage from the guarded OOM landing remains the only accepted base.
           test "$(git hash-object src/manager.rs)" = 01cac46bc41f2c9d9e025ace5dab1281d6b1954d
           python3 - <<'PY'
           from pathlib import Path
