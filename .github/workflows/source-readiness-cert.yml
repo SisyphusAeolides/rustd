@@ -1,0 +1,47 @@
+name: Exact source readiness certification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'libs/compat/**'
+      - 'scripts/check-compat-closure.py'
+      - 'scripts/check-compat-source-readiness.py'
+      - '.github/workflows/source-readiness-cert.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  readiness:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Classify measured ABI source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/check-compat-source-readiness.py --report /tmp/readiness.json || true
+          python3 - "$GITHUB_SHA" <<'PY'
+          import json, pathlib, sys
+          source = json.load(open('/tmp/readiness.json'))
+          source['schema'] = 'rustd-source-readiness-v1'
+          source['tested_sha'] = sys.argv[1]
+          pathlib.Path('/tmp/source-readiness-latest.json').write_text(
+              json.dumps(source, indent=2, sort_keys=True) + '\n'
+          )
+          PY
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          cp /tmp/source-readiness-latest.json certification/source-readiness-latest.json
+          git add certification/source-readiness-latest.json
+          if ! git diff --cached --quiet; then
+            git config user.name 'Kenny Glowner'
+            git config user.email 'SisyphusAeolides@pm.me'
+            git commit -m 'Record exact source readiness'
+            git push origin HEAD:main
+          fi
