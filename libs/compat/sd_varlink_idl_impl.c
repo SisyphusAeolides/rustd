@@ -99,11 +99,17 @@ static int parser_ident(struct idl_parser *p, int upper, char **ret) {
     while (isalnum((unsigned char)parser_peek(p)) || parser_peek(p) == '_')
         parser_take(p);
     length = p->pos - start;
-    if (p->text[p->pos - 1U] == '_')
-        return parser_fail(p);
-    for (size_t i = start; i + 1U < p->pos; ++i)
-        if (p->text[i] == '_' && p->text[i + 1U] == '_')
+    if (upper) {
+        for (size_t i = start; i < p->pos; ++i)
+            if (p->text[i] == '_')
+                return parser_fail(p);
+    } else {
+        if (p->text[p->pos - 1U] == '_')
             return parser_fail(p);
+        for (size_t i = start; i + 1U < p->pos; ++i)
+            if (p->text[i] == '_' && p->text[i + 1U] == '_')
+                return parser_fail(p);
+    }
     if (!ret)
         return 0;
     copy = malloc(length + 1U);
