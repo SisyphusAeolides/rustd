@@ -1,5 +1,5 @@
 name: Run Fedora transaction compatibility landing
-# trigger
+# rebase with local transaction patch preserved
 
 on:
   push:
@@ -43,7 +43,7 @@ jobs:
           bash tests/fedora-transaction-compat.sh
           git diff --check
           git fetch origin main
-          git rebase origin/main
+          git rebase --autostash origin/main
           python3 - <<'PY'
           from pathlib import Path
           p=Path('dist/fedora/compat/systemctl')
@@ -73,7 +73,7 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-transaction-diagnostic-v1\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-fedora-transaction-diagnostic-v2\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
             tail -n 240 /tmp/fedora-transaction-fix.log || true
           } > certification/fedora-transaction-diagnostic.txt
