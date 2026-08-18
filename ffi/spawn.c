@@ -39,11 +39,6 @@
 
 extern char **environ;
 
-/*
- * Helper image used for every spawn.  It is installed by the production entry
- * point before the manager creates its first thread and is only read
- * afterwards, so no lock is needed on the spawn path.
- */
 static char helper_executable[PATH_MAX];
 static int helper_executable_ready;
 
@@ -79,7 +74,8 @@ int rustd_spawn_sandbox_needs_mount_namespace(const rustd_spawn_sandbox *sandbox
         || sandbox->protect_kernel_logs
         || sandbox->protect_clock
         || sandbox->protect_control_groups
-        || sandbox->restrict_suid_sgid;
+        || sandbox->restrict_suid_sgid
+        || sandbox->n_read_write_paths > 0;
 }
 
 static int bounded_length(const char *value, size_t *ret_length) {
@@ -105,11 +101,13 @@ static int count_vector(const char *const *vector, size_t limit, size_t *ret_cou
     return 0;
 }
 
-/*
- * Reject anything the helper would have to guess about.  Everything the child
- * used to discover after fork() is decided here, while errors can still be
- * reported to the caller directly.
- */
+static int valid_read_write_path(const char *value) {
+    if (!value || value[0] == '\0')
+        return 0;
+    const char *path = value[0] == '-' ? value + 1 : value;
+    return path[0] == '/' && path[1] != '\0';
+}
+
 static int validate_params(const rustd_spawn_params *p, size_t *ret_argv, size_t *ret_env) {
     if (!p || !p->path || p->path[0] == '\0' || !p->argv || !p->argv[0])
         return -EINVAL;
@@ -185,6 +183,17 @@ static int validate_params(const rustd_spawn_params *p, size_t *ret_argv, size_t
             return -E2BIG;
         if (sandbox->n_syscall_filter_rules > 0 && !sandbox->syscall_filter_rules)
             return -EINVAL;
+        if (sandbox->n_read_write_paths > RUSTD_SPAWN_MAX_READ_WRITE_PATHS)
+            return -E2BIG;
+        if (sandbox->n_read_write_paths > 0 && !sandbox->read_write_paths)
+            return -EINVAL;
+        for (size_t i = 0; i < sandbox->n_read_write_paths; i++) {
+            if (!valid_read_write_path(sandbox->read_write_paths[i]))
+                return -EINVAL;
+            r = bounded_length(sandbox->read_write_paths[i], &ignored);
+            if (r < 0)
+                return r;
+        }
     }
 
     return 0;
@@ -194,10 +203,6 @@ static void write_string(rustd_spawn_writer *writer, const char *value) {
     rustd_spawn_write_string(writer, value, strlen(value));
 }
 
-/*
- * Serialise the request.  With writer->data == NULL this only measures, so the
- * buffer is sized by exactly the code that fills it.
- */
 static void write_request(
         const rustd_spawn_params *p,
         const char *notify_socket,
@@ -251,6 +256,7 @@ static void write_request(
 
     if (sandbox) {
         header.n_seccomp_rules = (uint32_t)sandbox->n_syscall_filter_rules;
+        header.n_read_write_paths = (uint32_t)sandbox->n_read_write_paths;
         header.seccomp_default_action = sandbox->syscall_filter_default_action;
         header.no_new_privs = (uint32_t)sandbox->no_new_privs;
         header.private_tmp = (uint32_t)sandbox->private_tmp;
@@ -289,6 +295,8 @@ static void write_request(
         write_string(writer, p->apparmor_profile);
     if (flags & RUSTD_SPAWN_FLAG_HAS_NOTIFY_SOCKET)
         write_string(writer, notify_socket);
+    for (uint32_t i = 0; i < header.n_read_write_paths; i++)
+        write_string(writer, sandbox->read_write_paths[i]);
 
     for (uint32_t i = 0; i < header.n_rlimits; i++) {
         rustd_spawn_write_u32(writer, (uint32_t)p->rlimits[i].resource);
@@ -302,8 +310,6 @@ static void write_request(
     }
 }
 
-/* Publish the request through a sealed memfd so the helper cannot be fed a
- * growing or mutating buffer, and so nothing else can rewrite it in flight. */
 static int create_request_memfd(const unsigned char *data, size_t length) {
     int fd = memfd_create("rustd-spawn-request", MFD_CLOEXEC | MFD_ALLOW_SEALING);
     if (fd < 0)
@@ -334,13 +340,6 @@ static int create_request_memfd(const unsigned char *data, size_t length) {
     return fd;
 }
 
-/*
- * Descriptors handed to posix_spawn() must not collide with the descriptor
- * numbers the child mapping writes to, otherwise a later dup2 action could
- * overwrite an earlier action's source.  Sources are therefore lifted above
- * the whole target range first, always with F_DUPFD_CLOEXEC so no window
- * exists where a concurrently spawning thread could leak them.
- */
 typedef struct {
     int fds[RUSTD_SPAWN_MAX_LISTEN_FDS + 8];
     int count;
@@ -493,7 +492,6 @@ pid_t rustd_spawn(const rustd_spawn_params *p) {
     if (!helper_executable_ready)
         return -ENOSYS;
 
-    /* Resolved here so the helper never has to read the manager environment. */
     const char *notify_socket = NULL;
     if (p->notify_fd >= 0) {
         notify_socket = getenv("RUSTD_NOTIFY_SOCKET");
@@ -530,11 +528,6 @@ pid_t rustd_spawn(const rustd_spawn_params *p) {
     if (request_fd < 0)
         return (pid_t)request_fd;
 
-    /*
-     * A socket pair rather than a pipe: the helper reports setup failures with
-     * MSG_NOSIGNAL, so a caller that did not ask for the exec handshake can
-     * drop its end without ever signalling the child.
-     */
     int error_socket[2];
     if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, error_socket) < 0) {
         int error = errno;
@@ -560,15 +553,6 @@ pid_t rustd_spawn(const rustd_spawn_params *p) {
     return wait_for_exec_result(pid, error_socket[0]);
 }
 
-/*
- * Helper mode entry.  The manager execs this same image with a private
- * argument; running from an ELF constructor keeps the mode out of every
- * command-line surface and guarantees no manager state is touched before the
- * request is applied.  rustd_spawn_helper_main() never returns.
- *
- * argv is recovered from /proc/self/cmdline rather than from a
- * three-argument constructor so the entry stays portable under -Wpedantic.
- */
 __attribute__((constructor)) static void rustd_spawn_helper_entry(void) {
     int fd = open("/proc/self/cmdline", O_RDONLY | O_CLOEXEC);
     if (fd < 0)
@@ -581,7 +565,6 @@ __attribute__((constructor)) static void rustd_spawn_helper_entry(void) {
         return;
     buffer[length] = '\0';
 
-    /* cmdline stores argv entries as consecutive NUL-terminated strings. */
     const char *argument = memchr(buffer, '\0', (size_t)length);
     if (!argument || argument + 1 >= buffer + length)
         return;
