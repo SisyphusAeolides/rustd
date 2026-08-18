@@ -1,4 +1,5 @@
 name: Run Fedora transaction compatibility landing
+# trigger
 
 on:
   push:
