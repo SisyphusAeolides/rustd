@@ -1,4 +1,5 @@
 name: Diagnose journal filter ABI closure
+# trigger
 
 on:
   push:
