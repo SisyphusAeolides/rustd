@@ -4,9 +4,7 @@ on:
   push:
     branches:
       - main
-    paths:
-      - scripts/oom-manager.patch.gz.b64
-      - .github/workflows/apply-oom-manager.yml
+  workflow_dispatch:
 
 permissions:
   contents: write
