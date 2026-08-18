@@ -82,7 +82,7 @@ jobs:
               f"/actions/runs/{os.environ['GITHUB_RUN_ID']}"
           )
           print(json.dumps({
-              "gate": "fault.oom",
+              "gate": "fault.oom_policy",
               "status": "pass",
               "detail": (
                   "ten independent QEMU boots forced a real cgroup-v2 memory.events "
@@ -111,7 +111,7 @@ jobs:
           if len(records) != 1:
               raise SystemExit("OOM evidence must contain exactly one record")
           record = records[0]
-          if record.get("gate") != "fault.oom" or record.get("status") != "pass":
+          if record.get("gate") != "fault.oom_policy" or record.get("status") != "pass":
               raise SystemExit("OOM evidence gate/status mismatch")
           if record.get("rustd_sha") != rustd_sha or record.get("resolved_sha") != resolved_sha:
               raise SystemExit("OOM evidence exact-stack SHA mismatch")
@@ -119,7 +119,7 @@ jobs:
               raise SystemExit("OOM evidence has insufficient iterations")
           if not str(record.get("source", "")).strip():
               raise SystemExit("OOM evidence source is empty")
-          print("certification evidence OK: fault.oom")
+          print("certification evidence OK: fault.oom_policy")
           PY
 
       - name: Upload OOM certificate logs
