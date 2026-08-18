@@ -1,4 +1,4 @@
-name: Serialize Fedora full VM certification
+name: Serialize Fedora VM certification
 
 on:
   push:
@@ -10,8 +10,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: land-fedora-vm-serialization
-  cancel-in-progress: false
+  group: land-fedora-vm-serialization-v2
+  cancel-in-progress: true
 
 jobs:
   land:
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0
-      - name: Make destructive VM campaigns non-cancelling
+      - name: Make destructive certification non-cancelling
         shell: 'bash --noprofile --norc -euo pipefail {0}'
         run: |
           python3 - <<'PY'
@@ -37,11 +37,14 @@ jobs:
             cancel-in-progress: false
           '''
           if old in text:
-              path.write_text(text.replace(old, new, 1))
+              text = text.replace(old, new, 1)
           elif new not in text:
               raise SystemExit('Fedora VM concurrency block is missing')
+          path.write_text(text)
           PY
           rm -f .github/workflows/land-fedora-vm-serialization.yml
+          git fetch origin main
+          git rebase --autostash origin/main
           git add -A .github/workflows/fedora-full-vm-certification.yml \
             .github/workflows/land-fedora-vm-serialization.yml
           git diff --cached --check
