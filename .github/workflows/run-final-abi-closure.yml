@@ -1,5 +1,5 @@
 name: Run final RustD ABI closure
-# run the complete ABI transaction with an autostashed main-branch rebase
+# execute the complete ABI transaction against the current Fedora release head
 
 defaults:
   run:
@@ -107,9 +107,9 @@ bash /tmp/apply-journal-filter.sh'''
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-final-abi-diagnostic-v9\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-final-abi-diagnostic-v10\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 420 /tmp/final-abi-closure.log || true
+            tail -n 500 /tmp/final-abi-closure.log || true
           } > certification/final-abi-closure-diagnostic.txt
           git add certification/final-abi-closure-diagnostic.txt
           git diff --cached --check
