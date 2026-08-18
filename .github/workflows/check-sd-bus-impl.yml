@@ -1,0 +1,65 @@
+name: Check staged sd-bus implementation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - libs/compat/sd_bus_impl.c
+      - .github/workflows/check-sd-bus-impl.yml
+      - .github/sd-bus-trigger
+
+permissions:
+  contents: write
+
+concurrency:
+  group: staged-sd-bus-implementation
+  cancel-in-progress: true
+
+jobs:
+  compile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Install headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends gcc libdbus-1-dev libsystemd-dev
+      - name: Compile staged transport
+        id: compile
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong \
+             -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC \
+             $(pkg-config --cflags dbus-1) \
+             -c libs/compat/sd_bus_impl.c -o /tmp/sd_bus_impl.o 2>&1 | tee /tmp/sd-bus-compile.log
+      - name: Publish compile voucher
+        if: always()
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.compile.outcome }}
+        run: |
+          set -euo pipefail
+          status=failure
+          if [ "$OUTCOME" = success ]; then status=pass; fi
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          printf 'schema=rustd-sd-bus-staged-v1\nstatus=%s\ntested_sha=%s\ncompile_outcome=%s\nbackend=libdbus-1\n' \
+             "$status" "$GITHUB_SHA" "$OUTCOME" > certification/sd-bus-staged-latest.txt
+          if [ -f /tmp/sd-bus-compile.log ]; then
+             tail -n 160 /tmp/sd-bus-compile.log > certification/sd-bus-staged-diagnostic.txt
+          fi
+          git add certification/sd-bus-staged-latest.txt certification/sd-bus-staged-diagnostic.txt
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m "Record staged sd-bus compile $status"
+          git push origin HEAD:main
