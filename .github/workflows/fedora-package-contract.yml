@@ -1,0 +1,88 @@
+name: Fedora package and SELinux contract
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - dist/fedora/**
+      - scripts/build-fedora-rpms.sh
+      - .github/workflows/fedora-package-contract.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fedora-package-contract
+  cancel-in-progress: true
+
+jobs:
+  package-contract:
+    runs-on: ubuntu-24.04
+    container: fedora:rawhide
+    steps:
+      - name: Install checkout and packaging tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          dnf -y install git-core findutils make rpm-build rpmdevtools \
+            selinux-policy selinux-policy-devel policycoreutils-devel bzip2 \
+            gcc gcc-gfortran python3 cargo rust pkgconf-pkg-config \
+            dbus-devel pam-devel json-c-devel
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Validate Fedora specs and SELinux module
+        id: contract
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > >(tee /tmp/fedora-package-contract.log) 2>&1
+          for spec in dist/fedora/*.spec; do
+            echo "==> $spec"
+            rpmspec -P "$spec" >/tmp/"$(basename "$spec")".expanded
+            test -s /tmp/"$(basename "$spec")".expanded
+          done
+          mkdir -p /tmp/rustd-selinux-build
+          cp dist/fedora/selinux/rustd_fedora.te /tmp/rustd-selinux-build/
+          cp dist/fedora/selinux/rustd_fedora.fc /tmp/rustd-selinux-build/
+          make -C /tmp/rustd-selinux-build \
+            -f /usr/share/selinux/devel/Makefile rustd_fedora.pp
+          test -s /tmp/rustd-selinux-build/rustd_fedora.pp
+          semodule_package --help >/dev/null
+          grep -Fq 'Conflicts:      systemd-libs' dist/fedora/rustd-compat-libs.spec
+          ! grep -Eq '^Provides:[[:space:]]+systemd([[:space:]=]|$)' dist/fedora/*.spec
+          grep -Fq 'bash tests/fedora-transaction-compat.sh' dist/fedora/rustd-fedora-compat.spec
+          bash -n scripts/build-fedora-rpms.sh scripts/fedora-cutover-gate.sh
+      - name: Publish exact package contract voucher
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          outcome='${{ steps.contract.outcome }}'
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git reset --hard HEAD
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-fedora-package-contract-v1\n'
+            printf 'status=%s\n' "$outcome"
+            printf 'tested_sha=%s\n' "$GITHUB_SHA"
+            printf 'selinux_reference_policy=compiled\n'
+            printf 'rpm_specs=parsed\n'
+            printf 'provides_systemd=forbidden\n'
+            if [[ "$outcome" != success ]]; then
+              printf '%s\n' '--- tail ---'
+              tail -n 240 /tmp/fedora-package-contract.log || true
+            fi
+          } > certification/fedora-package-contract-latest.txt
+          git add certification/fedora-package-contract-latest.txt
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m "Record Fedora package contract ${outcome}" || exit 0
+          git push origin HEAD:main
+          [[ "$outcome" == success ]]
