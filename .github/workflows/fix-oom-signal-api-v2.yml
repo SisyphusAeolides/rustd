@@ -1,0 +1,80 @@
+name: Fix OOM cgroup signal API v2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fix-oom-signal-api-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Apply or report exact OOM API repair
+        shell: bash
+        run: |
+          set -u
+          expected=01cac46bc41f2c9d9e025ace5dab1281d6b1954d
+          observed="$(git hash-object src/manager.rs)"
+          status=failure
+          reason=preimage-mismatch
+          if [ "$observed" = "$expected" ]; then
+              set +e
+              python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/manager.rs')
+          s=p.read_text()
+          old='self.cgroup.signal_unit(&name, libc::SIGKILL)'
+          new='self.cgroup.signal_unit(&name, libc::SIGKILL, &[])'
+          if s.count(old) != 1:
+              raise SystemExit(41)
+          p.write_text(s.replace(old,new))
+          PY
+              patch_rc=$?
+              set -e
+              if [ "$patch_rc" -eq 0 ]; then
+                  status=pass
+                  reason=patched
+              else
+                  reason="patch-rc-$patch_rc"
+              fi
+          fi
+
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          rm -f .github/workflows/fix-oom-signal-api-v2.yml .github/workflows/fix-oom-signal-api.yml
+          mkdir -p certification
+          printf 'schema=rustd-oom-signal-api-v1\nstatus=%s\nreason=%s\nexpected_preimage=%s\nobserved_preimage=%s\ntested_sha=%s\n' \
+              "$status" "$reason" "$expected" "$observed" "$GITHUB_SHA" \
+              > certification/oom-signal-api-latest.txt
+          if [ "$status" = pass ]; then
+              python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/manager.rs')
+          s=p.read_text()
+          old='self.cgroup.signal_unit(&name, libc::SIGKILL)'
+          new='self.cgroup.signal_unit(&name, libc::SIGKILL, &[])'
+          if old in s:
+              if s.count(old) != 1:
+                  raise SystemExit('unexpected stale OOM call count after pull')
+              p.write_text(s.replace(old,new))
+          elif new not in s:
+              raise SystemExit('neither stale nor repaired OOM call exists after pull')
+          PY
+          fi
+          git add -A .github/workflows/fix-oom-signal-api-v2.yml .github/workflows/fix-oom-signal-api.yml src/manager.rs certification/oom-signal-api-latest.txt
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m "Record OOM signal API repair $status"
+          git push origin HEAD:main
+          [ "$status" = pass ]
