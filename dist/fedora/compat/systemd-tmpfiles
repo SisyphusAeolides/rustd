@@ -1,0 +1,28 @@
+#!/usr/bin/bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+set -euo pipefail
+
+RUSTD_TMPFILES=${RUSTD_TMPFILES:-/usr/bin/rustd-tmpfiles}
+args=()
+stdin_file=
+cleanup() { [[ -z ${stdin_file:-} ]] || rm -f "$stdin_file"; }
+trap cleanup EXIT HUP INT TERM
+
+for arg in "$@"; do
+    case $arg in
+        --replace=*)
+            # Fedora's package macro supplies the replacement path together
+            # with stdin. RustD executes that exact inline configuration, so
+            # the not-yet-installed destination path does not need to be read.
+            ;;
+        -)
+            [[ -z ${stdin_file:-} ]] || { echo 'systemd-tmpfiles(RustD): multiple stdin operands' >&2; exit 64; }
+            stdin_file=$(mktemp)
+            cat > "$stdin_file"
+            args+=("$stdin_file")
+            ;;
+        *) args+=("$arg") ;;
+    esac
+done
+
+exec "$RUSTD_TMPFILES" "${args[@]}"
