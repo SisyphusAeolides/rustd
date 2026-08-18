@@ -17,7 +17,7 @@ jobs:
     if: github.event.workflow_run.head_branch == 'main'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: main
           fetch-depth: 0
@@ -33,31 +33,66 @@ jobs:
             success) status=pass ;;
             *) status=failure ;;
           esac
-
-          mkdir -p certification
-          cat > certification/fedora-full-vm-latest.txt <<EOF
-          schema=rustd-fedora-full-vm-v1
-          status=$status
-          conclusion=$CONCLUSION
-          tested_sha=$TESTED_SHA
-          run_id=$RUN_ID
-          fedora_release=44
-          image=Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
-          systemd_rpms=zero-required
-          pid1=/usr/lib/rustd/rustd
-          cold_boots=3
-          selinux=enforcing-required
-          networkmanager=active-required
-          sshd=active-required
-          rustd_resolved=active-required
-          dnf_check=pass-required
-          dns_nss=pass-required
-          initramfs_systemd_code=zero-required
-          EOF
+          [[ $TESTED_SHA =~ ^[0-9a-f]{40}$ ]]
+          [[ $RUN_ID =~ ^[0-9]+$ ]]
 
           git fetch origin main
           git checkout main
           git pull --ff-only origin main
+          git fetch origin "$TESTED_SHA"
+          git cat-file -e "$TESTED_SHA^{commit}"
+
+          resolved_sha="$(git show "$TESTED_SHA:scripts/rustd-resolved-revision.txt" | tr -d '[:space:]')"
+          [[ $resolved_sha =~ ^[0-9a-f]{40}$ ]]
+          abi_voucher="$(git show "$TESTED_SHA:certification/final-abi-closure-latest.txt" 2>/dev/null || true)"
+          abi_status="$(sed -n 's/^status=//p' <<<"$abi_voucher" | head -n1)"
+
+          existing_sha=''
+          existing_run=0
+          if [[ -r certification/fedora-full-vm-latest.txt ]]; then
+            existing_sha="$(sed -n 's/^tested_sha=//p' certification/fedora-full-vm-latest.txt | head -n1)"
+            existing_run="$(sed -n 's/^run_id=//p' certification/fedora-full-vm-latest.txt | head -n1)"
+            [[ $existing_run =~ ^[0-9]+$ ]] || existing_run=0
+          fi
+          if [[ $existing_sha =~ ^[0-9a-f]{40}$ ]]; then
+            git fetch origin "$existing_sha" || true
+            if [[ $existing_sha == "$TESTED_SHA" ]]; then
+              if ((RUN_ID <= existing_run)); then
+                echo 'A newer or equal VM result for this source SHA is already recorded.'
+                exit 0
+              fi
+            elif git merge-base --is-ancestor "$TESTED_SHA" "$existing_sha"; then
+              echo 'Ignoring a stale VM completion older than the recorded source SHA.'
+              exit 0
+            elif ! git merge-base --is-ancestor "$existing_sha" "$TESTED_SHA"; then
+              echo 'Refusing to replace the VM voucher across divergent histories.' >&2
+              exit 1
+            fi
+          fi
+
+          mkdir -p certification
+          cat > certification/fedora-full-vm-latest.txt <<EOF
+          schema=rustd-fedora-full-vm-v2
+          status=$status
+          conclusion=$CONCLUSION
+          tested_sha=$TESTED_SHA
+          resolved_sha=$resolved_sha
+          abi_status=${abi_status:-missing}
+          run_id=$RUN_ID
+          fedora_release=44
+          image=Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
+          required.systemd_rpms=zero
+          required.pid1=/usr/lib/rustd/rustd
+          required.cold_boots=3
+          required.selinux=enforcing
+          required.networkmanager=active
+          required.sshd=active
+          required.rustd_resolved=active
+          required.dnf_check=pass
+          required.dns_nss=pass
+          required.initramfs_systemd_code=zero
+          EOF
+
           git add certification/fedora-full-vm-latest.txt
           git diff --cached --check
           if git diff --cached --quiet; then
