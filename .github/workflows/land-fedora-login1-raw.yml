@@ -1,5 +1,5 @@
 name: Land Fedora Login1 source from raw certified payload
-# document runtime helper errors before strict clippy
+# Close repository-wide source diagnostics before certifying Login1.
 
 on:
   push:
@@ -62,10 +62,66 @@ jobs:
           Path('/tmp/login1-patch.sh').write_text(script)
           PY
           bash -x /tmp/login1-patch.sh
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one source match, found {count}: {old!r}')
+              file.write_text(text.replace(old, new, 1))
+
+          replace(
+              'src/cgroup.rs',
+              'fs::read_to_string(&controllers_path)',
+              'fs::read_to_string(controllers_path)')
+          replace(
+              'src/ffi/spawn.rs',
+              'pub unsafe fn rustd_spawn(p: *const SdSpawnParams) -> pid_t {',
+              '#[must_use]\npub unsafe fn rustd_spawn(p: *const SdSpawnParams) -> pid_t {')
+          replace(
+              'src/reexec_state.rs',
+              '''            let root = std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }))
+                });''',
+              '''            let root = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(
+                || PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })),
+                PathBuf::from,
+            );''')
+          replace(
+              'src/sandbox.rs',
+              'pub fn resolve_user(user: &str) -> anyhow::Result<libc::uid_t> {',
+              '''/// Resolve a configured user name or numeric uid.
+///
+/// # Errors
+/// Returns an error when the name contains an interior NUL or is not present
+/// in the active NSS identity database.
+pub fn resolve_user(user: &str) -> anyhow::Result<libc::uid_t> {''')
+          replace(
+              'src/sandbox.rs',
+              'pub fn resolve_group(group: &str) -> anyhow::Result<libc::gid_t> {',
+              '''/// Resolve a configured group name or numeric gid.
+///
+/// # Errors
+/// Returns an error when the name contains an interior NUL or is not present
+/// in the active NSS identity database.
+pub fn resolve_group(group: &str) -> anyhow::Result<libc::gid_t> {''')
+          replace(
+              'src/unit/loader.rs',
+              'std::fs::read_dir(&wants_dir)',
+              'std::fs::read_dir(wants_dir)')
+          PY
+
+          cargo fmt --all
           git diff --check
           git fetch origin main
           git rebase --autostash origin/main
-          cargo fmt --all
+          cargo fmt --all -- --check
           cargo check --locked --bin rustd-logind
           cargo clippy --locked --bin rustd-logind -- \
             -D warnings -A unknown-lints -A renamed-and-removed-lints
@@ -73,11 +129,9 @@ jobs:
           rm -f \
             .github/workflows/land-fedora-login-session.yml \
             .github/workflows/diagnose-fedora-login-session.yml \
-            .github/workflows/land-fedora-login1-raw.yml
-          git add -A src/logind/mod.rs src/bin/rustd-logind.rs \
-            .github/workflows/land-fedora-login-session.yml \
-            .github/workflows/diagnose-fedora-login-session.yml \
-            .github/workflows/land-fedora-login1-raw.yml
+            .github/workflows/land-fedora-login1-raw.yml \
+            certification/fedora-login1-diagnostic.txt
+          git add -A
           git diff --cached --check
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
@@ -93,7 +147,7 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-login1-landing-v2\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-fedora-login1-landing-v3\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
             tail -n 480 /tmp/fedora-login1-landing.log || true
           } > certification/fedora-login1-diagnostic.txt
