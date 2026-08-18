@@ -1,5 +1,5 @@
 name: Clean obsolete native FFI surface
-# retrigger after installation
+# final rerun after cgroup restoration
 
 defaults:
   run:
@@ -43,13 +43,6 @@ jobs:
           s = s.replace('        interface_obj,\n', '')
           p.write_text(s)
 
-          p = Path('ffi/cgroup.c')
-          s = p.read_text()
-          s = s.replace(
-              ' * confined to src/native.rs.  Stub — populated as the cgroup layer is\n * implemented against the v261 baseline (src/core/cgroup.c).\n',
-              ' * confined to src/native.rs. The implementation uses directory file\n * descriptors and bounded procfs/cgroupfs operations for cgroup v2.\n')
-          p.write_text(s)
-
           p = Path('ffi/signal.c')
           s = p.read_text()
           s = s.replace(
@@ -57,7 +50,9 @@ jobs:
               ' * opens a signalfd and blocks delivery via the process signal mask.\n * This file owns the native reset/blocking helpers used by that event loop.\n')
           p.write_text(s)
 
-          Path('ffi/interface.c').unlink()
+          interface = Path('ffi/interface.c')
+          if interface.exists():
+              interface.unlink()
           PY
           git diff --check
           cargo check --all-targets --all-features --locked
