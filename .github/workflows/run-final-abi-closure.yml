@@ -1,5 +1,5 @@
 name: Run final RustD ABI closure
-# execute raw closure block without parsing malformed legacy YAML
+# raw extraction for malformed legacy workflow payloads
 
 defaults:
   run:
@@ -32,7 +32,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential gfortran pkg-config libdbus-1-dev libudev-dev \
-            libjson-c-dev dbus python3-yaml
+            libjson-c-dev dbus python3
 
       - name: Execute canonical final ABI transaction
         id: closure
@@ -42,23 +42,54 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
 
-          text = Path('.github/workflows/final-abi-closure.yml').read_text()
-          step = text.index('      - name: Apply certified compatibility engines\n')
-          marker = '        run: |\n'
-          start = text.index(marker, step) + len(marker)
-          raw = text[start:]
-          lines = []
-          for line in raw.splitlines():
-              if line.startswith('          '):
-                  line = line[10:]
-              lines.append(line)
-          run = '\n'.join(lines) + '\n'
+          def raw_step(path: str, name: str) -> str:
+              text = Path(path).read_text()
+              step = text.index(f'      - name: {name}\n')
+              marker = '        run: |\n'
+              start = text.index(marker, step) + len(marker)
+              raw = text[start:]
+              lines = []
+              for line in raw.splitlines():
+                  if line.startswith('          '):
+                      line = line[10:]
+                  lines.append(line)
+              return '\n'.join(lines) + '\n'
+
+          run = raw_step(
+              '.github/workflows/final-abi-closure.yml',
+              'Apply certified compatibility engines')
+
+          journal_start = run.index('# Apply the already-developed journal-filter transaction')
+          journal_end_marker = 'bash /tmp/apply-journal-filter.sh'
+          journal_end = run.index(journal_end_marker, journal_start) + len(journal_end_marker)
+          journal_replacement = r'''# Apply the developed journal-filter transaction without parsing its malformed YAML.
+python3 - <<'JOURNALPY'
+from pathlib import Path
+text = Path('.github/workflows/land-journal-filter-abi.yml').read_text()
+step = text.index('      - name: Apply native journal filtering and verify\n')
+marker = '        run: |\n'
+start = text.index(marker, step) + len(marker)
+raw = text[start:]
+lines = []
+for line in raw.splitlines():
+    if line.startswith('          '):
+        line = line[10:]
+    lines.append(line)
+script = '\n'.join(lines) + '\n'
+cut_points = [p for p in ('git fetch origin main', 'git config user.name', 'git add -A') if p in script]
+if cut_points:
+    script = script[:min(script.index(p) for p in cut_points)]
+Path('/tmp/apply-journal-filter.sh').write_text(script)
+JOURNALPY
+bash /tmp/apply-journal-filter.sh'''
+          run = run[:journal_start] + journal_replacement + run[journal_end:]
+
           run = run.replace(
               "s = s.replace('STUB_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'STUB_DATA_SYMBOLS = set()')",
               "s = s.replace('UNSUPPORTED_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'UNSUPPORTED_DATA_SYMBOLS = set()')")
           run = run.replace(
               'git add -A Makefile libs/compat/systemd.c',
-              'rm -f .github/workflows/final-abi-closure.yml\n'
+              'rm -f .github/workflows/final-abi-closure.yml .github/workflows/land-journal-filter-abi.yml\n'
               'git add -A Makefile libs/compat/systemd.c')
           Path('/tmp/final-abi-closure.sh').write_text(run)
           PY
@@ -73,9 +104,9 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-final-abi-diagnostic-v3\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-final-abi-diagnostic-v4\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 300 /tmp/final-abi-closure.log || true
+            tail -n 360 /tmp/final-abi-closure.log || true
           } > certification/final-abi-closure-diagnostic.txt
           git add certification/final-abi-closure-diagnostic.txt
           git config user.name 'Kenny Glowner'
