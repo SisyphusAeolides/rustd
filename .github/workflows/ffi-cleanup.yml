@@ -1,0 +1,72 @@
+name: Clean obsolete native FFI surface
+
+defaults:
+  run:
+    shell: 'bash --noprofile --norc -euo pipefail {0}'
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/ffi-cleanup.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: rustd-ffi-cleanup
+  cancel-in-progress: false
+
+jobs:
+  clean:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Remove obsolete stub and verify native build
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential gfortran libdbus-1-dev libpam0g-dev pkg-config
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('build.rs')
+          s = p.read_text()
+          s = s.replace('    println!("cargo:rerun-if-changed=ffi/interface.c");\n', '')
+          s = s.replace('    let interface_obj = object(&out_dir, "rustd_interface");\n', '')
+          s = s.replace('    compile_c(&cc, "ffi/interface.c", &interface_obj);\n', '')
+          s = s.replace('        interface_obj,\n', '')
+          p.write_text(s)
+
+          p = Path('ffi/cgroup.c')
+          s = p.read_text()
+          s = s.replace(
+              ' * confined to src/native.rs.  Stub — populated as the cgroup layer is\n * implemented against the v261 baseline (src/core/cgroup.c).\n',
+              ' * confined to src/native.rs. The implementation uses directory file\n * descriptors and bounded procfs/cgroupfs operations for cgroup v2.\n')
+          p.write_text(s)
+
+          p = Path('ffi/signal.c')
+          s = p.read_text()
+          s = s.replace(
+              ' * opens a signalfd and blocks delivery via the process signal mask.\n * Stub — populated as the event loop is implemented against\n * src/core/main.c in the v261 baseline.\n',
+              ' * opens a signalfd and blocks delivery via the process signal mask.\n * This file owns the native reset/blocking helpers used by that event loop.\n')
+          p.write_text(s)
+
+          Path('ffi/interface.c').unlink()
+          PY
+          git diff --check
+          cargo check --all-targets --all-features --locked
+          make check-native
+          git fetch origin main
+          git rebase origin/main
+          rm -f .github/workflows/ffi-cleanup.yml
+          git add -A build.rs ffi .github/workflows/ffi-cleanup.yml
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Remove obsolete native FFI stub'
+          git push origin HEAD:main
