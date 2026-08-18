@@ -3,69 +3,79 @@
 //!
 //! Derives a `SecurityContext` from a `ServiceSection` and passes it to
 //! `rustd_spawn` as extended parameters, or applies it in the child via the
-//! new `rustd_sandbox_apply` C helper.
+//! native sandbox helpers.
 //!
 //! Upstream reference: `src/core/execute.c exec_child()`,
 //!   `src/core/execute-security.c` (v261)
 
+use std::cell::RefCell;
 use std::ffi::CString;
 
 use anyhow::anyhow;
 
 use crate::unit::section_service::{ProtectHome, ProtectSystem, ServiceSection};
 
+const MAX_READ_WRITE_PATHS: usize = 256;
+
+thread_local! {
+    static SPAWN_READ_WRITE_PATHS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+pub(crate) fn take_spawn_read_write_paths() -> Vec<String> {
+    SPAWN_READ_WRITE_PATHS.with(|paths| std::mem::take(&mut *paths.borrow_mut()))
+}
+
+fn validate_read_write_paths(paths: &[String]) -> anyhow::Result<Vec<String>> {
+    if paths.len() > MAX_READ_WRITE_PATHS {
+        return Err(anyhow!(
+            "ReadWritePaths= contains {} entries; maximum is {MAX_READ_WRITE_PATHS}",
+            paths.len()
+        ));
+    }
+    paths
+        .iter()
+        .map(|raw| {
+            let path = raw.strip_prefix('-').unwrap_or(raw.as_str());
+            if path.is_empty() || !path.starts_with('/') {
+                return Err(anyhow!("ReadWritePaths= entry '{raw}' is not an absolute path"));
+            }
+            if raw.as_bytes().contains(&0) {
+                return Err(anyhow!("ReadWritePaths= entry contains a NUL byte"));
+            }
+            Ok(raw.clone())
+        })
+        .collect()
+}
+
 // ── SecurityContext ───────────────────────────────────────────────────────
 
 /// All sandbox settings resolved from `[Service]` section fields.
-///
-/// Passed to `rustd_sandbox_apply()` in the child after fork.
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Default, Clone)]
 pub struct SecurityContext {
-    /// Resolved numeric UID to switch to (`-1` = keep current).
     pub uid: libc::uid_t,
-    /// Resolved numeric GID to switch to (`-1` = keep current).
     pub gid: libc::gid_t,
-    /// `NoNewPrivileges=` — set `PR_SET_NO_NEW_PRIVS`.
     pub no_new_privileges: bool,
-    /// `PrivateTmp=` — mount private tmpfs on `/tmp` and `/var/tmp`.
     pub private_tmp: bool,
-    /// `PrivateDevices=` — mount minimal `/dev` in a new mount namespace.
     pub private_devices: bool,
-    /// `PrivateNetwork=` — move to a new network namespace.
     pub private_network: bool,
-    /// `PrivateMounts=` — propagation flag `MS_SLAVE` on `/`.
     pub private_mounts: bool,
-    /// `ProtectSystem=` value.
     pub protect_system: u8,
-    /// `ProtectHome=` value.
     pub protect_home: u8,
-    /// `ProtectKernelTunables=`
     pub protect_kernel_tunables: bool,
-    /// `ProtectKernelModules=`
     pub protect_kernel_modules: bool,
-    /// `ProtectKernelLogs=`
     pub protect_kernel_logs: bool,
-    /// `ProtectClock=`
     pub protect_clock: bool,
-    /// `ProtectControlGroups=`
     pub protect_control_groups: bool,
-    /// `RestrictRealtime=`
     pub restrict_realtime: bool,
-    /// `RestrictSUIDSGID=`
     pub restrict_suid_sgid: bool,
-    /// `RestrictNamespaces=` — deny `unshare(2)` / `clone(CLONE_NEW*)`
     pub restrict_namespaces: bool,
-    /// `MemoryDenyWriteExecute=`
     pub memory_deny_write_execute: bool,
-    /// `CapabilityBoundingSet=` — bitmask of capabilities to keep.
-    /// `u64::MAX` = no change (keep all).
     pub cap_bounding_set: u64,
-    /// `AmbientCapabilities=` — bitmask of capabilities to raise as ambient.
     pub ambient_caps: u64,
+    pub read_write_paths: Vec<String>,
 }
 
-// ── ProtectSystem numeric constants for C ABI ─────────────────────────────
 const PROTECT_SYSTEM_NO: u8 = 0;
 const PROTECT_SYSTEM_YES: u8 = 1;
 const PROTECT_SYSTEM_FULL: u8 = 2;
@@ -76,13 +86,7 @@ const PROTECT_HOME_YES: u8 = 1;
 const PROTECT_HOME_READ_ONLY: u8 = 2;
 const PROTECT_HOME_TMPFS: u8 = 3;
 
-// ── Builder ───────────────────────────────────────────────────────────────
-
 impl SecurityContext {
-    /// Parse a capability-name list into a bitmask.
-    ///
-    /// Each token is resolved via `rustd_capability_name_to_num`. An empty list
-    /// means no bounding-set restriction and therefore returns `u64::MAX`.
     fn parse_cap_list(names: &[String]) -> u64 {
         if names.is_empty() {
             return u64::MAX;
@@ -107,9 +111,11 @@ impl SecurityContext {
     /// Resolve a security context from a parsed `[Service]` section.
     ///
     /// # Errors
-    /// Returns an error if a named `User=` or `Group=` cannot be resolved.
+    /// Returns an error if a named user/group cannot be resolved or a writable
+    /// path exception is malformed or exceeds the transport bound.
     pub fn from_service(svc: &ServiceSection) -> anyhow::Result<Self> {
-        Ok(Self {
+        let read_write_paths = validate_read_write_paths(&svc.read_write_paths)?;
+        let context = Self {
             uid: resolve_user(&svc.user)?,
             gid: resolve_group(&svc.group)?,
             no_new_privileges: svc.no_new_privileges,
@@ -144,26 +150,29 @@ impl SecurityContext {
             } else {
                 Self::parse_cap_list(&svc.ambient_capabilities)
             },
-        })
+            read_write_paths,
+        };
+        SPAWN_READ_WRITE_PATHS.with(|paths| {
+            paths.borrow_mut().clone_from(&context.read_write_paths);
+        });
+        Ok(context)
     }
 
-    /// Apply the security context in the child process (after fork, before exec).
-    ///
-    /// Must be called from a single-threaded child context only.
+    /// Apply the security context in the child process (legacy direct path).
     ///
     /// # Errors
-    /// Returns an error if any syscall fails.
+    /// Returns an error if a required writable exception cannot be realized.
     pub fn apply_in_child(&self) -> anyhow::Result<()> {
         use crate::ffi::sandbox::{
-            rustd_sandbox_mount_namespaces, rustd_sandbox_no_new_privs,
-            rustd_sandbox_protect_paths, rustd_sandbox_restrict_realtime,
+            rustd_sandbox_make_writable_paths, rustd_sandbox_mount_namespaces,
+            rustd_sandbox_no_new_privs, rustd_sandbox_protect_paths,
+            rustd_sandbox_restrict_realtime,
         };
         use crate::ffi::seccomp::{
             rustd_seccomp_memory_deny_write_execute, rustd_seccomp_protect_clock,
             rustd_seccomp_protect_kernel_logs, rustd_seccomp_restrict_namespaces,
         };
 
-        // 1. NoNewPrivileges must come before any namespace operations.
         if self.no_new_privileges {
             let rc = unsafe { rustd_sandbox_no_new_privs() };
             if rc < 0 {
@@ -171,9 +180,6 @@ impl SecurityContext {
             }
         }
 
-        // 2. Mount namespace sandboxing (PrivateTmp, PrivateDevices,
-        //    ProtectSystem, ProtectHome, ProtectKernelTunables, etc.)
-        //    Requires CAP_SYS_ADMIN or unprivileged user namespaces.
         let needs_ns = self.private_tmp
             || self.private_devices
             || self.private_mounts
@@ -184,7 +190,8 @@ impl SecurityContext {
             || self.protect_kernel_logs
             || self.protect_clock
             || self.protect_control_groups
-            || self.restrict_suid_sgid;
+            || self.restrict_suid_sgid
+            || !self.read_write_paths.is_empty();
 
         if needs_ns || self.private_network {
             let rc = unsafe {
@@ -197,18 +204,25 @@ impl SecurityContext {
                     libc::c_int::from(needs_ns),
                 )
             };
-            // Non-fatal: if the kernel doesn't support unprivileged namespaces,
-            // continue without the sandbox rather than failing the service.
             if rc < 0 {
-                // Log warning but don't abort; matches upstream tolerance.
-                eprintln!(
-                    "sandbox: mount namespace setup failed (errno {}), continuing without",
-                    -rc
-                );
+                return Err(anyhow!("mount namespace setup failed: errno {}", -rc));
             }
         }
 
-        // 3. Protect read-only paths.
+        if !self.read_write_paths.is_empty() {
+            let strings = self
+                .read_write_paths
+                .iter()
+                .map(|path| CString::new(path.as_str()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|_| anyhow!("ReadWritePaths= entry contains a NUL byte"))?;
+            let pointers = strings.iter().map(|path| path.as_ptr()).collect::<Vec<_>>();
+            let rc = unsafe { rustd_sandbox_make_writable_paths(pointers.as_ptr(), pointers.len()) };
+            if rc < 0 {
+                return Err(anyhow!("ReadWritePaths= setup failed: errno {}", -rc));
+            }
+        }
+
         if self.protect_kernel_tunables
             || self.protect_kernel_modules
             || self.protect_kernel_logs
@@ -227,11 +241,10 @@ impl SecurityContext {
                 )
             };
             if rc < 0 {
-                eprintln!("sandbox: protect paths failed (errno {})", -rc);
+                return Err(anyhow!("sandbox path protection failed: errno {}", -rc));
             }
         }
 
-        // 4. Restrict real-time scheduling.
         if self.restrict_realtime {
             let rc = unsafe { rustd_sandbox_restrict_realtime() };
             if rc < 0 {
@@ -239,7 +252,6 @@ impl SecurityContext {
             }
         }
 
-        // 5. MemoryDenyWriteExecute=.
         if self.memory_deny_write_execute {
             let rc = unsafe { rustd_seccomp_memory_deny_write_execute() };
             if rc < 0 {
@@ -250,16 +262,13 @@ impl SecurityContext {
             }
         }
 
-        // 6. RestrictNamespaces=.
         if self.restrict_namespaces {
-            // allowed_mask=0 blocks all namespace creation.
             let rc = unsafe { rustd_seccomp_restrict_namespaces(0) };
             if rc < 0 {
                 eprintln!("sandbox: RestrictNamespaces filter failed (errno {})", -rc);
             }
         }
 
-        // 7. Protect kernel log access.
         if self.protect_kernel_logs {
             let rc = unsafe { rustd_seccomp_protect_kernel_logs() };
             if rc < 0 {
@@ -267,7 +276,6 @@ impl SecurityContext {
             }
         }
 
-        // 8. Protect wall/realtime clocks.
         if self.protect_clock {
             let rc = unsafe { rustd_seccomp_protect_clock() };
             if rc < 0 {
@@ -279,26 +287,15 @@ impl SecurityContext {
     }
 }
 
-// ── User/group resolution ─────────────────────────────────────────────────
-
-/// Resolve a user name or numeric string to a UID.
-/// Returns `!0u32` (i.e. `(uid_t)-1`) if the field is empty.
-///
-/// # Errors
-/// Returns an error if the name is non-empty and cannot be resolved.
 pub fn resolve_user(user: &str) -> anyhow::Result<libc::uid_t> {
     if user.is_empty() {
         #[allow(clippy::cast_sign_loss)]
         return Ok(u32::MAX as libc::uid_t);
     }
-    // Try numeric first.
     if let Ok(n) = user.parse::<u32>() {
         return Ok(n as libc::uid_t);
     }
-    // NSS lookup via getpwnam(3).
     let name = CString::new(user).map_err(|e| anyhow!("user name NUL: {e}"))?;
-    // Safety: getpwnam is thread-safe when called before any threads are
-    // spawned (we are in the single-threaded child).
     let pw = unsafe { libc::getpwnam(name.as_ptr()) };
     if pw.is_null() {
         return Err(anyhow!("user '{user}' not found"));
@@ -306,11 +303,6 @@ pub fn resolve_user(user: &str) -> anyhow::Result<libc::uid_t> {
     Ok(unsafe { (*pw).pw_uid })
 }
 
-/// Resolve a group name or numeric string to a GID.
-/// Returns `!0u32` (i.e. `(gid_t)-1`) if the field is empty.
-///
-/// # Errors
-/// Returns an error if the name is non-empty and cannot be resolved.
 pub fn resolve_group(group: &str) -> anyhow::Result<libc::gid_t> {
     if group.is_empty() {
         #[allow(clippy::cast_sign_loss)]
@@ -326,8 +318,6 @@ pub fn resolve_group(group: &str) -> anyhow::Result<libc::gid_t> {
     }
     Ok(unsafe { (*gr).gr_gid })
 }
-
-// ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -367,10 +357,28 @@ mod tests {
     }
 
     #[test]
+    fn read_write_paths_are_validated_and_staged() {
+        let service = ServiceSection {
+            read_write_paths: vec!["/var/lib/rustd".into(), "-/run/optional".into(), "/".into()],
+            ..Default::default()
+        };
+        let context = SecurityContext::from_service(&service).unwrap();
+        assert_eq!(context.read_write_paths, service.read_write_paths);
+        assert_eq!(take_spawn_read_write_paths(), service.read_write_paths);
+
+        let invalid = ServiceSection {
+            read_write_paths: vec!["relative/path".into()],
+            ..Default::default()
+        };
+        assert!(SecurityContext::from_service(&invalid).is_err());
+    }
+
+    #[test]
     fn security_context_defaults() {
         let ctx = SecurityContext::default();
         assert!(!ctx.no_new_privileges);
         assert!(!ctx.private_tmp);
         assert_eq!(ctx.protect_system, PROTECT_SYSTEM_NO);
+        assert!(ctx.read_write_paths.is_empty());
     }
 }
