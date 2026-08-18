@@ -1,0 +1,301 @@
+name: Land Fedora PAM session environment support
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-fedora-pam-session.yml
+      - src/bin/rustd-logind.rs
+      - src/logind/mod.rs
+
+permissions:
+  contents: write
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install PAM build dependencies
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential libdbus-1-dev libpam0g-dev pkg-config
+      - name: Implement standard Login1 PAM registration
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          grep -Fq 'async fn create_session(' src/bin/rustd-logind.rs
+          cat > pam/pam_rustd.c <<'EOF'
+          /* SPDX-License-Identifier: LGPL-2.1-or-later */
+          /* Fedora-compatible PAM session registration backed exclusively by RustD Login1. */
+          #define _GNU_SOURCE
+          #include <dbus/dbus.h>
+          #include <pwd.h>
+          #include <security/pam_appl.h>
+          #include <security/pam_modules.h>
+          #include <stdint.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <unistd.h>
+
+          #define SESSION_KEY "rustd-logind-session"
+
+          static void free_session(pam_handle_t *pamh, void *data, int status) {
+              (void)pamh;
+              (void)status;
+              free(data);
+          }
+
+          static DBusConnection *system_bus(void) {
+              DBusError error;
+              DBusConnection *bus;
+              dbus_error_init(&error);
+              bus = dbus_bus_get(DBUS_BUS_SYSTEM, &error);
+              dbus_error_free(&error);
+              return bus;
+          }
+
+          static int put_env(pam_handle_t *pamh, const char *name, const char *value) {
+              size_t length;
+              char *entry;
+              int status;
+              if (!value || !*value)
+                  return PAM_SUCCESS;
+              length = strlen(name) + 1U + strlen(value) + 1U;
+              entry = malloc(length);
+              if (!entry)
+                  return PAM_BUF_ERR;
+              (void)snprintf(entry, length, "%s=%s", name, value);
+              status = pam_putenv(pamh, entry);
+              free(entry);
+              return status;
+          }
+
+          static const char *env_or(pam_handle_t *pamh, const char *name, const char *fallback) {
+              const char *value = pam_getenv(pamh, name);
+              return value && *value ? value : fallback;
+          }
+
+          static uint32_t session_vtnr(pam_handle_t *pamh, const char *tty) {
+              const char *value = pam_getenv(pamh, "XDG_VTNR");
+              char *end = NULL;
+              unsigned long parsed;
+              if (value && *value) {
+                  parsed = strtoul(value, &end, 10);
+                  if (end && *end == '\0' && parsed <= UINT32_MAX)
+                      return (uint32_t)parsed;
+              }
+              if (tty && strncmp(tty, "tty", 3U) == 0) {
+                  parsed = strtoul(tty + 3U, &end, 10);
+                  if (end && *end == '\0' && parsed <= UINT32_MAX)
+                      return (uint32_t)parsed;
+              }
+              return 0;
+          }
+
+          static int call_release(const char *id) {
+              DBusConnection *bus = system_bus();
+              DBusMessage *message;
+              DBusMessage *reply;
+              DBusError error;
+              if (!bus)
+                  return PAM_SESSION_ERR;
+              message = dbus_message_new_method_call(
+                  "org.freedesktop.login1", "/org/freedesktop/login1",
+                  "org.freedesktop.login1.Manager", "ReleaseSession");
+              if (!message) {
+                  dbus_connection_unref(bus);
+                  return PAM_BUF_ERR;
+              }
+              if (!dbus_message_append_args(message, DBUS_TYPE_STRING, &id, DBUS_TYPE_INVALID)) {
+                  dbus_message_unref(message);
+                  dbus_connection_unref(bus);
+                  return PAM_BUF_ERR;
+              }
+              dbus_error_init(&error);
+              reply = dbus_connection_send_with_reply_and_block(bus, message, 5000, &error);
+              dbus_message_unref(message);
+              dbus_connection_unref(bus);
+              if (!reply) {
+                  dbus_error_free(&error);
+                  return PAM_SESSION_ERR;
+              }
+              dbus_message_unref(reply);
+              dbus_error_free(&error);
+              return PAM_SUCCESS;
+          }
+
+          static int create_session(pam_handle_t *pamh, const struct passwd *pwd, char **out) {
+              const char *service = NULL;
+              const char *tty_item = NULL;
+              const char *display_item = NULL;
+              const char *remote_host = NULL;
+              const char *remote_user = NULL;
+              const char *tty;
+              const char *display;
+              const char *type;
+              const char *class;
+              const char *desktop;
+              const char *seat;
+              dbus_uint32_t uid = pwd->pw_uid;
+              dbus_uint32_t pid = (dbus_uint32_t)getpid();
+              dbus_uint32_t vtnr;
+              dbus_bool_t remote;
+              DBusConnection *bus;
+              DBusMessage *message;
+              DBusMessage *reply;
+              DBusMessageIter iter, array;
+              DBusError error;
+              const char *id = NULL;
+              const char *object_path = NULL;
+              const char *runtime_path = NULL;
+              const char *reply_seat = NULL;
+              dbus_uint32_t reply_uid = 0, reply_vtnr = 0;
+              dbus_bool_t existing = FALSE;
+              int fifo_fd = -1;
+              int status;
+
+              (void)pam_get_item(pamh, PAM_SERVICE, (const void **)&service);
+              (void)pam_get_item(pamh, PAM_TTY, (const void **)&tty_item);
+              (void)pam_get_item(pamh, PAM_XDISPLAY, (const void **)&display_item);
+              (void)pam_get_item(pamh, PAM_RHOST, (const void **)&remote_host);
+              (void)pam_get_item(pamh, PAM_RUSER, (const void **)&remote_user);
+              if (!service) service = "login";
+              tty = tty_item ? tty_item : "";
+              if (strncmp(tty, "/dev/", 5U) == 0) tty += 5U;
+              display = display_item && *display_item ? display_item : env_or(pamh, "DISPLAY", "");
+              type = pam_getenv(pamh, "XDG_SESSION_TYPE");
+              if (!type || !*type) type = *display ? "x11" : (*tty ? "tty" : "unspecified");
+              class = env_or(pamh, "XDG_SESSION_CLASS", "user");
+              desktop = env_or(pamh, "XDG_SESSION_DESKTOP", env_or(pamh, "DESKTOP_SESSION", ""));
+              remote = remote_host && *remote_host ? TRUE : FALSE;
+              if (!remote_host) remote_host = "";
+              if (!remote_user) remote_user = "";
+              seat = env_or(pamh, "XDG_SEAT", remote ? "" : "seat0");
+              vtnr = session_vtnr(pamh, tty);
+
+              bus = system_bus();
+              if (!bus) return PAM_SESSION_ERR;
+              message = dbus_message_new_method_call(
+                  "org.freedesktop.login1", "/org/freedesktop/login1",
+                  "org.freedesktop.login1.Manager", "CreateSession");
+              if (!message) {
+                  dbus_connection_unref(bus);
+                  return PAM_BUF_ERR;
+              }
+              dbus_message_iter_init_append(message, &iter);
+              if (!dbus_message_iter_append_basic(&iter, DBUS_TYPE_UINT32, &uid) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_UINT32, &pid) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &service) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &type) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &class) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &desktop) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &seat) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_UINT32, &vtnr) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &tty) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &display) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_BOOLEAN, &remote) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &remote_user) ||
+                  !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &remote_host) ||
+                  !dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "(sv)", &array) ||
+                  !dbus_message_iter_close_container(&iter, &array)) {
+                  dbus_message_unref(message);
+                  dbus_connection_unref(bus);
+                  return PAM_BUF_ERR;
+              }
+              dbus_error_init(&error);
+              reply = dbus_connection_send_with_reply_and_block(bus, message, 5000, &error);
+              dbus_message_unref(message);
+              dbus_connection_unref(bus);
+              if (!reply) {
+                  dbus_error_free(&error);
+                  return PAM_SESSION_ERR;
+              }
+              if (!dbus_message_get_args(
+                      reply, &error,
+                      DBUS_TYPE_STRING, &id,
+                      DBUS_TYPE_OBJECT_PATH, &object_path,
+                      DBUS_TYPE_STRING, &runtime_path,
+                      DBUS_TYPE_UNIX_FD, &fifo_fd,
+                      DBUS_TYPE_UINT32, &reply_uid,
+                      DBUS_TYPE_STRING, &reply_seat,
+                      DBUS_TYPE_UINT32, &reply_vtnr,
+                      DBUS_TYPE_BOOLEAN, &existing,
+                      DBUS_TYPE_INVALID) || !id || !runtime_path) {
+                  dbus_message_unref(reply);
+                  dbus_error_free(&error);
+                  return PAM_SESSION_ERR;
+              }
+              *out = strdup(id);
+              if (!*out) {
+                  dbus_message_unref(reply);
+                  dbus_error_free(&error);
+                  return PAM_BUF_ERR;
+              }
+              status = put_env(pamh, "XDG_SESSION_ID", id);
+              if (status == PAM_SUCCESS) status = put_env(pamh, "XDG_RUNTIME_DIR", runtime_path);
+              if (status == PAM_SUCCESS) status = put_env(pamh, "XDG_SESSION_TYPE", type);
+              if (status == PAM_SUCCESS) status = put_env(pamh, "XDG_SESSION_CLASS", class);
+              if (status == PAM_SUCCESS && reply_seat && *reply_seat) status = put_env(pamh, "XDG_SEAT", reply_seat);
+              if (status == PAM_SUCCESS && reply_vtnr > 0U) {
+                  char buffer[32];
+                  (void)snprintf(buffer, sizeof(buffer), "%u", reply_vtnr);
+                  status = put_env(pamh, "XDG_VTNR", buffer);
+              }
+              if (status == PAM_SUCCESS && desktop && *desktop) status = put_env(pamh, "XDG_SESSION_DESKTOP", desktop);
+              (void)object_path;
+              (void)fifo_fd;
+              (void)reply_uid;
+              (void)existing;
+              dbus_message_unref(reply);
+              dbus_error_free(&error);
+              if (status != PAM_SUCCESS) {
+                  free(*out);
+                  *out = NULL;
+              }
+              return status;
+          }
+
+          PAM_EXTERN int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc, const char **argv) {
+              const char *user = NULL;
+              struct passwd *pwd;
+              char *session = NULL;
+              int status;
+              (void)flags; (void)argc; (void)argv;
+              if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS || !user) return PAM_USER_UNKNOWN;
+              pwd = getpwnam(user);
+              if (!pwd) return PAM_USER_UNKNOWN;
+              status = create_session(pamh, pwd, &session);
+              if (status != PAM_SUCCESS) return status;
+              status = pam_set_data(pamh, SESSION_KEY, session, free_session);
+              if (status != PAM_SUCCESS) free(session);
+              return status;
+          }
+
+          PAM_EXTERN int pam_sm_close_session(pam_handle_t *pamh, int flags, int argc, const char **argv) {
+              const void *data = NULL;
+              (void)flags; (void)argc; (void)argv;
+              if (pam_get_data(pamh, SESSION_KEY, &data) != PAM_SUCCESS || !data) return PAM_SUCCESS;
+              return call_release(data);
+          }
+          EOF
+          cc -O2 -g -std=c17 -Wall -Wextra -Werror -fPIC -shared pam/pam_rustd.c \
+            -o /tmp/pam_rustd.so $(pkg-config --cflags --libs dbus-1) -lpam
+          nm -D --defined-only /tmp/pam_rustd.so | grep -Fq 'pam_sm_open_session'
+          nm -D --defined-only /tmp/pam_rustd.so | grep -Fq 'pam_sm_close_session'
+          git diff --check
+          git fetch origin main
+          git rebase origin/main
+          grep -Fq 'async fn create_session(' src/bin/rustd-logind.rs
+          cc -O2 -g -std=c17 -Wall -Wextra -Werror -fPIC -shared pam/pam_rustd.c \
+            -o /tmp/pam_rustd.so $(pkg-config --cflags --libs dbus-1) -lpam
+          rm -f .github/workflows/land-fedora-pam-session.yml
+          git add -A pam/pam_rustd.c .github/workflows/land-fedora-pam-session.yml
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Complete Fedora PAM session registration'
+          git push origin HEAD:main
