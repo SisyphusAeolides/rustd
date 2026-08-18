@@ -1,6 +1,9 @@
-schema=rustd-fedora-package-contract-v2
+schema=rustd-fedora-package-contract-v3
 status=success
-tested_sha=88898e0d43e37a401525f37e8a0ab6f54b2c37b1
+tested_sha=6bc30d1b77107f3efef6c373ec8d910d912468f1
 selinux_reference_policy=compiled
 rpm_specs=parsed
-provides_systemd=forbidden
+capability.systemd=rustd-fedora-compat
+capability.systemd_udev=rustd-fedora-compat
+capability.systemd_libs=rustd-compat-libs
+capability_evr=build-host-systemd-libs
