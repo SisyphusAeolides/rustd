@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: LGPL-2.1-or-later
 //! FFI binding for `ffi/spawn.c` — async-signal-safe process spawning.
 //!
-//! The manager never forks after threads exist.  It `posix_spawn`s a fresh
-//! `RustD` image in helper mode, and that helper applies the spawn parameters
-//! before `execve`.  Call [`configure_spawn_helper`] with an absolute path to
-//! the `RustD` executable before creating any manager threads.
+//! The public Rust sandbox layout remains stable for the service execution
+//! code. Immediately before the native call, this module expands that layout
+//! to the v2 C ABI and attaches the validated `ReadWritePaths=` vector staged
+//! by `SecurityContext::from_service`.
 //!
 //! Upstream reference: `src/core/execute.c exec_child()` (v261)
 
@@ -14,59 +14,33 @@ use std::path::Path;
 
 use crate::ffi::seccomp::{SdSeccompRule, SECCOMP_ACTION_ALLOW};
 
-/// Security sandbox parameters mirroring `rustd_spawn_sandbox` from `ffi/spawn.h`.
-///
-/// Set `sandbox` pointer in [`SdSpawnParams`] to `NULL` for no sandboxing, or
-/// to a pointer to one of these structs to enable it.
+const MAX_READ_WRITE_PATHS: usize = 256;
+
+/// Stable Rust-side security sandbox parameters consumed by `service.rs`.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct SdSpawnSandbox {
-    /// Boolean: set `PR_SET_NO_NEW_PRIVS`.
     pub no_new_privs: libc::c_int,
-    /// Boolean: private tmpfs on `/tmp` and `/var/tmp`.
     pub private_tmp: libc::c_int,
-    /// Boolean: minimal `/dev` in new mount namespace.
     pub private_devices: libc::c_int,
-    /// Boolean: new empty network namespace.
     pub private_network: libc::c_int,
-    /// Boolean: force a private mount namespace.
     pub private_mounts: libc::c_int,
-    /// `ProtectSystem=`: 0=no, 1=yes, 2=full, 3=strict.
     pub protect_system: libc::c_int,
-    /// `ProtectHome=`: 0=no, 1=yes, 2=read-only, 3=tmpfs.
     pub protect_home: libc::c_int,
-    /// Boolean: `/proc/sys`, `/sys` read-only.
     pub protect_kernel_tunables: libc::c_int,
-    /// Boolean: `/lib/modules` read-only.
     pub protect_kernel_modules: libc::c_int,
-    /// Boolean: block kernel log access (`syslog(2)`, `/dev/kmsg`).
     pub protect_kernel_logs: libc::c_int,
-    /// Boolean: block realtime clock modification and RTC device access.
     pub protect_clock: libc::c_int,
-    /// Boolean: `/sys/fs/cgroup` read-only.
     pub protect_control_groups: libc::c_int,
-    /// Boolean: `nosuid` on `/dev` and `/tmp`.
     pub restrict_suid_sgid: libc::c_int,
-    /// Boolean: seccomp-block real-time scheduling.
     pub restrict_realtime: libc::c_int,
-    /// Boolean: block namespace-changing syscalls.
     pub restrict_namespaces: libc::c_int,
-    /// Boolean: block writable executable mappings.
     pub memory_deny_write_execute: libc::c_int,
-    /// Compiled `SystemCallFilter=` rules.
     pub syscall_filter_rules: *const SdSeccompRule,
-    /// Number of compiled syscall rules.
     pub n_syscall_filter_rules: usize,
-    /// Action applied to syscalls without an explicit rule.
     pub syscall_filter_default_action: u32,
-    /// Boolean: install the compiled syscall filter.
     pub syscall_filter_enabled: libc::c_int,
-    /// Boolean: reject non-native syscall architectures.
     pub restrict_native_syscalls: libc::c_int,
-    /// Absolute writable mount exceptions from `ReadWritePaths=`.
-    pub read_write_paths: *const *const libc::c_char,
-    /// Number of entries in `read_write_paths`.
-    pub n_read_write_paths: usize,
 }
 
 impl Default for SdSpawnSandbox {
@@ -93,9 +67,92 @@ impl Default for SdSpawnSandbox {
             syscall_filter_default_action: SECCOMP_ACTION_ALLOW,
             syscall_filter_enabled: 0,
             restrict_native_syscalls: 0,
-            read_write_paths: std::ptr::null(),
-            n_read_write_paths: 0,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+struct NativeSpawnSandbox {
+    no_new_privs: libc::c_int,
+    private_tmp: libc::c_int,
+    private_devices: libc::c_int,
+    private_network: libc::c_int,
+    private_mounts: libc::c_int,
+    protect_system: libc::c_int,
+    protect_home: libc::c_int,
+    protect_kernel_tunables: libc::c_int,
+    protect_kernel_modules: libc::c_int,
+    protect_kernel_logs: libc::c_int,
+    protect_clock: libc::c_int,
+    protect_control_groups: libc::c_int,
+    restrict_suid_sgid: libc::c_int,
+    restrict_realtime: libc::c_int,
+    restrict_namespaces: libc::c_int,
+    memory_deny_write_execute: libc::c_int,
+    syscall_filter_rules: *const SdSeccompRule,
+    n_syscall_filter_rules: usize,
+    syscall_filter_default_action: u32,
+    syscall_filter_enabled: libc::c_int,
+    restrict_native_syscalls: libc::c_int,
+    read_write_paths: *const *const libc::c_char,
+    n_read_write_paths: usize,
+}
+
+impl NativeSpawnSandbox {
+    fn from_legacy(value: Option<&SdSpawnSandbox>) -> Self {
+        value.map_or(
+            Self {
+                no_new_privs: 0,
+                private_tmp: 0,
+                private_devices: 0,
+                private_network: 0,
+                private_mounts: 0,
+                protect_system: 0,
+                protect_home: 0,
+                protect_kernel_tunables: 0,
+                protect_kernel_modules: 0,
+                protect_kernel_logs: 0,
+                protect_clock: 0,
+                protect_control_groups: 0,
+                restrict_suid_sgid: 0,
+                restrict_realtime: 0,
+                restrict_namespaces: 0,
+                memory_deny_write_execute: 0,
+                syscall_filter_rules: std::ptr::null(),
+                n_syscall_filter_rules: 0,
+                syscall_filter_default_action: SECCOMP_ACTION_ALLOW,
+                syscall_filter_enabled: 0,
+                restrict_native_syscalls: 0,
+                read_write_paths: std::ptr::null(),
+                n_read_write_paths: 0,
+            },
+            |legacy| Self {
+                no_new_privs: legacy.no_new_privs,
+                private_tmp: legacy.private_tmp,
+                private_devices: legacy.private_devices,
+                private_network: legacy.private_network,
+                private_mounts: legacy.private_mounts,
+                protect_system: legacy.protect_system,
+                protect_home: legacy.protect_home,
+                protect_kernel_tunables: legacy.protect_kernel_tunables,
+                protect_kernel_modules: legacy.protect_kernel_modules,
+                protect_kernel_logs: legacy.protect_kernel_logs,
+                protect_clock: legacy.protect_clock,
+                protect_control_groups: legacy.protect_control_groups,
+                restrict_suid_sgid: legacy.restrict_suid_sgid,
+                restrict_realtime: legacy.restrict_realtime,
+                restrict_namespaces: legacy.restrict_namespaces,
+                memory_deny_write_execute: legacy.memory_deny_write_execute,
+                syscall_filter_rules: legacy.syscall_filter_rules,
+                n_syscall_filter_rules: legacy.n_syscall_filter_rules,
+                syscall_filter_default_action: legacy.syscall_filter_default_action,
+                syscall_filter_enabled: legacy.syscall_filter_enabled,
+                restrict_native_syscalls: legacy.restrict_native_syscalls,
+                read_write_paths: std::ptr::null(),
+                n_read_write_paths: 0,
+            },
+        )
     }
 }
 
@@ -108,94 +165,158 @@ pub struct SdSpawnRlimit {
     pub hard: u64,
 }
 
-/// Parameters for `rustd_spawn`.
-///
-/// Mirrors `rustd_spawn_params` from `ffi/spawn.h`.
+/// Parameters supplied by the service execution layer.
 #[repr(C)]
 pub struct SdSpawnParams {
-    /// Executable path, independent of `argv[0]`.
     pub path: *const libc::c_char,
-    /// NULL-terminated argument vector.
     pub argv: *const *const libc::c_char,
-    /// NULL-terminated environment vector; NULL inherits the parent env.
     pub envp: *const *const libc::c_char,
-    /// Working directory; NULL inherits the parent's cwd.
     pub cwd: *const libc::c_char,
-    /// Path to the prepared unit `cgroup.procs`, or NULL.
     pub cgroup_procs_path: *const libc::c_char,
-    /// Requested process resource limits.
     pub rlimits: *const SdSpawnRlimit,
-    /// Number of entries in `rlimits`.
     pub n_rlimits: usize,
-    /// User ID to switch to; `(uid_t)-1` = do not switch.
     pub uid: uid_t,
-    /// Group ID to switch to; `(gid_t)-1` = do not switch.
     pub gid: gid_t,
-    /// `SELinux` execution context; NULL disables the transition.
     pub selinux_context: *const libc::c_char,
-    /// Boolean: ignore `SELinux` transition failure.
     pub selinux_context_ignore: libc::c_int,
-    /// `AppArmor` execution profile; NULL disables the transition.
     pub apparmor_profile: *const libc::c_char,
-    /// Boolean: ignore `AppArmor` profile transition failure.
     pub apparmor_profile_ignore: libc::c_int,
-    /// stdin fd; -1 = redirect to /dev/null.
     pub stdin_fd: libc::c_int,
-    /// stdout fd; -1 = inherit.
     pub stdout_fd: libc::c_int,
-    /// stderr fd; -1 = inherit.
     pub stderr_fd: libc::c_int,
-    /// Notification socket enable flag; -1 disables notifications.
     pub notify_fd: libc::c_int,
-    /// Service watchdog interval in microseconds; 0 disables it.
     pub watchdog_usec: u64,
-    /// Security sandbox parameters; NULL = no sandbox.
     pub sandbox: *const SdSpawnSandbox,
-    /// Listener fds to pass as `RUSTD_LISTEN_FDS`.  NULL or empty = none.
     pub listen_fds: *const libc::c_int,
-    /// Number of entries in `listen_fds`; 0 = none.
     pub n_listen_fds: libc::c_int,
-    /// Capability bounding set bitmask — bits set = capabilities to KEEP.
-    /// `u64::MAX` means no change; `0` drops all capabilities.
     pub cap_bounding_set: u64,
-    /// Ambient capability bitmask — bits set = capabilities to raise.
-    /// `0` means no ambient caps.
     pub ambient_caps: u64,
-    /// Wait until the child successfully crosses `execve(2)`.
     pub wait_for_exec: libc::c_int,
-    /// Read side of the `Type=idle` execution gate, or -1.
     pub idle_read_fd: libc::c_int,
-    /// Write side of the `Type=idle` execution gate, or -1.
     pub idle_write_fd: libc::c_int,
 }
 
-extern "C" {
-    /// Install the absolute path of the helper image used by [`rustd_spawn`].
-    ///
-    /// # Safety
-    /// `executable_path` must be a valid NUL-terminated C string for the
-    /// duration of the call.
-    pub fn rustd_spawn_helper_configure(executable_path: *const libc::c_char) -> libc::c_int;
+#[repr(C)]
+struct NativeSpawnParams {
+    path: *const libc::c_char,
+    argv: *const *const libc::c_char,
+    envp: *const *const libc::c_char,
+    cwd: *const libc::c_char,
+    cgroup_procs_path: *const libc::c_char,
+    rlimits: *const SdSpawnRlimit,
+    n_rlimits: usize,
+    uid: uid_t,
+    gid: gid_t,
+    selinux_context: *const libc::c_char,
+    selinux_context_ignore: libc::c_int,
+    apparmor_profile: *const libc::c_char,
+    apparmor_profile_ignore: libc::c_int,
+    stdin_fd: libc::c_int,
+    stdout_fd: libc::c_int,
+    stderr_fd: libc::c_int,
+    notify_fd: libc::c_int,
+    watchdog_usec: u64,
+    sandbox: *const NativeSpawnSandbox,
+    listen_fds: *const libc::c_int,
+    n_listen_fds: libc::c_int,
+    cap_bounding_set: u64,
+    ambient_caps: u64,
+    wait_for_exec: libc::c_int,
+    idle_read_fd: libc::c_int,
+    idle_write_fd: libc::c_int,
+}
 
-    /// Non-zero once [`rustd_spawn_helper_configure`] has succeeded.
+extern "C" {
+    pub fn rustd_spawn_helper_configure(executable_path: *const libc::c_char) -> libc::c_int;
     pub fn rustd_spawn_helper_configured() -> libc::c_int;
 
-    /// Spawn with the given parameters without forking the manager.
-    ///
-    /// Returns the child PID on success, or a negative errno on failure.
-    ///
-    /// # Safety
-    /// `p` must be a valid pointer to an initialised [`SdSpawnParams`].
-    /// All pointer fields within `p` must be valid for the duration of
-    /// the call (they are not accessed after `rustd_spawn` returns).
-    pub fn rustd_spawn(p: *const SdSpawnParams) -> pid_t;
+    #[link_name = "rustd_spawn"]
+    fn rustd_spawn_native(p: *const NativeSpawnParams) -> pid_t;
+}
+
+/// Spawn through the v2 native ABI while attaching the validated writable path
+/// vector staged for this service launch.
+///
+/// # Safety
+/// `p` must point to a fully initialized [`SdSpawnParams`] whose pointer fields
+/// remain valid for the duration of this call.
+pub unsafe fn rustd_spawn(p: *const SdSpawnParams) -> pid_t {
+    if p.is_null() {
+        return -libc::EINVAL;
+    }
+    let params = unsafe { &*p };
+    let legacy_sandbox = if params.sandbox.is_null() {
+        None
+    } else {
+        Some(unsafe { &*params.sandbox })
+    };
+
+    let paths = crate::sandbox::take_spawn_read_write_paths();
+    if paths.len() > MAX_READ_WRITE_PATHS {
+        return -libc::E2BIG;
+    }
+    let mut path_strings = Vec::with_capacity(paths.len());
+    for raw in &paths {
+        let path = raw.strip_prefix('-').unwrap_or(raw.as_str());
+        if path.is_empty() || !path.starts_with('/') {
+            return -libc::EINVAL;
+        }
+        let Ok(value) = CString::new(raw.as_str()) else {
+            return -libc::EINVAL;
+        };
+        path_strings.push(value);
+    }
+    let path_pointers = path_strings
+        .iter()
+        .map(|value| value.as_ptr())
+        .collect::<Vec<_>>();
+
+    let mut sandbox = NativeSpawnSandbox::from_legacy(legacy_sandbox);
+    sandbox.read_write_paths = if path_pointers.is_empty() {
+        std::ptr::null()
+    } else {
+        path_pointers.as_ptr()
+    };
+    sandbox.n_read_write_paths = path_pointers.len();
+    let sandbox_enabled = legacy_sandbox.is_some() || !path_pointers.is_empty();
+
+    let native = NativeSpawnParams {
+        path: params.path,
+        argv: params.argv,
+        envp: params.envp,
+        cwd: params.cwd,
+        cgroup_procs_path: params.cgroup_procs_path,
+        rlimits: params.rlimits,
+        n_rlimits: params.n_rlimits,
+        uid: params.uid,
+        gid: params.gid,
+        selinux_context: params.selinux_context,
+        selinux_context_ignore: params.selinux_context_ignore,
+        apparmor_profile: params.apparmor_profile,
+        apparmor_profile_ignore: params.apparmor_profile_ignore,
+        stdin_fd: params.stdin_fd,
+        stdout_fd: params.stdout_fd,
+        stderr_fd: params.stderr_fd,
+        notify_fd: params.notify_fd,
+        watchdog_usec: params.watchdog_usec,
+        sandbox: if sandbox_enabled {
+            std::ptr::addr_of!(sandbox)
+        } else {
+            std::ptr::null()
+        },
+        listen_fds: params.listen_fds,
+        n_listen_fds: params.n_listen_fds,
+        cap_bounding_set: params.cap_bounding_set,
+        ambient_caps: params.ambient_caps,
+        wait_for_exec: params.wait_for_exec,
+        idle_read_fd: params.idle_read_fd,
+        idle_write_fd: params.idle_write_fd,
+    };
+
+    unsafe { rustd_spawn_native(std::ptr::addr_of!(native)) }
 }
 
 /// Install the helper image that [`rustd_spawn`] launches for child setup.
-///
-/// Must be called before the manager creates any thread.  Production entry
-/// points pass `/proc/self/exe` (or an equivalent absolute path to the `RustD`
-/// binary).  Returns `Ok(())` on success.
 ///
 /// # Errors
 /// Returns an error when the path is not absolute, cannot be reached, or the
@@ -209,7 +330,6 @@ pub fn configure_spawn_helper(executable: &Path) -> anyhow::Result<()> {
     }
     let c_path =
         CString::new(path).map_err(|_| anyhow::anyhow!("spawn helper path contains a NUL byte"))?;
-    // Safety: `c_path` is a valid NUL-terminated C string for this call.
     let result = unsafe { rustd_spawn_helper_configure(c_path.as_ptr()) };
     if result < 0 {
         anyhow::bail!(
@@ -231,8 +351,6 @@ pub fn configure_spawn_helper_from_self() -> anyhow::Result<()> {
     configure_spawn_helper(&exe)
 }
 
-/// Test-only auto-configuration so unit tests that spawn services do not need
-/// to call the production entry path.  Production builds never include this.
 #[cfg(test)]
 pub(crate) fn ensure_spawn_helper_for_tests() {
     use std::sync::Once;
@@ -250,8 +368,24 @@ pub(crate) fn ensure_spawn_helper_for_tests() {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fs;
     use std::path::PathBuf;
+
+    #[test]
+    fn public_sandbox_layout_stays_service_compatible() {
+        let sandbox = SdSpawnSandbox::default();
+        assert_eq!(sandbox.protect_system, 0);
+        assert_eq!(sandbox.n_syscall_filter_rules, 0);
+    }
+
+    #[test]
+    fn native_sandbox_appends_writable_path_vector() {
+        let legacy = SdSpawnSandbox::default();
+        let native = NativeSpawnSandbox::from_legacy(Some(&legacy));
+        assert!(native.read_write_paths.is_null());
+        assert_eq!(native.n_read_write_paths, 0);
+    }
 
     #[test]
     fn production_spawn_sources_never_call_fork() {
