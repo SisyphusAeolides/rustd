@@ -2,9 +2,9 @@
 #pragma once
 
 #include <stdint.h>
-#include <rustd/device.h>
-#include <rustd/journal.h>
-#include <rustd/login.h>
+#include "../../include/rustd/device.h"
+#include "../../include/rustd/journal.h"
+#include "../../include/rustd/login.h"
 #include "sd_bus_abi.h"
 
 #ifdef __cplusplus
