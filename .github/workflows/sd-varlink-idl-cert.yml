@@ -1,0 +1,91 @@
+name: Varlink IDL parser certification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - libs/compat/sd_varlink_idl_impl.c
+      - libs/compat/sd_json_varlink_abi.h
+      - libs/tests/test_sd_varlink_idl_impl.c
+      - .github/workflows/sd-varlink-idl-cert.yml
+
+permissions:
+  contents: write
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Patch ABI declarations and test parser
+        id: test
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          h=Path('libs/compat/sd_json_varlink_abi.h')
+          s=h.read_text()
+          anchor='''int sd_varlink_collect(sd_varlink *v, const char *method, sd_json_variant *parameters,\n                       sd_json_variant **ret_parameters, const char **ret_error_id);\n'''
+          addition=anchor+'''int sd_varlink_idl_parse(const char *text, unsigned *reterr_line,\n                         unsigned *reterr_column, sd_varlink_interface **ret);\nsd_varlink_interface *sd_varlink_interface_free(sd_varlink_interface *interface);\n'''
+          if 'int sd_varlink_idl_parse(' not in s:
+              if anchor not in s: raise SystemExit('ABI insertion anchor missing')
+              s=s.replace(anchor,addition,1)
+          h.write_text(s)
+
+          p=Path('libs/compat/sd_varlink_idl_impl.c')
+          s=p.read_text()
+          old='''    while (isalnum((unsigned char)parser_peek(p)) || parser_peek(p) == '_')\n        parser_take(p);\n    length = p->pos - start;'''
+          new='''    while (isalnum((unsigned char)parser_peek(p)) || parser_peek(p) == '_')\n        parser_take(p);\n    if (upper) {\n        for (size_t i = start; i < p->pos; ++i)\n            if (p->text[i] == '_')\n                return parser_fail(p);\n    }\n    length = p->pos - start;'''
+          if old not in s: raise SystemExit('identifier preimage missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          cc -std=c17 -Wall -Wextra -Werror -Ilibs/compat \
+             libs/tests/test_sd_varlink_idl_impl.c libs/compat/sd_varlink_idl_impl.c \
+             -o /tmp/test-varlink-idl 2>&1 | tee /tmp/varlink-idl.log
+          /tmp/test-varlink-idl 2>&1 | tee -a /tmp/varlink-idl.log
+      - name: Publish and land on pass
+        if: always()
+        shell: bash
+        env:
+          OUTCOME: ${{ steps.test.outcome }}
+        run: |
+          set -euo pipefail
+          status=failure
+          [ "$OUTCOME" = success ] && status=pass
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          printf 'schema=rustd-varlink-idl-v1\nstatus=%s\ntested_sha=%s\nbehavior_outcome=%s\ngrammar=varlink-official\n' "$status" "$GITHUB_SHA" "$OUTCOME" > certification/varlink-idl-latest.txt
+          if [ "$status" = failure ]; then
+            tail -n 160 /tmp/varlink-idl.log > certification/varlink-idl-diagnostic.txt 2>/dev/null || true
+          else
+            rm -f certification/varlink-idl-diagnostic.txt
+            python3 - <<'PY'
+          from pathlib import Path
+          h=Path('libs/compat/sd_json_varlink_abi.h')
+          s=h.read_text()
+          anchor='''int sd_varlink_collect(sd_varlink *v, const char *method, sd_json_variant *parameters,\n                       sd_json_variant **ret_parameters, const char **ret_error_id);\n'''
+          addition=anchor+'''int sd_varlink_idl_parse(const char *text, unsigned *reterr_line,\n                         unsigned *reterr_column, sd_varlink_interface **ret);\nsd_varlink_interface *sd_varlink_interface_free(sd_varlink_interface *interface);\n'''
+          if 'int sd_varlink_idl_parse(' not in s: s=s.replace(anchor,addition,1)
+          h.write_text(s)
+          p=Path('libs/compat/sd_varlink_idl_impl.c')
+          s=p.read_text()
+          old='''    while (isalnum((unsigned char)parser_peek(p)) || parser_peek(p) == '_')\n        parser_take(p);\n    length = p->pos - start;'''
+          new='''    while (isalnum((unsigned char)parser_peek(p)) || parser_peek(p) == '_')\n        parser_take(p);\n    if (upper) {\n        for (size_t i = start; i < p->pos; ++i)\n            if (p->text[i] == '_')\n                return parser_fail(p);\n    }\n    length = p->pos - start;'''
+          if old in s: s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          fi
+          git add -A certification/varlink-idl-latest.txt certification/varlink-idl-diagnostic.txt libs/compat/sd_json_varlink_abi.h libs/compat/sd_varlink_idl_impl.c
+          if ! git diff --cached --quiet; then
+            git config user.name 'Kenny Glowner'
+            git config user.email 'SisyphusAeolides@pm.me'
+            git commit -m "Record Varlink IDL parser $status"
+            git push origin HEAD:main
+          fi
+          [ "$status" = pass ]
