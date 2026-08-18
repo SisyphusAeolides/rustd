@@ -1,0 +1,16 @@
+#!/usr/bin/bash
+# SPDX-License-Identifier: LGPL-2.1-or-later
+set -euo pipefail
+
+RUSTD_SYSUSERS=${RUSTD_SYSUSERS:-/usr/bin/rustd-sysusers}
+args=()
+inline=0
+for arg in "$@"; do
+    if [[ $arg == - ]]; then
+        inline=1
+    else
+        args+=("$arg")
+    fi
+done
+[[ $inline -eq 0 ]] || args+=(--inline)
+exec "$RUSTD_SYSUSERS" "${args[@]}"
