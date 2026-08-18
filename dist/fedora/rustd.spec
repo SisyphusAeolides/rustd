@@ -6,6 +6,7 @@ License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
 Source0:        rustd-%{version}.tar.gz
 
+BuildRequires:  bash
 BuildRequires:  cargo >= 1.75
 BuildRequires:  rust >= 1.75
 BuildRequires:  gcc
@@ -16,14 +17,16 @@ BuildRequires:  pam-devel
 BuildRequires:  pkgconfig(dbus-1)
 
 Requires:       /usr/bin/dbus-daemon
+Requires:       authselect
+Requires:       python3
 
 %description
 RustD is the native PID 1, service manager, device manager, journal, login
 manager, and supporting userspace for an exclusive RustD Linux installation.
-This package intentionally does not claim the RPM capability "systemd" and is
-safe to stage alongside Fedora's systemd package for VM certification. The
-path-owning Fedora compatibility package performs the final conflict/swap only
-after all release gates pass.
+This package intentionally does not claim the RPM capability "systemd" and does
+not own Fedora's overlapping /usr/sbin/init path, so it can be staged alongside
+the running Fedora manager. The path-owning Fedora compatibility package performs
+the final conflict/swap only after PAM/NSS migration and the release gates pass.
 
 %package devel
 Summary:        Development files for RustD native libraries
@@ -46,6 +49,7 @@ export CARGO_NET_OFFLINE=true
 export CARGO_NET_OFFLINE=true
 make check-native check-packaging check-libs
 bash -n scripts/fedora-cutover-gate.sh
+bash -n dist/fedora/compat/rustd-fedora-cutover
 
 %install
 export CARGO_NET_OFFLINE=true
@@ -57,14 +61,16 @@ make DESTDIR=%{buildroot} \
      PAMLIBDIR=%{_libdir}/security \
      install
 
-# Fedora boots RustD directly. Do not point init at a systemd-named binary.
+# The migration helper must be available during the nonconflicting staging
+# phase, before the exclusive Fedora compatibility RPM erases the old stack.
 install -d %{buildroot}%{_sbindir}
-ln -s ../lib/rustd/rustd %{buildroot}%{_sbindir}/init
+install -m0755 dist/fedora/compat/rustd-fedora-cutover \
+    %{buildroot}%{_sbindir}/rustd-fedora-cutover
 
 %files
 %license LICENSE*
 %doc README.md
-%{_sbindir}/init
+%{_sbindir}/rustd-fedora-cutover
 %{_bindir}/rust*
 %{_prefix}/lib/rustd/
 %{_prefix}/lib/tmpfiles.d/rustd.conf
@@ -90,4 +96,5 @@ ln -s ../lib/rustd/rustd %{buildroot}%{_sbindir}/init
 
 %changelog
 * Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
+- Make the native RPM safe for staged PAM/NSS migration
 - Add Fedora native RustD package for staged and exclusive cutover testing
