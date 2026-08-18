@@ -1,5 +1,5 @@
 name: Run final RustD ABI closure
-# rerun on finalized native FFI head
+# rerun on hardened exact-stack head
 
 defaults:
   run:
