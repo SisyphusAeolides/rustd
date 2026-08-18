@@ -96,7 +96,8 @@ jobs:
             rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
             --allowerasing
           dnf -q "${common[@]}" check
-          for package in rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux; do
+          for package in \
+            rustd rustd-resolved rustd-resolved-nss rustd-compat-libs rustd-fedora-compat rustd-selinux; do
             rpm --root "$root" -q "$package"
           done
           if rpm --root "$root" -qa --qf '%{NAME}\n' | grep -Eq '^systemd($|-)'; then
@@ -106,6 +107,7 @@ jobs:
           fi
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libsystemd.so.0)" = rustd-compat-libs
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libudev.so.1)" = rustd-compat-libs
-          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = rustd
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = rustd-fedora-compat
+          test "$(readlink "$root/usr/sbin/init")" = ../lib/rustd/rustd
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/bin/systemctl)" = rustd-fedora-compat
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib/systemd/systemd-udevd)" = rustd-fedora-compat
