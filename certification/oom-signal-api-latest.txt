@@ -1,0 +1,6 @@
+schema=rustd-oom-signal-api-v1
+status=pass
+reason=patched
+expected_preimage=01cac46bc41f2c9d9e025ace5dab1281d6b1954d
+observed_preimage=01cac46bc41f2c9d9e025ace5dab1281d6b1954d
+tested_sha=2dcdd1ab27f993ad49b116541f31046acc582c7a

@@ -2274,7 +2274,7 @@ impl Manager {
                     let notify_fd = self.notify.as_ref().map_or(-1, NotifyServer::raw_fd);
                     self.stop_service(&name, notify_fd);
                     if policy == OomPolicy::Kill {
-                        if let Err(error) = self.cgroup.signal_unit(&name, libc::SIGKILL) {
+                        if let Err(error) = self.cgroup.signal_unit(&name, libc::SIGKILL, &[]) {
                             eprintln!(
                                 "rustd: killing remaining cgroup members for '{name}' after OOM failed: {error}"
                             );
