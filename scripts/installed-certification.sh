@@ -8,11 +8,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 REPORT_DIR="${RUSTD_CERT_REPORT_DIR:-$ROOT/target/certification}"
 MODE=release
 EVIDENCE="${RUSTD_MACHINE_EVIDENCE:-}"
+RESOLVER_EVIDENCE="${RUSTD_RESOLVED_CERT_EVIDENCE:-}"
 PERFORMANCE_VOUCHER="${RUSTD_PERFORMANCE_VOUCHER:-}"
 
 usage() {
   cat >&2 <<'EOF'
-usage: installed-certification.sh [--audit|--release] [--evidence FILE] [--performance-voucher FILE]
+usage: installed-certification.sh [--audit|--release] [--evidence FILE] [--resolver-evidence FILE] [--performance-voucher FILE]
 EOF
 }
 
@@ -29,6 +30,11 @@ while [[ $# -gt 0 ]]; do
     --evidence)
       [[ $# -ge 2 ]] || { usage; exit 64; }
       EVIDENCE="$2"
+      shift 2
+      ;;
+    --resolver-evidence)
+      [[ $# -ge 2 ]] || { usage; exit 64; }
+      RESOLVER_EVIDENCE="$2"
       shift 2
       ;;
     --performance-voucher)
@@ -135,6 +141,19 @@ else
   done
 fi
 
+if [[ -n "$RESOLVER_EVIDENCE" ]]; then
+  normalized="$(mktemp)"
+  trap 'rm -f "$normalized"' EXIT
+  python3 "$ROOT/scripts/validate-resolver-certification-report.py" \
+    "$RESOLVER_EVIDENCE" \
+    --expected-resolved-sha "$RESOLVED_SHA" >"$normalized"
+  cat "$normalized" | tee -a "$REPORT"
+  rm -f "$normalized"
+  trap - EXIT
+else
+  log resolver.stack pending "requires exact-SHA rustd-resolved installed certification report"
+fi
+
 if [[ -n "$PERFORMANCE_VOUCHER" ]]; then
   normalized="$(mktemp)"
   trap 'rm -f "$normalized"' EXIT
@@ -154,7 +173,7 @@ fi
 echo "Certification report: $REPORT"
 
 if [[ "$MODE" == audit ]]; then
-  echo "Audit complete; release promotion requires all installed-image and performance evidence."
+  echo "Audit complete; release promotion requires all installed-image, resolver, and performance evidence."
   exit 0
 fi
 
@@ -175,4 +194,4 @@ if failures:
     raise SystemExit("release certification incomplete: " + ", ".join(failures))
 PY
 
-echo "PRODUCTION GREEN: every installed-image and performance certification gate passed."
+echo "PRODUCTION GREEN: every installed-image, resolver, and performance certification gate passed."
