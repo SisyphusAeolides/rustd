@@ -53,7 +53,7 @@ def main() -> int:
         source = (root / relative).read_text(encoding="utf-8")
         source_functions.update(match.group(1) for match in closure.FUNCTION.finditer(source))
 
-    source_exports = source_functions | set(closure.STUB_DATA_SYMBOLS)
+    source_exports = source_functions | set(closure.DATA_SYMBOLS)
     missing = sorted(required - source_exports)
     unsupported_exports = closure.unsupported_symbols(root)
     unsupported = sorted(required & unsupported_exports)
