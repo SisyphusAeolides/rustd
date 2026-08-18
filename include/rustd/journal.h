@@ -39,6 +39,9 @@ int rustd_journal_previous_skip(rustd_journal *journal, uint64_t skip);
 int rustd_journal_get_data(rustd_journal *journal, const char *field,
                            const void **data, size_t *length);
 int rustd_journal_get_realtime_usec(rustd_journal *journal, uint64_t *usec);
+int rustd_journal_add_match(rustd_journal *journal, const void *data, size_t size);
+int rustd_journal_add_disjunction(rustd_journal *journal);
+void rustd_journal_flush_matches(rustd_journal *journal);
 
 #ifdef __cplusplus
 }

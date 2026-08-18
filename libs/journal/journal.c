@@ -149,6 +149,14 @@ int rustd_journal_print(int priority, const char *format, ...) {
     }
 }
 
+struct rustd_journal_match {
+    char *data;
+    size_t length;
+    size_t field_length;
+    unsigned term;
+    struct rustd_journal_match *next;
+};
+
 struct rustd_journal {
     char *directory;
     char **paths;
@@ -158,53 +166,119 @@ struct rustd_journal {
     size_t path_index;
     char *entry;
     size_t entry_length;
+    struct rustd_journal_match *matches;
+    unsigned match_term;
 };
 
+static int append_journal_entry(char ***entries, size_t *count, const char *data, size_t length) {
+    char **resized;
+    char *copy;
+    while (length > 0U && data[0] == '\n') {
+        data++;
+        length--;
+    }
+    while (length > 0U && data[length - 1U] == '\n')
+        length--;
+    if (length == 0U)
+        return 0;
+    copy = malloc(length + 1U);
+    if (!copy)
+        return -ENOMEM;
+    memcpy(copy, data, length);
+    copy[length] = '\0';
+    resized = realloc(*entries, (*count + 1U) * sizeof(char *));
+    if (!resized) {
+        free(copy);
+        return -ENOMEM;
+    }
+    *entries = resized;
+    (*entries)[(*count)++] = copy;
+    return 0;
+}
+
 static int collect_journal_files(rustd_journal *journal) {
-    /* Minimal reader: load newline-framed text dumps under the runtime dir.
-     * Binary journal file parsing remains daemon-private for now. */
     char path[512];
     FILE *stream;
-    char line[4096];
-    char **paths = NULL;
-    size_t count = 0;
+    char *raw = NULL;
+    char *data = NULL;
+    char **entries = NULL;
+    size_t count = 0U;
+    long file_size;
+    size_t raw_size;
+    size_t normalized = 0U;
+    size_t cursor = 0U;
+    int framed;
+    int result = 0;
 
     snprintf(path, sizeof(path), "%s/entries.log",
-             journal->directory ? journal->directory : JOURNAL_RUNTIME_DIR);
-    stream = fopen(path, "r");
+   journal->directory ? journal->directory : JOURNAL_RUNTIME_DIR);
+    stream = fopen(path, "rb");
     if (!stream)
         return -errno;
-
-    while (fgets(line, sizeof(line), stream)) {
-        size_t length = strlen(line);
-        char *copy;
-        char **resized;
-        while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r'))
-            line[--length] = '\0';
-        if (length == 0)
-            continue;
-        copy = strdup(line);
-        if (!copy) {
-            fclose(stream);
-            for (size_t i = 0; i < count; i++)
-                free(paths[i]);
-            free(paths);
-            return -ENOMEM;
-        }
-        resized = realloc(paths, (count + 1U) * sizeof(char *));
-        if (!resized) {
-            free(copy);
-            fclose(stream);
-            for (size_t i = 0; i < count; i++)
-                free(paths[i]);
-            free(paths);
-            return -ENOMEM;
-        }
-        paths = resized;
-        paths[count++] = copy;
+    if (fseek(stream, 0L, SEEK_END) < 0) {
+        result = -errno;
+        goto finish;
     }
+    file_size = ftell(stream);
+    if (file_size < 0) {
+        result = -errno;
+        goto finish;
+    }
+    if (fseek(stream, 0L, SEEK_SET) < 0) {
+        result = -errno;
+        goto finish;
+    }
+    raw_size = (size_t)file_size;
+    raw = malloc(raw_size + 1U);
+    data = malloc(raw_size + 1U);
+    if (!raw || !data) {
+        result = -ENOMEM;
+        goto finish;
+    }
+    if (raw_size > 0U && fread(raw, 1U, raw_size, stream) != raw_size) {
+        result = ferror(stream) ? -EIO : -EINVAL;
+        goto finish;
+    }
+    raw[raw_size] = '\0';
+    for (size_t i = 0U; i < raw_size; ++i)
+        if (raw[i] != '\r')
+  data[normalized++] = raw[i];
+    data[normalized] = '\0';
+    framed = strstr(data, "\n\n") != NULL;
+
+    while (cursor < normalized) {
+        size_t next = cursor;
+        if (framed) {
+  while (next + 1U < normalized && !(data[next] == '\n' && data[next + 1U] == '\n'))
+      next++;
+  if (next + 1U >= normalized)
+      next = normalized;
+        } else {
+  while (next < normalized && data[next] != '\n')
+      next++;
+        }
+        result = append_journal_entry(&entries, &count, data + cursor, next - cursor);
+        if (result < 0)
+  goto finish;
+        if (framed) {
+  cursor = next < normalized ? next + 2U : normalized;
+  while (cursor < normalized && data[cursor] == '\n')
+      cursor++;
+        } else
+  cursor = next < normalized ? next + 1U : normalized;
+    }
+
+finish:
     fclose(stream);
-    journal->paths = paths;
+    free(raw);
+    free(data);
+    if (result < 0) {
+        for (size_t i = 0U; i < count; ++i)
+  free(entries[i]);
+        free(entries);
+        return result;
+    }
+    journal->paths = entries;
     journal->path_count = count;
     journal->path_index = SIZE_MAX;
     return 0;
@@ -245,6 +319,12 @@ void rustd_journal_unref(rustd_journal *journal) {
         free(journal->paths[i]);
     free(journal->paths);
     free(journal->entry);
+    while (journal->matches) {
+        struct rustd_journal_match *next = journal->matches->next;
+        free(journal->matches->data);
+        free(journal->matches);
+        journal->matches = next;
+    }
     free(journal);
 }
 
@@ -252,6 +332,138 @@ static void clear_current_entry(rustd_journal *journal) {
     free(journal->entry);
     journal->entry = NULL;
     journal->entry_length = 0;
+}
+
+
+static void reset_journal_position(rustd_journal *journal) {
+    journal->path_index = SIZE_MAX;
+    clear_current_entry(journal);
+}
+
+int rustd_journal_add_match(rustd_journal *journal, const void *data, size_t size) {
+    const char *bytes = data;
+    const char *equals;
+    struct rustd_journal_match *match;
+    struct rustd_journal_match **tail;
+    if (!journal || !data)
+        return -EINVAL;
+    if (size == 0U)
+        size = strlen(bytes);
+    if (size < 3U)
+        return -EINVAL;
+    equals = memchr(bytes, '=', size);
+    if (!equals || equals == bytes || equals == bytes + size - 1U)
+        return -EINVAL;
+    match = calloc(1, sizeof(*match));
+    if (!match)
+        return -ENOMEM;
+    match->data = malloc(size);
+    if (!match->data) {
+        free(match);
+        return -ENOMEM;
+    }
+    memcpy(match->data, bytes, size);
+    match->length = size;
+    match->field_length = (size_t)(equals - bytes);
+    match->term = journal->match_term;
+    tail = &journal->matches;
+    while (*tail)
+        tail = &(*tail)->next;
+    *tail = match;
+    reset_journal_position(journal);
+    return 0;
+}
+
+int rustd_journal_add_disjunction(rustd_journal *journal) {
+    struct rustd_journal_match *match;
+    int has_current = 0;
+    if (!journal)
+        return -EINVAL;
+    for (match = journal->matches; match; match = match->next)
+        if (match->term == journal->match_term) {
+  has_current = 1;
+  break;
+        }
+    if (!has_current)
+        return -EINVAL;
+    if (journal->match_term == UINT_MAX)
+        return -ERANGE;
+    journal->match_term++;
+    reset_journal_position(journal);
+    return 0;
+}
+
+void rustd_journal_flush_matches(rustd_journal *journal) {
+    if (!journal)
+        return;
+    while (journal->matches) {
+        struct rustd_journal_match *next = journal->matches->next;
+        free(journal->matches->data);
+        free(journal->matches);
+        journal->matches = next;
+    }
+    journal->match_term = 0U;
+    reset_journal_position(journal);
+}
+
+static int entry_has_exact_match(const char *entry, const struct rustd_journal_match *match) {
+    const char *cursor = entry;
+    while (*cursor) {
+        const char *end = strchr(cursor, '\n');
+        size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+        if (length == match->length && memcmp(cursor, match->data, length) == 0)
+  return 1;
+        if (!end)
+  break;
+        cursor = end + 1;
+    }
+    return 0;
+}
+
+static int same_match_field(const struct rustd_journal_match *a,
+                  const struct rustd_journal_match *b) {
+    return a->field_length == b->field_length &&
+ memcmp(a->data, b->data, a->field_length) == 0;
+}
+
+static int journal_entry_matches(const rustd_journal *journal, const char *entry) {
+    const struct rustd_journal_match *term_match;
+    unsigned term;
+    if (!journal->matches)
+        return 1;
+    for (term = 0U; term <= journal->match_term; ++term) {
+        int has_term = 0;
+        int term_ok = 1;
+        for (term_match = journal->matches; term_match; term_match = term_match->next) {
+  const struct rustd_journal_match *previous;
+  const struct rustd_journal_match *candidate;
+  int field_seen = 0;
+  int field_ok = 0;
+  if (term_match->term != term)
+      continue;
+  has_term = 1;
+  for (previous = journal->matches; previous != term_match; previous = previous->next)
+      if (previous->term == term && same_match_field(previous, term_match)) {
+          field_seen = 1;
+          break;
+      }
+  if (field_seen)
+      continue;
+  for (candidate = term_match; candidate; candidate = candidate->next)
+      if (candidate->term == term && same_match_field(candidate, term_match) &&
+          entry_has_exact_match(entry, candidate)) {
+          field_ok = 1;
+          break;
+      }
+  if (!field_ok) {
+      term_ok = 0;
+      break;
+  }
+        }
+        if (has_term && term_ok)
+  return 1;
+    }
+    return 0;
 }
 
 static int load_entry(rustd_journal *journal, size_t index) {
@@ -279,50 +491,59 @@ int rustd_journal_seek_tail(rustd_journal *journal) {
 
 int rustd_journal_next(rustd_journal *journal) {
     size_t next_index;
-
+    int result;
     if (!journal)
         return -EINVAL;
-    if (journal->path_count == 0)
+    if (journal->path_count == 0U)
         return 0;
-
-    if (journal->path_index == SIZE_MAX)
-        next_index = 0;
-    else if (journal->path_index >= journal->path_count) {
-        clear_current_entry(journal);
-        return 0;
-    } else {
-        next_index = journal->path_index + 1U;
-        if (next_index >= journal->path_count) {
-            journal->path_index = journal->path_count;
-            clear_current_entry(journal);
-            return 0;
+    for (;;) {
+        if (journal->path_index == SIZE_MAX)
+  next_index = 0U;
+        else if (journal->path_index >= journal->path_count) {
+  clear_current_entry(journal);
+  return 0;
+        } else {
+  next_index = journal->path_index + 1U;
+  if (next_index >= journal->path_count) {
+      journal->path_index = journal->path_count;
+      clear_current_entry(journal);
+      return 0;
+  }
         }
+        result = load_entry(journal, next_index);
+        if (result < 0)
+  return result;
+        if (journal_entry_matches(journal, journal->entry))
+  return 1;
     }
-    return load_entry(journal, next_index);
 }
 
 int rustd_journal_previous(rustd_journal *journal) {
     size_t previous_index;
-
+    int result;
     if (!journal)
         return -EINVAL;
-    if (journal->path_count == 0)
+    if (journal->path_count == 0U)
         return 0;
-
-    if (journal->path_index == SIZE_MAX) {
-        clear_current_entry(journal);
-        return 0;
+    for (;;) {
+        if (journal->path_index == SIZE_MAX) {
+  clear_current_entry(journal);
+  return 0;
+        }
+        if (journal->path_index >= journal->path_count)
+  previous_index = journal->path_count - 1U;
+        else if (journal->path_index == 0U) {
+  journal->path_index = SIZE_MAX;
+  clear_current_entry(journal);
+  return 0;
+        } else
+  previous_index = journal->path_index - 1U;
+        result = load_entry(journal, previous_index);
+        if (result < 0)
+  return result;
+        if (journal_entry_matches(journal, journal->entry))
+  return 1;
     }
-    if (journal->path_index >= journal->path_count)
-        previous_index = journal->path_count - 1U;
-    else if (journal->path_index == 0) {
-        journal->path_index = SIZE_MAX;
-        clear_current_entry(journal);
-        return 0;
-    } else
-        previous_index = journal->path_index - 1U;
-
-    return load_entry(journal, previous_index);
 }
 
 int rustd_journal_previous_skip(rustd_journal *journal, uint64_t skip) {

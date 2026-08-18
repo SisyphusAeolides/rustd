@@ -221,19 +221,15 @@ int sd_journal_get_realtime_usec(rustd_journal *journal, uint64_t *usec) {
 }
 
 int sd_journal_add_match(rustd_journal *journal, const void *data, size_t size) {
-    (void)journal;
-    (void)data;
-    (void)size;
-    return 0;
+    return rustd_journal_add_match(journal, data, size);
 }
 
 int sd_journal_add_disjunction(rustd_journal *journal) {
-    (void)journal;
-    return 0;
+    return rustd_journal_add_disjunction(journal);
 }
 
 void sd_journal_flush_matches(rustd_journal *journal) {
-    (void)journal;
+    rustd_journal_flush_matches(journal);
 }
 
 static int write_full(int fd, const void *data, size_t size) {

@@ -26,9 +26,6 @@ SUPPORTED_STUB_FUNCTIONS = {
     "sd_bus_error_has_name",
 }
 SEMANTIC_PLACEHOLDERS = {
-    "sd_journal_add_match",
-    "sd_journal_add_disjunction",
-    "sd_journal_flush_matches",
     "sd_journal_send_with_location",
     "sd_journal_print_with_location",
     "sd_journal_printv_with_location",
