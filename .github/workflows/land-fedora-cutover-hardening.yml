@@ -1,0 +1,90 @@
+name: Land Fedora cutover security and dependency preflight
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-fedora-cutover-hardening.yml
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Harden Fedora release gate
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('scripts/fedora-cutover-gate.sh')
+          s = p.read_text()
+          old = 'for cmd in rpm dnf readelf nm rustctl rustd-resolvectl; do require_cmd "$cmd"; done\n'
+          new = 'for cmd in rpm dnf readelf nm getenforce rustctl rustd-resolvectl; do require_cmd "$cmd"; done\n'
+          if old in s:
+              s = s.replace(old, new, 1)
+          elif new not in s:
+              raise SystemExit('Fedora required-command preimage missing')
+
+          marker = new
+          block = r'''
+
+selinux_mode=$(getenforce 2>/dev/null || true)
+if [[ $selinux_mode == Enforcing ]]; then
+    pass 'SELinux is enforcing'
+else
+    fail "SELinux must remain enforcing for production cutover (mode=${selinux_mode:-unknown})"
+fi
+'''
+          if "pass 'SELinux is enforcing'" not in s:
+              if marker not in s:
+                  raise SystemExit('SELinux insertion point missing')
+              s = s.replace(marker, marker + block, 1)
+
+          pkg_marker = "else\n    pass 'no systemd RPMs installed'\nfi\n"
+          dependency_block = r'''
+
+# Do not fake the package-level `systemd` capability. If an installed RPM still
+# requires it by name, removal remains blocked until that RPM is removed,
+# rebuilt, or its exact requirement is covered by a separately certified
+# RustD Fedora compatibility package.
+mapfile -t systemd_consumers < <(
+    rpm -q --whatrequires systemd 2>/dev/null \
+        | sed '/^no package requires/d' \
+        | awk '!/^systemd($|-)/' \
+        | sort -u
+)
+if ((${#systemd_consumers[@]})); then
+    if [[ $MODE == release ]]; then
+        fail "non-systemd RPMs still require the systemd package capability: ${systemd_consumers[*]}"
+    else
+        pending "RPMs requiring package-level systemd must be resolved before removal: ${systemd_consumers[*]}"
+    fi
+else
+    pass 'no non-systemd RPM requires the package-level systemd capability'
+fi
+'''
+          if "no non-systemd RPM requires the package-level systemd capability" not in s:
+              if pkg_marker not in s:
+                  raise SystemExit('systemd package preflight insertion point missing')
+              s = s.replace(pkg_marker, pkg_marker + dependency_block, 1)
+          p.write_text(s)
+          PY
+          bash -n scripts/fedora-cutover-gate.sh
+          grep -Fq "pass 'SELinux is enforcing'" scripts/fedora-cutover-gate.sh
+          grep -Fq 'rpm -q --whatrequires systemd' scripts/fedora-cutover-gate.sh
+          git diff --check
+          git fetch origin main
+          git rebase origin/main
+          bash -n scripts/fedora-cutover-gate.sh
+          rm -f .github/workflows/land-fedora-cutover-hardening.yml
+          git add -A scripts/fedora-cutover-gate.sh .github/workflows/land-fedora-cutover-hardening.yml
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Harden Fedora cutover preflight'
+          git push origin HEAD:main
