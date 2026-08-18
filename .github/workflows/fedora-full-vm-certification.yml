@@ -1,0 +1,309 @@
+name: Fedora 44 full VM zero-systemd certification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - certification/final-abi-closure-latest.txt
+      - scripts/rustd-resolved-revision.txt
+      - scripts/build-fedora-rpms.sh
+      - scripts/fedora-cutover-gate.sh
+      - dist/fedora/**
+      - .github/workflows/fedora-full-vm-certification.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fedora-44-full-vm-cutover
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      FEDORA_RELEASE: '44'
+      FEDORA_BUILD: '1.7'
+      FEDORA_IMAGE: Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
+      FEDORA_IMAGE_SHA256: 28680fe5b371a5a82ebf43a31926e086a168e59949d03969c5093e7071f90b7f
+      SSH_PORT: '2222'
+    steps:
+      - name: Check out RustD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Check out RustD-Resolved
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: SisyphusAeolides/rustd-resolved
+          path: rustd-resolved
+          fetch-depth: 0
+
+      - name: Bind resolver checkout to RustD pin
+        shell: bash
+        run: |
+          set -euo pipefail
+          pinned="$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)"
+          [[ $pinned =~ ^[0-9a-f]{40}$ ]]
+          git -C rustd-resolved fetch origin "$pinned"
+          git -C rustd-resolved checkout --detach "$pinned"
+          test "$(git -C rustd-resolved rev-parse HEAD)" = "$pinned"
+
+      - name: Install VM host tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            cloud-image-utils curl openssh-client qemu-system-x86 qemu-utils socat
+          qemu-system-x86_64 --version
+          qemu-img --version
+
+      - name: Build exact Fedora RPM set in Fedora 44
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            fedora:44 \
+            bash -lc '
+              set -euo pipefail
+              dnf -y install \
+                git-core findutils make rpm-build rpmdevtools createrepo_c dnf-plugins-core \
+                selinux-policy selinux-policy-devel policycoreutils-devel bzip2 \
+                gcc gcc-gfortran python3 cargo rust pkgconf-pkg-config \
+                dbus-devel pam-devel json-c-devel openssl-devel liburing-devel \
+                tar gzip systemd-libs
+              git config --global --add safe.directory /work
+              git config --global --add safe.directory /work/rustd-resolved
+              RUSTD_RESOLVED_SOURCE_ROOT=/work/rustd-resolved scripts/build-fedora-rpms.sh
+            '
+          test -s target/fedora-rpms/manifest.txt
+          grep -Fxq "rustd_sha=$(git rev-parse HEAD)" target/fedora-rpms/manifest.txt
+          grep -Fxq "resolved_sha=$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)" target/fedora-rpms/manifest.txt
+          ls -lh target/fedora-rpms/*.rpm
+
+      - name: Record source ABI closure state
+        id: abi
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -r certification/final-abi-closure-latest.txt ]] \
+             && grep -Fxq 'status=pass' certification/final-abi-closure-latest.txt \
+             && grep -Fxq 'required=184' certification/final-abi-closure-latest.txt \
+             && grep -Fxq 'supported=184' certification/final-abi-closure-latest.txt \
+             && grep -Fxq 'unsupported=0' certification/final-abi-closure-latest.txt \
+             && grep -Fxq 'systemd_headers=none' certification/final-abi-closure-latest.txt \
+             && grep -Fxq 'systemd_runtime_link=none' certification/final-abi-closure-latest.txt; then
+            echo 'closed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'closed=false' >> "$GITHUB_OUTPUT"
+            echo 'ABI closure is not yet release-green; VM testing will still run to expose independent Fedora blockers.'
+          fi
+
+      - name: Download and verify Fedora Cloud image
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://download.fedoraproject.org/pub/fedora/linux/releases/${FEDORA_RELEASE}/Cloud/x86_64/images/${FEDORA_IMAGE}"
+          curl --fail --location --retry 5 --retry-delay 3 --output "$RUNNER_TEMP/$FEDORA_IMAGE" "$url"
+          printf '%s  %s\n' "$FEDORA_IMAGE_SHA256" "$RUNNER_TEMP/$FEDORA_IMAGE" | sha256sum --check --strict
+          qemu-img info "$RUNNER_TEMP/$FEDORA_IMAGE"
+          cp --reflink=auto "$RUNNER_TEMP/$FEDORA_IMAGE" "$RUNNER_TEMP/fedora-rustd.qcow2"
+          qemu-img resize "$RUNNER_TEMP/fedora-rustd.qcow2" +4G
+
+      - name: Create ephemeral cloud-init access
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/rustd-ci-key"
+          pubkey="$(cat "$RUNNER_TEMP/rustd-ci-key.pub")"
+          cat > "$RUNNER_TEMP/user-data" <<EOF
+          #cloud-config
+          users:
+            - name: rustdci
+              groups: [wheel]
+              shell: /bin/bash
+              sudo: ['ALL=(ALL) NOPASSWD:ALL']
+              ssh_authorized_keys:
+                - ${pubkey}
+          ssh_pwauth: false
+          disable_root: true
+          growpart:
+            mode: auto
+            devices: ['/']
+          resize_rootfs: true
+          runcmd:
+            - [sh, -c, 'touch /var/tmp/rustd-cloud-ready']
+          EOF
+          cat > "$RUNNER_TEMP/meta-data" <<'EOF'
+          instance-id: rustd-fedora-44-ci
+          local-hostname: rustd-fedora-ci
+          EOF
+          cloud-localds "$RUNNER_TEMP/seed.img" "$RUNNER_TEMP/user-data" "$RUNNER_TEMP/meta-data"
+
+      - name: Stage cutover in a real Fedora guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          serial="$RUNNER_TEMP/fedora-precutover-serial.log"
+          monitor="$RUNNER_TEMP/fedora-precutover-monitor.sock"
+          rm -f "$monitor"
+          if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
+            accel=kvm
+            cpu=host
+          else
+            accel=tcg
+            cpu=max
+          fi
+          qemu-system-x86_64 \
+            -machine "q35,accel=$accel" \
+            -cpu "$cpu" \
+            -smp 2 \
+            -m 4096 \
+            -drive "file=$RUNNER_TEMP/fedora-rustd.qcow2,if=virtio,format=qcow2,cache=writeback" \
+            -drive "file=$RUNNER_TEMP/seed.img,if=virtio,format=raw,readonly=on" \
+            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+            -device virtio-net-pci,netdev=net0 \
+            -display none \
+            -serial "file:$serial" \
+            -monitor "unix:$monitor,server,nowait" &
+          qemu_pid=$!
+          printf '%s\n' "$qemu_pid" > "$RUNNER_TEMP/qemu-precutover.pid"
+
+          ssh_cmd=(ssh -i "$RUNNER_TEMP/rustd-ci-key" -p "$SSH_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=5 rustdci@127.0.0.1)
+          ready=0
+          for _ in $(seq 1 180); do
+            if "${ssh_cmd[@]}" 'test -e /var/tmp/rustd-cloud-ready' >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            if ! kill -0 "$qemu_pid" 2>/dev/null; then
+              echo 'Fedora guest exited before SSH became ready' >&2
+              tail -n 240 "$serial" >&2 || true
+              exit 1
+            fi
+            sleep 2
+          done
+          [[ $ready == 1 ]] || { tail -n 240 "$serial" >&2 || true; exit 1; }
+
+          "${ssh_cmd[@]}" 'set -e; cat /etc/fedora-release; test "$(cat /proc/1/comm)" = systemd; getenforce; dnf --version | head -n1; df -h /'
+          "${ssh_cmd[@]}" 'sudo mkdir -p /var/tmp/rustd-rpms && sudo chown rustdci:rustdci /var/tmp/rustd-rpms'
+          tar -C target/fedora-rpms -cf - . | "${ssh_cmd[@]}" 'tar -C /var/tmp/rustd-rpms -xf -'
+          "${ssh_cmd[@]}" 'sudo dnf -y install createrepo_c dracut && sudo createrepo_c /var/tmp/rustd-rpms'
+
+          "${ssh_cmd[@]}" 'rpm -qa --qf "%{NAME}\n" | sort > /var/tmp/packages-before.txt; rpm -q --whatrequires systemd 2>/dev/null | sort -u > /var/tmp/systemd-consumers-before.txt || true'
+          "${ssh_cmd[@]}" 'set -euo pipefail; sudo dnf -y --repofrompath=rustd,file:///var/tmp/rustd-rpms --setopt=rustd.gpgcheck=0 install rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux --allowerasing'
+          "${ssh_cmd[@]}" 'set -euo pipefail; sudo dnf -q check; if rpm -qa --qf "%{NAME}\n" | grep -Eq "^systemd($|-)"; then rpm -qa --qf "%{NAME}-%{EVR}.%{ARCH}\n" | grep "^systemd" >&2; exit 1; fi'
+          "${ssh_cmd[@]}" 'set -euo pipefail; rpm -q rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux kernel-core NetworkManager openssh-server dbus-daemon selinux-policy-targeted; test "$(rpm -qf --qf "%{NAME}\n" /usr/sbin/init)" = rustd; test "$(rpm -qf --qf "%{NAME}\n" /usr/lib64/libsystemd.so.0)" = rustd-compat-libs; test "$(rpm -qf --qf "%{NAME}\n" /usr/lib64/libudev.so.1)" = rustd-compat-libs'
+
+          # The converted machine is not certifiable if its boot image still
+          # contains executable code from the removed implementation.
+          "${ssh_cmd[@]}" 'set -euo pipefail; kernel=$(ls -1 /usr/lib/modules | sort -V | tail -1); sudo dracut --force "/boot/initramfs-${kernel}.img" "$kernel"; sudo lsinitrd "/boot/initramfs-${kernel}.img" > /var/tmp/rustd-lsinitrd.txt; if grep -E "usr/lib/systemd/(systemd|systemd-udevd|systemd-journald|systemd-resolved)([[:space:]]|$)" /var/tmp/rustd-lsinitrd.txt; then echo "removed implementation remains in initramfs" >&2; exit 1; fi'
+
+          "${ssh_cmd[@]}" 'sudo sync'
+          printf 'system_powerdown\n' | socat - "UNIX-CONNECT:$monitor"
+          for _ in $(seq 1 120); do
+            kill -0 "$qemu_pid" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$qemu_pid" 2>/dev/null; then
+            echo 'Fedora guest did not shut down after ACPI power event' >&2
+            tail -n 240 "$serial" >&2 || true
+            kill "$qemu_pid" || true
+            exit 1
+          fi
+          wait "$qemu_pid" || true
+
+      - name: Cold boot converted Fedora three times
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
+            accel=kvm
+            cpu=host
+          else
+            accel=tcg
+            cpu=max
+          fi
+          ssh_cmd=(ssh -i "$RUNNER_TEMP/rustd-ci-key" -p "$SSH_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=5 rustdci@127.0.0.1)
+
+          for attempt in 1 2 3; do
+            serial="$RUNNER_TEMP/fedora-rustd-boot-${attempt}.log"
+            monitor="$RUNNER_TEMP/fedora-rustd-monitor-${attempt}.sock"
+            rm -f "$monitor"
+            qemu-system-x86_64 \
+              -machine "q35,accel=$accel" \
+              -cpu "$cpu" \
+              -smp 2 \
+              -m 4096 \
+              -drive "file=$RUNNER_TEMP/fedora-rustd.qcow2,if=virtio,format=qcow2,cache=writeback" \
+              -drive "file=$RUNNER_TEMP/seed.img,if=virtio,format=raw,readonly=on" \
+              -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${SSH_PORT}-:22" \
+              -device virtio-net-pci,netdev=net0 \
+              -display none \
+              -serial "file:$serial" \
+              -monitor "unix:$monitor,server,nowait" &
+            qemu_pid=$!
+
+            ready=0
+            for _ in $(seq 1 180); do
+              if "${ssh_cmd[@]}" 'true' >/dev/null 2>&1; then
+                ready=1
+                break
+              fi
+              if ! kill -0 "$qemu_pid" 2>/dev/null; then
+                echo "converted Fedora boot $attempt exited before SSH" >&2
+                tail -n 300 "$serial" >&2 || true
+                exit 1
+              fi
+              sleep 2
+            done
+            [[ $ready == 1 ]] || { tail -n 300 "$serial" >&2 || true; kill "$qemu_pid" || true; exit 1; }
+
+            "${ssh_cmd[@]}" 'set -euo pipefail; test "$(readlink -f /proc/1/exe)" = /usr/lib/rustd/rustd; test "$(getenforce)" = Enforcing; sudo dnf -q check; if rpm -qa --qf "%{NAME}\n" | grep -Eq "^systemd($|-)"; then exit 1; fi; rustctl --quiet is-active dbus.service; rustctl --quiet is-active NetworkManager.service; rustctl --quiet is-active sshd.service; rustctl --quiet is-active rustd-resolved.service; getent hosts localhost >/dev/null; getent ahosts fedoraproject.org >/dev/null; rustd-resolvectl status >/dev/null; sudo dnf -q makecache'
+
+            if [[ $attempt -eq 1 ]]; then
+              "${ssh_cmd[@]}" 'set -euo pipefail; test "$(rpm -qf --qf "%{NAME}\n" /usr/bin/systemctl)" = rustd-fedora-compat; systemctl is-active sshd.service >/dev/null; udevadm settle --timeout=30; rustctl list-units >/dev/null'
+            fi
+
+            "${ssh_cmd[@]}" 'sudo rustctl poweroff'
+            for _ in $(seq 1 120); do
+              kill -0 "$qemu_pid" 2>/dev/null || break
+              sleep 1
+            done
+            if kill -0 "$qemu_pid" 2>/dev/null; then
+              echo "RustD poweroff failed on Fedora boot $attempt" >&2
+              tail -n 300 "$serial" >&2 || true
+              kill "$qemu_pid" || true
+              exit 1
+            fi
+            wait "$qemu_pid" || true
+          done
+
+      - name: Require complete source ABI closure
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          test '${{ steps.abi.outputs.closed }}' = true
+
+      - name: Upload Fedora VM certificate logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora-44-full-vm-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/fedora-precutover-serial.log
+            ${{ runner.temp }}/fedora-rustd-boot-*.log
+            target/fedora-rpms/manifest.txt
+          if-no-files-found: warn
+          retention-days: 14
