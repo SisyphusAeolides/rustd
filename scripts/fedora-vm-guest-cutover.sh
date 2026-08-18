@@ -9,6 +9,7 @@ RPM_REPO=${RUSTD_RPM_REPO:-/var/tmp/rustd-rpms}
 
 cat /etc/fedora-release
 test "$(cat /proc/1/comm)" = systemd
+test "$(rpm -qf --qf '%{NAME}\n' /usr/sbin/init)" = systemd
 getenforce
 
 dnf -y install createrepo_c dracut authselect
@@ -16,23 +17,46 @@ createrepo_c "$RPM_REPO"
 rpm -qa --qf '%{NAME}\n' | sort > /var/tmp/packages-before.txt
 rpm -q --whatrequires systemd 2>/dev/null | sort -u > /var/tmp/systemd-consumers-before.txt || true
 
-dnf -y \
-    --repofrompath=rustd,"file://$RPM_REPO" \
-    --setopt=rustd.gpgcheck=0 \
-    install rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
-    --allowerasing
+repo_args=(
+    --repofrompath=rustd,"file://$RPM_REPO"
+    --setopt=rustd.gpgcheck=0
+)
 
-# Convert PAM and NSS while systemd-pam is still present on disk, so there is
-# never a point where Fedora's active authentication stack references a missing
-# session module.
+# Stage only packages that do not conflict with the running Fedora manager.
+# This makes pam_rustd and libnss_rustd_dns available while the original PAM,
+# NSS, resolver and PID 1 packages are still installed and recoverable.
+dnf -y "${repo_args[@]}" install rustd rustd-resolved-nss
+rpm -q systemd systemd-pam systemd-resolved rustd rustd-resolved-nss
+test "$(cat /proc/1/comm)" = systemd
+test "$(rpm -qf --qf '%{NAME}\n' /usr/sbin/init)" = systemd
+[[ -e /usr/lib64/security/pam_systemd.so ]]
+[[ -e /usr/lib64/security/pam_rustd.so ]]
+[[ -e /usr/lib64/libnss_rustd_dns.so.2 ]]
+
+# Convert PAM and NSS before any package supplying the old session/NSS modules
+# is removed. The helper validates the generated authselect profile and creates
+# a rollback backup before activation.
 /usr/sbin/rustd-fedora-cutover
+authselect check
+grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf
+! grep -Eq '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf
+! grep -R -E -q 'pam_systemd(_home|_loadkey)?\.so' /etc/pam.d
+
+# Fedora protects the running manager from ordinary DNF removals. The explicit
+# exclusive cutover disables only that package-protection list for this
+# disposable certification transaction; the running kernel remains protected.
+dnf -y \
+    "${repo_args[@]}" \
+    --setopt=protected_packages= \
+    install rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
+    --allowerasing
 
 # The package-level compatibility capabilities are now supplied by RustD. Erase
 # any residual systemd subpackages explicitly instead of allowing weak-dep
 # autoremove to prune unrelated Fedora packages.
 mapfile -t residual < <(rpm -qa --qf '%{NAME}\n' | grep -E '^systemd($|-)' | sort -u || true)
 if ((${#residual[@]})); then
-    dnf -y remove --no-autoremove "${residual[@]}"
+    dnf -y --setopt=protected_packages= remove --no-autoremove "${residual[@]}"
 fi
 
 dnf -q check
@@ -42,10 +66,11 @@ if rpm -qa --qf '%{NAME}\n' | grep -Eq '^systemd($|-)'; then
     exit 1
 fi
 
-rpm -q rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
+rpm -q rustd rustd-resolved rustd-resolved-nss rustd-compat-libs rustd-fedora-compat rustd-selinux \
     kernel-core NetworkManager openssh-server dbus-daemon selinux-policy-targeted authselect
 
-test "$(rpm -qf --qf '%{NAME}\n' /usr/sbin/init)" = rustd
+test "$(rpm -qf --qf '%{NAME}\n' /usr/sbin/init)" = rustd-fedora-compat
+test "$(readlink -f /usr/sbin/init)" = /usr/lib/rustd/rustd
 test "$(rpm -qf --qf '%{NAME}\n' /usr/lib64/libsystemd.so.0)" = rustd-compat-libs
 test "$(rpm -qf --qf '%{NAME}\n' /usr/lib64/libudev.so.1)" = rustd-compat-libs
 test "$(rpm -qf --qf '%{NAME}\n' /usr/lib/systemd/systemd-udevd)" = rustd-fedora-compat
