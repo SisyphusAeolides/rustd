@@ -29,7 +29,7 @@ for feature in "${features[@]}"; do
 done
 
 if [[ $profile == custom/rustd ]]; then
-    grep -Eq '^hosts:.*(^|[[:space:]])rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
+    grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
         || fail 'custom/rustd is active but rustd_dns is missing from hosts NSS configuration'
     ! grep -R -E -q 'pam_systemd(_home)?\.so' /etc/pam.d \
         || fail 'custom/rustd is active but a systemd PAM module is still referenced'
@@ -96,12 +96,12 @@ nss.write_text("".join(out))
 PY
 
 # Validate the generated configuration before authselect changes /etc.
-test_args=(custom/rustd "${features[@]}")
-authselect test --nsswitch "${test_args[@]}" > /tmp/rustd-authselect-nss.$$
-authselect test --system-auth "${test_args[@]}" > /tmp/rustd-authselect-pam.$$
+test_args=("${features[@]}")
+authselect test custom/rustd --nsswitch "${test_args[@]}" > /tmp/rustd-authselect-nss.$$
+authselect test custom/rustd --system-auth "${test_args[@]}" > /tmp/rustd-authselect-pam.$$
 trap 'rm -f /tmp/rustd-authselect-nss.$$ /tmp/rustd-authselect-pam.$$' EXIT
 
-grep -Eq '^hosts:.*(^|[[:space:]])rustd_dns([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
+grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
     || fail 'generated nsswitch.conf does not contain rustd_dns'
 ! grep -E -q '(^|[[:space:]])(myhostname|resolve|systemd)([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
     || fail 'generated nsswitch.conf still references a removed NSS backend'
@@ -114,9 +114,9 @@ backup="rustd-cutover-$(date -u +%Y%m%dT%H%M%SZ)"
 authselect select custom/rustd "${features[@]}" --force --backup="$backup"
 authselect check >/dev/null || fail 'authselect rejected the activated RustD profile'
 
-grep -Eq '^hosts:.*(^|[[:space:]])rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
+grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
     || fail 'active nsswitch.conf does not contain rustd_dns'
-! grep -E -q '^hosts:.*(^|[[:space:]])(myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
+! grep -E -q '^hosts:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
     || fail 'active hosts NSS configuration still references a removed backend'
 grep -R -Fq 'pam_rustd.so' /etc/pam.d \
     || fail 'active PAM configuration does not contain pam_rustd.so'
