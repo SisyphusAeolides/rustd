@@ -56,9 +56,9 @@ make_source() {
     (
         cd "$tree"
         # Vendor registry dependencies into a dedicated directory. Existing
-        # project-owned vendor trees (for example patched zbus macros) remain
-        # part of the source archive and Cargo's generated source replacement
-        # config points only at vendor-rpm for registry crates.
+        # project-owned vendor trees remain part of the source archive and
+        # Cargo's generated source replacement config points only at vendor-rpm
+        # for registry crates.
         cargo vendor --locked vendor-rpm > /tmp/rustd-cargo-vendor-config.$$
         mkdir -p .cargo
         cp /tmp/rustd-cargo-vendor-config.$$ .cargo/config.toml
@@ -79,8 +79,13 @@ cp "$SOURCE_ROOT/dist/fedora/rustd-compat-libs.spec" "$TOPDIR/SPECS/"
 cp "$SOURCE_ROOT/dist/fedora/rustd-selinux.spec" "$TOPDIR/SPECS/"
 cp "$RESOLVED_ROOT/dist/fedora/rustd-resolved.spec" "$TOPDIR/SPECS/"
 
-systemd_evr="$(rpm -q --qf '%{EVR}' systemd-libs 2>/dev/null || true)"
-[[ -n "$systemd_evr" ]] || fail "systemd-libs must be installed while building the replacement RPM metadata"
+systemd_evr="$(rpm -q --qf '%{EVR}' systemd 2>/dev/null || true)"
+systemd_libs_evr="$(rpm -q --qf '%{EVR}' systemd-libs 2>/dev/null || true)"
+systemd_udev_evr="$(rpm -q --qf '%{EVR}' systemd-udev 2>/dev/null || true)"
+[[ -n "$systemd_evr" && -n "$systemd_libs_evr" && -n "$systemd_udev_evr" ]] \
+    || fail "systemd, systemd-libs, and systemd-udev must be installed while building replacement RPM metadata"
+[[ "$systemd_evr" == "$systemd_libs_evr" && "$systemd_evr" == "$systemd_udev_evr" ]] \
+    || fail "Fedora systemd capability EVRs differ: manager=$systemd_evr libs=$systemd_libs_evr udev=$systemd_udev_evr"
 
 rpmbuild_common=(--define "_topdir $TOPDIR")
 rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd.spec"
@@ -103,7 +108,9 @@ manifest="$OUTPUT/manifest.txt"
     printf 'resolved_sha=%s\n' "$resolved_sha"
     printf 'rustd_version=%s\n' "$rustd_version"
     printf 'resolved_version=%s\n' "$resolved_version"
-    printf 'systemd_libraries_reference_evr=%s\n' "$systemd_evr"
+    printf 'systemd_reference_evr=%s\n' "$systemd_evr"
+    printf 'systemd_libraries_reference_evr=%s\n' "$systemd_libs_evr"
+    printf 'systemd_udev_reference_evr=%s\n' "$systemd_udev_evr"
     printf 'source.rustd.sha256=%s\n' "$(sha256sum "$rustd_tar" | awk '{print $1}')"
     printf 'source.resolved.sha256=%s\n' "$(sha256sum "$resolved_tar" | awk '{print $1}')"
     while IFS= read -r rpm_path; do
