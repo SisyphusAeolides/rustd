@@ -4,7 +4,29 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <unistd.h>
 #include <systemd/sd-bus.h>
+
+static int async_called;
+static int async_saw_dbus;
+
+static int list_names_callback(sd_bus_message *reply, void *userdata, sd_bus_error *ret_error) {
+    const char *name = NULL;
+    int *marker = userdata;
+    (void)ret_error;
+    assert(reply != NULL);
+    assert(marker != NULL);
+    assert(sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "s") > 0);
+    while (sd_bus_message_read(reply, "s", &name) > 0) {
+        assert(name != NULL);
+        if (strcmp(name, "org.freedesktop.DBus") == 0)
+            async_saw_dbus = 1;
+    }
+    assert(sd_bus_message_exit_container(reply) > 0);
+    *marker = 1;
+    async_called = 1;
+    return 1;
+}
 
 static void test_local_message_codec(void) {
     sd_bus *bus = NULL;
@@ -97,14 +119,71 @@ static void test_real_session_bus(void) {
         assert(found_dbus);
     }
     assert(sd_bus_message_exit_container(reply) > 0);
-
     sd_bus_message_unref(reply);
+    reply = NULL;
+
+    /* Remote D-Bus errors must become errno-style failures with sd_bus_error. */
+    r = sd_bus_call_method(
+        bus,
+        "org.freedesktop.DBus",
+        "/org/freedesktop/DBus",
+        "org.freedesktop.DBus",
+        "DefinitelyNotAMethod",
+        &error,
+        &reply,
+        NULL);
+    assert(r < 0);
+    assert(error.name != NULL);
+    assert(sd_bus_error_get_errno(&error) > 0);
     sd_bus_error_free(&error);
+    if (reply) {
+        sd_bus_message_unref(reply);
+        reply = NULL;
+    }
+
+    sd_bus_unref(bus);
+}
+
+static void test_async_session_bus(void) {
+    sd_bus *bus = NULL;
+    sd_bus_slot *slot = NULL;
+    sd_bus_message *call = NULL;
+    int callback_marker = 0;
+    int r;
+
+    async_called = 0;
+    async_saw_dbus = 0;
+    assert(sd_bus_open_user(&bus) == 0);
+    assert(sd_bus_message_new_method_call(
+               bus, &call,
+               "org.freedesktop.DBus",
+               "/org/freedesktop/DBus",
+               "org.freedesktop.DBus",
+               "ListNames") == 0);
+    assert(sd_bus_call_async(bus, &slot, call, list_names_callback,
+                             &callback_marker, 5U * 1000U * 1000U) == 0);
+    assert(slot != NULL);
+    assert(sd_bus_slot_ref(slot) == slot);
+    assert(sd_bus_slot_unref(slot) == NULL);
+
+    for (int i = 0; i < 500 && !async_called; ++i) {
+        r = sd_bus_process(bus, NULL);
+        assert(r >= 0);
+        if (!async_called)
+            usleep(10000);
+    }
+    assert(async_called);
+    assert(callback_marker == 1);
+    assert(async_saw_dbus);
+
+    sd_bus_slot_unref(slot);
+    sd_bus_message_unref(call);
     sd_bus_unref(bus);
 }
 
 int main(void) {
     test_local_message_codec();
     test_real_session_bus();
+    test_async_session_bus();
     return 0;
 }
