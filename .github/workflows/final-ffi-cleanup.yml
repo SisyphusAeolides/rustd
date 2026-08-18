@@ -1,5 +1,5 @@
 name: Final native FFI cleanup
-# run now
+# rerun with Makefile cleanup
 
 defaults:
   run:
@@ -48,6 +48,14 @@ jobs:
               s = s.replace(line, '')
           p.write_text(s)
 
+          p = Path('Makefile')
+          s = p.read_text()
+          s = s.replace('\t$(CC) $(CPPFLAGS) $(CFLAGS) -c ffi/interface.c -o build/interface.o\n', '')
+          s = s.replace(
+              'build/test_native.o build/native.o build/notify.o build/interface.o build/cgroup.o',
+              'build/test_native.o build/native.o build/notify.o build/cgroup.o')
+          p.write_text(s)
+
           p = Path('ffi/signal.c')
           s = p.read_text()
           s = s.replace(
@@ -63,7 +71,8 @@ jobs:
           cargo check --all-targets --all-features --locked
           make check-native
           ! test -e ffi/interface.c
-          ! grep -Fq 'ffi/interface.c' build.rs
+          ! grep -Fq 'ffi/interface.c' build.rs Makefile
+          ! grep -Fq 'interface.o' Makefile
           ! grep -Fq 'Stub —' ffi/cgroup.c ffi/signal.c
 
       - name: Publish result
@@ -75,7 +84,9 @@ jobs:
             git rebase origin/main
             rm -f .github/workflows/ffi-cleanup.yml \
                   .github/workflows/final-ffi-cleanup.yml
-            git add -A build.rs ffi .github/workflows/ffi-cleanup.yml .github/workflows/final-ffi-cleanup.yml
+            rm -f certification/ffi-cleanup-diagnostic.txt
+            git add -A build.rs Makefile ffi certification/ffi-cleanup-diagnostic.txt \
+              .github/workflows/ffi-cleanup.yml .github/workflows/final-ffi-cleanup.yml
             git diff --cached --check
             git config user.name 'Kenny Glowner'
             git config user.email 'SisyphusAeolides@pm.me'
