@@ -3,6 +3,7 @@
 
 use clap::{Parser, ValueEnum};
 use rustd::udev::{apply_rules, load_rules, persist_device, Device, Rule};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};
 use std::mem;
@@ -11,6 +12,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const CONTROL_SOCKET: &str = "/run/udev/control";
+const QUEUE_FILE: &str = "/run/udev/queue";
+const LAST_SEQNUM_FILE: &str = "/run/udev/last-seqnum";
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum ResolveNames {
@@ -49,13 +52,18 @@ fn main() -> anyhow::Result<()> {
         eprintln!("rustd-udevd: failed to load rules: {error}");
         Vec::new()
     });
+    let mut global_properties = BTreeMap::new();
     let running = AtomicBool::new(true);
     let stopped = AtomicBool::new(false);
     while running.load(Ordering::Relaxed) {
         let mut fds = [
             libc::pollfd {
                 fd: netlink.as_raw_fd(),
-                events: libc::POLLIN,
+                events: if stopped.load(Ordering::Relaxed) {
+                    0
+                } else {
+                    libc::POLLIN
+                },
                 revents: 0,
             },
             libc::pollfd {
@@ -73,7 +81,13 @@ fn main() -> anyhow::Result<()> {
         }
         if fds[1].revents & libc::POLLIN != 0 {
             if let Ok((stream, _)) = listener.accept() {
-                handle_control(stream, &mut rules, &running, &stopped);
+                handle_control(
+                    stream,
+                    &mut rules,
+                    &mut global_properties,
+                    &running,
+                    &stopped,
+                );
             }
         }
         if fds[0].revents & libc::POLLIN != 0 && !stopped.load(Ordering::Relaxed) {
@@ -93,8 +107,24 @@ fn main() -> anyhow::Result<()> {
             // Kernel-originated uevents are sent by the netlink kernel peer.
             // Do not let another process on the netlink bus manufacture /dev.
             if count > 0 && sender.nl_pid == 0 {
-                if let Some(mut device) = Device::from_uevent(&buffer[..count as usize]) {
-                    process_device(&rules, &mut device, arguments.dry_run);
+                let event = &buffer[..count as usize];
+                let sequence = uevent_sequence(event);
+                if let Some(mut device) = Device::from_uevent(event) {
+                    process_device(
+                        &rules,
+                        &global_properties,
+                        &mut device,
+                        arguments.dry_run,
+                    );
+                }
+                // Publish the watermark only after this event has either been
+                // fully processed or deliberately rejected by the parser.
+                if let Some(sequence) = sequence {
+                    if let Err(error) = mark_processed_sequence(sequence) {
+                        eprintln!(
+                            "rustd-udevd: failed to publish processed uevent sequence {sequence}: {error}"
+                        );
+                    }
                 }
             }
         }
@@ -134,10 +164,18 @@ fn daemonize() -> io::Result<()> {
     Ok(())
 }
 
-fn process_device(rules: &[Rule], device: &mut Device, dry_run: bool) {
-    // The queue file is the compatibility contract used by udevadm settle.
-    if fs::write("/run/udev/queue", device.devpath.as_bytes()).is_err() {
-        return;
+fn process_device(
+    rules: &[Rule],
+    global_properties: &BTreeMap<String, String>,
+    device: &mut Device,
+    dry_run: bool,
+) {
+    // Keep the traditional queue marker for compatibility/debugging, but
+    // udevadm settle uses sequence watermarks so a gap between two events
+    // cannot be mistaken for an empty queue.
+    let queue_written = fs::write(QUEUE_FILE, device.devpath.as_bytes()).is_ok();
+    for (key, value) in global_properties {
+        device.properties.insert(key.clone(), value.clone());
     }
     apply_rules(rules, device);
     if !dry_run {
@@ -145,7 +183,22 @@ fn process_device(rules: &[Rule], device: &mut Device, dry_run: bool) {
             eprintln!("rustd-udevd: failed to persist {}: {error}", device.devpath);
         }
     }
-    let _ = fs::remove_file("/run/udev/queue");
+    if queue_written {
+        let _ = fs::remove_file(QUEUE_FILE);
+    }
+}
+
+fn uevent_sequence(bytes: &[u8]) -> Option<u64> {
+    bytes
+        .split(|byte| *byte == 0)
+        .filter_map(|field| std::str::from_utf8(field).ok())
+        .find_map(|field| field.strip_prefix("SEQNUM=")?.parse().ok())
+}
+
+fn mark_processed_sequence(sequence: u64) -> io::Result<()> {
+    let temporary = format!("{LAST_SEQNUM_FILE}.tmp");
+    fs::write(&temporary, format!("{sequence}\n"))?;
+    fs::rename(temporary, LAST_SEQNUM_FILE)
 }
 
 fn bind_control_socket() -> io::Result<UnixListener> {
@@ -187,27 +240,45 @@ fn open_uevent_socket() -> io::Result<OwnedFd> {
 fn handle_control(
     mut stream: UnixStream,
     rules: &mut Vec<Rule>,
+    global_properties: &mut BTreeMap<String, String>,
     running: &AtomicBool,
     stopped: &AtomicBool,
 ) {
     let mut bytes = [0_u8; 256];
     let count = stream.read(&mut bytes).unwrap_or(0);
-    let message = String::from_utf8_lossy(&bytes[..count]).to_ascii_lowercase();
-    // rustudevadm sends these newline commands. Also recognize words in the
-    // fixed-size systemd control packet to make the socket safely useful to
-    // simple third-party clients.
-    if message.contains("exit") {
+    let raw = String::from_utf8_lossy(&bytes[..count]);
+    let message = raw.trim();
+    let command = message.to_ascii_lowercase();
+
+    if let Some(property) = message.strip_prefix("property=") {
+        let Some((key, value)) = property.split_once('=') else {
+            let _ = std::io::Write::write_all(&mut stream, b"ERR\n");
+            return;
+        };
+        if key.is_empty() {
+            let _ = std::io::Write::write_all(&mut stream, b"ERR\n");
+            return;
+        }
+        if value.is_empty() {
+            global_properties.remove(key);
+        } else {
+            global_properties.insert(key.to_string(), value.to_string());
+        }
+    } else if command == "exit" {
         running.store(false, Ordering::Relaxed);
-    } else if message.contains("reload") {
+    } else if command == "reload" {
         match load_rules() {
             Ok(new_rules) => *rules = new_rules,
             Err(error) => eprintln!("rustd-udevd: reload failed: {error}"),
         }
-    } else if message.contains("stop") {
+    } else if command == "stop" {
         stopped.store(true, Ordering::Relaxed);
-    } else if message.contains("start") {
+    } else if command == "start" {
         stopped.store(false, Ordering::Relaxed);
     }
+    // Unknown compatibility control commands are acknowledged as no-ops. That
+    // keeps synchronous RustD processing honest while allowing harmless
+    // log-level/ping tuning requests used by early userspace.
     let _ = std::io::Write::write_all(&mut stream, b"OK\n");
 }
 
@@ -225,5 +296,11 @@ mod tests {
         .expect("dracut udev daemon arguments must parse");
         assert!(args.daemon);
         assert!(matches!(args.resolve_names, Some(ResolveNames::Never)));
+    }
+
+    #[test]
+    fn extracts_kernel_uevent_sequence() {
+        let event = b"add@/devices/test\0ACTION=add\0DEVPATH=/devices/test\0SEQNUM=4242\0";
+        assert_eq!(uevent_sequence(event), Some(4242));
     }
 }
