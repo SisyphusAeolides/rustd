@@ -1,0 +1,7 @@
+schema=rustd-sd-bus-behavior-v1
+status=pass
+tested_sha=d2a2ada1dc44e26920c0ecf151e8b0b3e40bf136
+behavior_outcome=success
+backend=libdbus-1
+session_bus=end-to-end
+message_codec=recursive
