@@ -1,0 +1,55 @@
+name: Land compatibility event engine
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-compat-event-engine.yml
+
+permissions:
+  contents: write
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Apply event compatibility engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('libs/compat/systemd.c')
+          s=p.read_text()
+          s=s.replace('#include <stdio.h>\n', '#include <stdio.h>\n#include <poll.h>\n#include <time.h>\n')
+          old='''struct sd_device_monitor {\n    unsigned refs;\n    rustd_device_ctx *ctx;\n    rustd_device_monitor *monitor;\n};'''
+          new='''struct sd_event;\n\nstruct sd_device_monitor {\n    unsigned refs;\n    rustd_device_ctx *ctx;\n    rustd_device_monitor *monitor;\n    struct sd_event *event;\n    int (*callback)(struct sd_device_monitor *, struct sd_device *, void *);\n    void *callback_userdata;\n};'''
+          if old not in s: raise SystemExit('monitor struct preimage missing')
+          s=s.replace(old,new,1)
+          old='''int sd_device_monitor_start(struct sd_device_monitor *monitor, void *callback, void *userdata) {\n    (void)callback;\n    (void)userdata;\n    if (!monitor)\n        return -EINVAL;\n    return rustd_device_monitor_enable_receiving(monitor->monitor);\n}\n\n/* sd_event stubs used by a few desktop consumers; fail closed. */\nstruct sd_event;\n\nstruct sd_event *sd_device_monitor_get_event(struct sd_device_monitor *monitor) {\n    (void)monitor;\n    return NULL;\n}\n\nint sd_event_add_time_relative(\n    struct sd_event *event, void **ret, int clock, uint64_t usec, uint64_t accuracy,\n    void *callback, void *userdata) {\n    (void)event;\n    (void)ret;\n    (void)clock;\n    (void)usec;\n    (void)accuracy;\n    (void)callback;\n    (void)userdata;\n    return -ENOSYS;\n}\n\nint sd_event_exit(struct sd_event *event, int code) {\n    (void)event;\n    (void)code;\n    return -ENOSYS;\n}\n\nint sd_event_loop(struct sd_event *event) {\n    (void)event;\n    return -ENOSYS;\n}\n'''
+          new='''struct sd_event_source {\n    uint64_t deadline_usec;\n    int (*callback)(struct sd_event_source *, uint64_t, void *);\n    void *userdata;\n    struct sd_event_source *next;\n};\n\nstruct sd_event {\n    struct sd_device_monitor *monitor;\n    struct sd_event_source *timers;\n    int exit_requested;\n    int exit_code;\n};\n\nstatic uint64_t rustd_event_monotonic_usec(void) {\n    struct timespec ts;\n    if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0)\n        return 0;\n    return (uint64_t)ts.tv_sec * UINT64_C(1000000) + (uint64_t)ts.tv_nsec / UINT64_C(1000);\n}\n\nint sd_device_monitor_start(struct sd_device_monitor *monitor, void *callback, void *userdata) {\n    if (!monitor || !callback)\n        return -EINVAL;\n    monitor->callback = (int (*)(struct sd_device_monitor *, struct sd_device *, void *))callback;\n    monitor->callback_userdata = userdata;\n    return rustd_device_monitor_enable_receiving(monitor->monitor);\n}\n\nstruct sd_event *sd_device_monitor_get_event(struct sd_device_monitor *monitor) {\n    if (!monitor)\n        return NULL;\n    if (!monitor->event) {\n        monitor->event = calloc(1, sizeof(*monitor->event));\n        if (!monitor->event)\n            return NULL;\n        monitor->event->monitor = monitor;\n    }\n    return monitor->event;\n}\n\nint sd_event_add_time_relative(\n    struct sd_event *event, void **ret, int clock, uint64_t usec, uint64_t accuracy,\n    void *callback, void *userdata) {\n    struct sd_event_source *source;\n    uint64_t now;\n    (void)accuracy;\n    if (!event || !callback)\n        return -EINVAL;\n    if (clock != CLOCK_MONOTONIC && clock != CLOCK_BOOTTIME)\n        return -EOPNOTSUPP;\n    now = rustd_event_monotonic_usec();\n    if (UINT64_MAX - now < usec)\n        return -ERANGE;\n    source = calloc(1, sizeof(*source));\n    if (!source)\n        return -ENOMEM;\n    source->deadline_usec = now + usec;\n    source->callback = (int (*)(struct sd_event_source *, uint64_t, void *))callback;\n    source->userdata = userdata;\n    source->next = event->timers;\n    event->timers = source;\n    if (ret)\n        *ret = source;\n    return 0;\n}\n\nint sd_event_exit(struct sd_event *event, int code) {\n    if (!event)\n        return -EINVAL;\n    event->exit_requested = 1;\n    event->exit_code = code;\n    return 0;\n}\n\nstatic int rustd_event_dispatch_timers(struct sd_event *event, uint64_t now) {\n    struct sd_event_source **cursor = &event->timers;\n    while (*cursor) {\n        struct sd_event_source *source = *cursor;\n        if (source->deadline_usec > now) {\n            cursor = &source->next;\n            continue;\n        }\n        *cursor = source->next;\n        if (source->callback) {\n            int r = source->callback(source, now, source->userdata);\n            free(source);\n            if (r < 0)\n                return r;\n        } else {\n            free(source);\n        }\n    }\n    return 0;\n}\n\nint sd_event_loop(struct sd_event *event) {\n    if (!event)\n        return -EINVAL;\n    event->exit_requested = 0;\n    while (!event->exit_requested) {\n        struct pollfd pfd = {.fd = -1, .events = POLLIN};\n        uint64_t now = rustd_event_monotonic_usec();\n        uint64_t nearest = UINT64_MAX;\n        struct sd_event_source *source;\n        int timeout = -1;\n        int r;\n        for (source = event->timers; source; source = source->next)\n            if (source->deadline_usec < nearest)\n                nearest = source->deadline_usec;\n        if (nearest != UINT64_MAX) {\n            uint64_t delta = nearest > now ? nearest - now : 0;\n            timeout = delta / 1000U > (uint64_t)INT_MAX ? INT_MAX : (int)((delta + 999U) / 1000U);\n        }\n        if (event->monitor && event->monitor->monitor)\n            pfd.fd = rustd_device_monitor_get_fd(event->monitor->monitor);\n        r = poll(pfd.fd >= 0 ? &pfd : NULL, pfd.fd >= 0 ? 1U : 0U, timeout);\n        if (r < 0) {\n            if (errno == EINTR)\n                continue;\n            return -errno;\n        }\n        now = rustd_event_monotonic_usec();\n        r = rustd_event_dispatch_timers(event, now);\n        if (r < 0)\n            return r;\n        if (pfd.fd >= 0 && (pfd.revents & POLLIN) && event->monitor->callback) {\n            rustd_device *native = rustd_device_monitor_receive_device(event->monitor->monitor);\n            if (native) {\n                struct sd_device *device = calloc(1, sizeof(*device));\n                if (!device) {\n                    rustd_device_unref(native);\n                    return -ENOMEM;\n                }\n                device->refs = 1U;\n                device->ctx = rustd_device_ctx_ref(event->monitor->ctx);\n                device->dev = native;\n                r = event->monitor->callback(event->monitor, device, event->monitor->callback_userdata);\n                sd_device_unref(device);\n                if (r < 0)\n                    return r;\n            }\n        }\n        if (pfd.fd < 0 && !event->timers)\n            break;\n    }\n    return event->exit_code;\n}\n'''
+          if old not in s: raise SystemExit('event stub block preimage missing')
+          s=s.replace(old,new,1)
+          old='''    rustd_device_monitor_unref(monitor->monitor);\n    rustd_device_ctx_unref(monitor->ctx);\n    free(monitor);'''
+          new='''    if (monitor->event) {\n        struct sd_event_source *source = monitor->event->timers;\n        while (source) {\n            struct sd_event_source *next = source->next;\n            free(source);\n            source = next;\n        }\n        free(monitor->event);\n    }\n    rustd_device_monitor_unref(monitor->monitor);\n    rustd_device_ctx_unref(monitor->ctx);\n    free(monitor);'''
+          if old not in s: raise SystemExit('monitor unref preimage missing')
+          s=s.replace(old,new,1)
+          p.write_text(s)
+          PY
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('scripts/check-compat-closure.py')
+          s=p.read_text()
+          s=s.replace('    "sd_device_monitor_start",\n    "sd_device_monitor_get_event",\n','')
+          p.write_text(s)
+          PY
+          git diff --check
+          rm -f .github/workflows/land-compat-event-engine.yml
+          git add -A libs/compat/systemd.c scripts/check-compat-closure.py .github/workflows/land-compat-event-engine.yml
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Implement compatibility event engine'
+          git push origin HEAD:main
