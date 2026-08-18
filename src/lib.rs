@@ -26,6 +26,7 @@ pub mod ml_weave;
 pub mod mount_setup;
 pub mod native;
 pub mod notify;
+pub mod oom;
 pub mod path_unit;
 pub mod reexec_state;
 pub mod resource_control;
