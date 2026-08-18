@@ -65,7 +65,12 @@ jobs:
             dist/fedora/rustd-fedora-compat.spec
           grep -Fq 'Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}' \
             dist/fedora/rustd-fedora-compat.spec
-          grep -Fq 'Requires:       authselect' dist/fedora/rustd-fedora-compat.spec
+          grep -Fq 'Requires:       authselect' dist/fedora/rustd.spec
+          grep -Fq '%{_sbindir}/rustd-fedora-cutover' dist/fedora/rustd.spec
+          ! grep -Fq '%{_sbindir}/init' dist/fedora/rustd.spec
+          grep -Fq '%{_sbindir}/init' dist/fedora/rustd-fedora-compat.spec
+          grep -Fq 'ln -s ../lib/rustd/rustd %{buildroot}%{_sbindir}/init' \
+            dist/fedora/rustd-fedora-compat.spec
           test "$(grep -l -E '^Provides:[[:space:]]+systemd([[:space:]=]|$)' \
             dist/fedora/*.spec)" = 'dist/fedora/rustd-fedora-compat.spec'
           grep -Eq '^Provides:[[:space:]]+systemd = 1:999-1$' \
@@ -88,13 +93,13 @@ jobs:
 
           grep -Fq 'bash tests/fedora-transaction-compat.sh' \
             dist/fedora/rustd-fedora-compat.spec
-          grep -Fq 'rustd-fedora-cutover' dist/fedora/rustd-fedora-compat.spec
+          grep -Fq 'rustd-fedora-cutover' dist/fedora/rustd.spec
           grep -Fq 'authselect create-profile rustd' \
             dist/fedora/compat/rustd-fedora-cutover
           grep -Fq 'pam_rustd.so' dist/fedora/compat/rustd-fedora-cutover
           grep -Fq 'rustd_dns' dist/fedora/compat/rustd-fedora-cutover
           bash -n scripts/build-fedora-rpms.sh scripts/fedora-cutover-gate.sh \
-            dist/fedora/compat/rustd-fedora-cutover
+            scripts/fedora-vm-guest-cutover.sh dist/fedora/compat/rustd-fedora-cutover
       - name: Publish exact package contract voucher
         if: always()
         shell: bash
@@ -108,7 +113,7 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-package-contract-v4\n'
+            printf 'schema=rustd-fedora-package-contract-v5\n'
             printf 'status=%s\n' "$outcome"
             printf 'tested_sha=%s\n' "$GITHUB_SHA"
             printf 'selinux_reference_policy=compiled\n'
@@ -117,7 +122,9 @@ jobs:
             printf 'capability.systemd_udev=rustd-fedora-compat\n'
             printf 'capability.systemd_libs=rustd-compat-libs\n'
             printf 'capability_evr=equal-build-host-systemd-stack\n'
-            printf 'authselect_cutover=validated\n'
+            printf 'base_stage=nonconflicting\n'
+            printf 'init_path=exclusive-rustd-fedora-compat\n'
+            printf 'authselect_cutover=pre-exclusive-validated\n'
             if [[ "$outcome" != success ]]; then
               printf '%s\n' '--- tail ---'
               tail -n 240 /tmp/fedora-package-contract.log || true
