@@ -31,6 +31,8 @@ done
 if [[ $profile == custom/rustd ]]; then
     grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
         || fail 'custom/rustd is active but rustd_dns is missing from hosts NSS configuration'
+    ! grep -Eq '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
+        || fail 'custom/rustd is active but a removed NSS backend is still referenced'
     ! grep -R -E -q 'pam_systemd(_home)?\.so' /etc/pam.d \
         || fail 'custom/rustd is active but a systemd PAM module is still referenced'
     grep -R -Fq 'pam_rustd.so' /etc/pam.d \
@@ -70,27 +72,31 @@ if not nss.exists() or nss.is_symlink():
     raise SystemExit("custom profile does not contain an editable nsswitch.conf template")
 
 out = []
-changed = False
+hosts_changed = False
 for line in nss.read_text().splitlines(keepends=True):
-    if not re.match(r"^hosts:\s", line):
+    match_db = re.match(r"^(hosts|passwd|group|shadow):\s", line)
+    if not match_db:
         out.append(line)
         continue
+    database = match_db.group(1)
     newline = "\n" if line.endswith("\n") else ""
     body = line[:-1] if newline else line
-    # Remove backends shipped by the removed implementation together with an
-    # immediately-associated NSS action clause, then add the native RustD DNS
-    # backend immediately before the ordinary dns fallback.
-    body = re.sub(r"\s+(?:myhostname|resolve|systemd)(?:\s+\[[^]]+\])?", "", body)
-    body = re.sub(r"\s+rustd_dns(?:\s+\[[^]]+\])?", "", body)
-    match = re.search(r"\s+dns(?=\s|$)", body)
-    if match:
-        body = body[:match.start()] + " rustd_dns [!UNAVAIL=return]" + body[match.start():]
+    # Remove NSS backends shipped by the removed implementation together with
+    # an immediately-associated action clause.
+    if database == "hosts":
+        body = re.sub(r"\s+(?:myhostname|resolve|systemd)(?:\s+\[[^]]+\])?", "", body)
+        body = re.sub(r"\s+rustd_dns(?:\s+\[[^]]+\])?", "", body)
+        dns = re.search(r"\s+dns(?=\s|$)", body)
+        if dns:
+            body = body[:dns.start()] + " rustd_dns [!UNAVAIL=return]" + body[dns.start():]
+        else:
+            body += " rustd_dns [!UNAVAIL=return] dns"
+        hosts_changed = True
     else:
-        body += " rustd_dns [!UNAVAIL=return] dns"
+        body = re.sub(r"\s+systemd(?:\s+\[[^]]+\])?", "", body)
     out.append(body + newline)
-    changed = True
 
-if not changed:
+if not hosts_changed:
     raise SystemExit("custom profile has no hosts: entry")
 nss.write_text("".join(out))
 PY
@@ -103,7 +109,7 @@ trap 'rm -f /tmp/rustd-authselect-nss.$$ /tmp/rustd-authselect-pam.$$' EXIT
 
 grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
     || fail 'generated nsswitch.conf does not contain rustd_dns'
-! grep -E -q '(^|[[:space:]])(myhostname|resolve|systemd)([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
+! grep -E -q '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
     || fail 'generated nsswitch.conf still references a removed NSS backend'
 grep -Fq 'pam_rustd.so' /tmp/rustd-authselect-pam.$$ \
     || fail 'generated system-auth does not contain pam_rustd.so'
@@ -116,8 +122,8 @@ authselect check >/dev/null || fail 'authselect rejected the activated RustD pro
 
 grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
     || fail 'active nsswitch.conf does not contain rustd_dns'
-! grep -E -q '^hosts:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
-    || fail 'active hosts NSS configuration still references a removed backend'
+! grep -E -q '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
+    || fail 'active NSS configuration still references a removed backend'
 grep -R -Fq 'pam_rustd.so' /etc/pam.d \
     || fail 'active PAM configuration does not contain pam_rustd.so'
 ! grep -R -E -q 'pam_systemd(_home)?\.so' /etc/pam.d \
