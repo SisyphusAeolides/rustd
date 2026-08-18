@@ -1,5 +1,5 @@
 name: Land final RustD compatibility ABI directly
-# rerun after RustD-owned ABI header test conversion
+# rerun after self-contained RustD ABI header fix
 
 on:
   push:
@@ -86,9 +86,9 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-final-abi-diagnostic-v5\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
+            printf 'schema=rustd-final-abi-diagnostic-v6\nstatus=failure\ntested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 480 /tmp/final-abi-raw.log || true
+            tail -n 520 /tmp/final-abi-raw.log || true
           } > certification/final-abi-closure-diagnostic.txt
           git add certification/final-abi-closure-diagnostic.txt
           git diff --cached --check
