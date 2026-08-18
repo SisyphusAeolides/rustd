@@ -136,6 +136,12 @@ grep -Fq 'pam_rustd.so' \
     dist/fedora/compat/rustd-fedora-cutover
 grep -Fq 'rustd_dns' \
     dist/fedora/compat/rustd-fedora-cutover
+grep -Fq "owner_matches /usr/sbin/rustd-fedora-cutover '^rustd-cutover-tools$'" \
+    scripts/fedora-cutover-gate.sh
+grep -Fq "owner_matches /usr/lib64/security/pam_rustd.so '^rustd-cutover-tools$'" \
+    scripts/fedora-cutover-gate.sh
+grep -Fq "owner_matches /usr/lib64/libnss_rustd_dns.so.2 '^rustd-resolved-nss$'" \
+    scripts/fedora-cutover-gate.sh
 
 bash -n \
     scripts/build-fedora-rpms.sh \
