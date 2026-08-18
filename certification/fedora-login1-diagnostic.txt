@@ -1,6 +1,6 @@
 schema=rustd-fedora-login1-diagnostic-v2
 status=success
-tested_sha=89608d03baff2ec362f3902a3b2404936941ec8a
+tested_sha=ea57622511f35e0b2a370fdd7be84f591592b031
 --- tail ---
 /tmp/login1-step.sh: line 2: warning: here-document at line 1 delimited by end-of-file (wanted `PY')
 + python3 -
