@@ -13,7 +13,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, Ordering},
     Arc, Mutex, RwLock,
 };
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 
@@ -36,6 +36,7 @@ use crate::ipc_server::{IpcServer, ResetFailedRequests};
 use crate::job::{Job, JobEvent, JobInfo, JobKind, JobQueue, JobRegistry, JobResult, JobState};
 use crate::kill_context::{signal_cgroup_members, signal_primary, KillOperation, KillPolicy};
 use crate::notify::NotifyServer;
+use crate::oom::{self, OomBaselines, OomEventSource, OomPolicy, PendingOomEvents};
 use crate::restart::{
     arm_service_timeout_event, schedule_restart, ServiceTimeoutEvent, ServiceTimeoutPhase,
 };
@@ -82,6 +83,16 @@ pub struct Manager {
     cgroup_sources: HashMap<String, SourceId>,
     /// Unit names whose cgroup hierarchy reported `populated 0`.
     cgroup_empty_events: Arc<Mutex<Vec<String>>>,
+    /// Registered `memory.events` source for each managed service cgroup.
+    oom_sources: HashMap<String, SourceId>,
+    /// Unit names whose cgroup `oom_kill` counter increased.
+    oom_events: PendingOomEvents,
+    /// Per-cgroup cumulative `oom_kill` baselines shared with event sources.
+    oom_baselines: OomBaselines,
+    /// Units being stopped specifically because of an OOM policy action.
+    oom_stopping: HashSet<String>,
+    /// Recent OOM notifications retained long enough to classify matching SIGCHLD.
+    oom_recent: HashMap<String, Instant>,
     /// Activating `Type=dbus` units whose configured name gained an owner.
     dbus_ready_events: Arc<Mutex<Vec<String>>>,
     /// Start-timeout source for each service awaiting readiness.
@@ -210,6 +221,8 @@ impl Manager {
         let cgroup = CgroupManager::for_scope(scope);
         let _ = cgroup.setup_root();
         let cgroup_empty_events = Arc::new(Mutex::new(Vec::new()));
+        let oom_events = Arc::new(Mutex::new(Vec::new()));
+        let oom_baselines = Arc::new(Mutex::new(HashMap::new()));
         let service_timeout_events = Arc::new(Mutex::new(Vec::new()));
         let dbus_ready_events = Arc::new(Mutex::new(Vec::new()));
         let job_registry = JobRegistry::default();
@@ -303,6 +316,11 @@ impl Manager {
             cgroup,
             cgroup_sources: HashMap::new(),
             cgroup_empty_events,
+            oom_sources: HashMap::new(),
+            oom_events,
+            oom_baselines,
+            oom_stopping: HashSet::new(),
+            oom_recent: HashMap::new(),
             dbus_ready_events,
             start_timeouts: HashMap::new(),
             stop_timeouts: HashMap::new(),
@@ -492,7 +510,12 @@ impl Manager {
             self.publish_job_events();
 
             // 2a. Reap any children that exited before we entered epoll.
-            self.apply_child_exits(reap_children());
+            // Synchronize memory.events before applying those exits so a
+            // kernel OOM kill is never mistaken for an ordinary SIGKILL.
+            let exits = reap_children();
+            self.sync_oom_counters();
+            self.apply_oom_events();
+            self.apply_child_exits(exits);
             self.cleanup_empty_cgroups();
             self.retry_pending_forking_pid_files();
             self.apply_service_timeout_events();
@@ -599,6 +622,8 @@ impl Manager {
 
             // 2b. Apply any child exits collected inside run_once (via SIGCHLD).
             let exits = self.event_loop.drain_child_exits();
+            self.sync_oom_counters();
+            self.apply_oom_events();
             self.apply_child_exits(exits);
             self.cleanup_empty_cgroups();
 
@@ -1598,8 +1623,13 @@ impl Manager {
             let exit_monotonic = clock_now(ClockId::Monotonic).ok();
             let mut exited_unit = None;
             for record in self.units.values_mut() {
-                let explicitly_stopping = record.stop_requested;
                 let name = record.loaded.name().to_owned();
+                let oom_related = self.oom_stopping.contains(&name)
+                    || self
+                        .oom_recent
+                        .get(&name)
+                        .is_some_and(|expires| *expires > Instant::now());
+                let explicitly_stopping = record.stop_requested && !oom_related;
                 let notify_fd = if matches!(
                     &record.loaded,
                     LoadedUnit::Service(service)
@@ -1631,6 +1661,12 @@ impl Manager {
                     if let Err(error) = result {
                         eprintln!("rustd: forking start for '{name}' failed: {error}");
                     }
+                    if oom_related {
+                        record.service_result = "oom-kill".into();
+                        if record.state != UnitState::Active {
+                            record.state = UnitState::Failed;
+                        }
+                    }
                     if record.state == UnitState::Failed && !explicitly_stopping {
                         if let Some(restart_sec) = automatic_restart_delay(record, &exit) {
                             let restart_name = name.clone();
@@ -1658,6 +1694,12 @@ impl Manager {
                 ) {
                     record.exec_main_exit_realtime_ns = exit_realtime;
                     record.exec_main_exit_monotonic_ns = exit_monotonic;
+                    if oom_related {
+                        record.service_result = "oom-kill".into();
+                        if record.state != UnitState::Active {
+                            record.state = UnitState::Failed;
+                        }
+                    }
                     if record.state == UnitState::Failed && !explicitly_stopping {
                         eprintln!(
                             "rustd: service '{name}' exited unsuccessfully: code={} status={}",
@@ -1701,6 +1743,14 @@ impl Manager {
                 }
             }
             if let Some(name) = exited_unit {
+                // A normal Continue-policy OOM classification applies to the
+                // matching child exit only. Stop/Kill policy state remains
+                // set until the service cgroup is empty so every process
+                // reaped during the manager-driven teardown remains an OOM
+                // failure rather than being rewritten as an explicit stop.
+                if !self.oom_stopping.contains(&name) {
+                    self.oom_recent.remove(&name);
+                }
                 self.cleanup_unit_cgroup_if_empty(&name);
             }
         }
@@ -1883,6 +1933,9 @@ impl Manager {
         if let Err(error) = self.ensure_cgroup_event_source(name) {
             eprintln!("rustd: monitoring cgroup hierarchy for '{name}' failed: {error}");
         }
+        if let Err(error) = self.ensure_oom_event_source(name) {
+            eprintln!("rustd: monitoring cgroup OOM events for '{name}' failed: {error}");
+        }
         if let Err(error) = self.apply_service_resource_control(name) {
             self.cleanup_unit_cgroup_if_empty(name);
             if requested {
@@ -1896,6 +1949,9 @@ impl Manager {
             }
             eprintln!("rustd: applying resource controls for '{name}' failed: {error}");
             return Ok((requested, None));
+        }
+        if let Err(error) = self.apply_service_oom_group(name) {
+            eprintln!("rustd: applying OOM group policy for '{name}' failed: {error}");
         }
 
         let procs = path.join("cgroup.procs");
@@ -2116,6 +2172,9 @@ impl Manager {
             if let Err(error) = self.apply_service_resource_control(&name) {
                 eprintln!("rustd: applying resource controls for '{name}' failed: {error}");
             }
+            if let Err(error) = self.apply_service_oom_group(&name) {
+                eprintln!("rustd: applying OOM group policy for '{name}' failed: {error}");
+            }
         }
     }
 
@@ -2131,6 +2190,99 @@ impl Manager {
             control.tasks_max = None;
         }
         self.cgroup.apply_resource_control(name, &control)
+    }
+
+    fn apply_service_oom_group(&self, name: &str) -> anyhow::Result<()> {
+        let Some(record) = self.units.get(name) else {
+            return Ok(());
+        };
+        let LoadedUnit::Service(service) = &record.loaded else {
+            return Ok(());
+        };
+        let policy = OomPolicy::resolve(self.config.scope, &service.specific.oom_policy);
+        oom::configure_group_kill(&self.cgroup, name, policy == OomPolicy::Kill)
+    }
+
+    fn ensure_oom_event_source(&mut self, name: &str) -> anyhow::Result<()> {
+        if self.oom_sources.contains_key(name) {
+            return Ok(());
+        }
+        let source = OomEventSource::for_unit(
+            &self.cgroup,
+            name,
+            Arc::clone(&self.oom_events),
+            Arc::clone(&self.oom_baselines),
+        )?;
+        let descriptor = source.raw_fd();
+        let events = (libc::EPOLLPRI | libc::EPOLLERR | libc::EPOLLHUP) as u32;
+        let source_id = self
+            .event_loop
+            .add_io(descriptor, events, Box::new(source))?;
+        self.oom_sources.insert(name.to_owned(), source_id);
+        Ok(())
+    }
+
+    fn sync_oom_counters(&mut self) {
+        let now = Instant::now();
+        self.oom_recent.retain(|_, expires| *expires > now);
+        let names: Vec<String> = self.oom_sources.keys().cloned().collect();
+        for name in names {
+            if let Err(error) = oom::sync_unit(
+                &self.cgroup,
+                &name,
+                &self.oom_events,
+                &self.oom_baselines,
+            ) {
+                if !is_not_found(&error) {
+                    eprintln!("rustd: synchronizing OOM state for '{name}' failed: {error}");
+                }
+            }
+        }
+    }
+
+    fn apply_oom_events(&mut self) {
+        let pending = {
+            let mut events = self
+                .oom_events
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            std::mem::take(&mut *events)
+        };
+        for name in pending {
+            let policy = self.units.get(&name).and_then(|record| {
+                let LoadedUnit::Service(service) = &record.loaded else {
+                    return None;
+                };
+                Some(OomPolicy::resolve(
+                    self.config.scope,
+                    &service.specific.oom_policy,
+                ))
+            });
+            let Some(policy) = policy else {
+                continue;
+            };
+            if let Some(record) = self.units.get_mut(&name) {
+                record.service_result = "oom-kill".into();
+            }
+            self.oom_recent
+                .insert(name.clone(), Instant::now() + Duration::from_secs(2));
+            eprintln!("rustd: service '{name}' observed a cgroup OOM kill (policy={policy:?})");
+            match policy {
+                OomPolicy::Continue => {}
+                OomPolicy::Stop | OomPolicy::Kill => {
+                    self.oom_stopping.insert(name.clone());
+                    let notify_fd = self.notify.as_ref().map_or(-1, NotifyServer::raw_fd);
+                    self.stop_service(&name, notify_fd);
+                    if policy == OomPolicy::Kill {
+                        if let Err(error) = self.cgroup.signal_unit(&name, libc::SIGKILL) {
+                            eprintln!(
+                                "rustd: killing remaining cgroup members for '{name}' after OOM failed: {error}"
+                            );
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn ensure_cgroup_event_source(&mut self, name: &str) -> anyhow::Result<()> {
@@ -2229,11 +2381,22 @@ impl Manager {
                 if let Some(source) = self.cgroup_sources.remove(name) {
                     let _ = self.event_loop.remove_io(source);
                 }
+                if let Some(source) = self.oom_sources.remove(name) {
+                    let _ = self.event_loop.remove_io(source);
+                }
+                oom::remove_baseline(name, &self.oom_baselines);
+                self.oom_stopping.remove(name);
+                self.oom_recent.remove(name);
                 if let Err(error) = self.cgroup.remove_unit_cgroup(name) {
                     eprintln!("rustd: removing empty cgroup for '{name}' failed: {error}");
                     if let Err(register_error) = self.ensure_cgroup_event_source(name) {
                         eprintln!(
                             "rustd: restoring cgroup monitor for '{name}' failed: {register_error}"
+                        );
+                    }
+                    if let Err(register_error) = self.ensure_oom_event_source(name) {
+                        eprintln!(
+                            "rustd: restoring OOM monitor for '{name}' failed: {register_error}"
                         );
                     }
                 }
@@ -2242,6 +2405,12 @@ impl Manager {
                 if let Some(source) = self.cgroup_sources.remove(name) {
                     let _ = self.event_loop.remove_io(source);
                 }
+                if let Some(source) = self.oom_sources.remove(name) {
+                    let _ = self.event_loop.remove_io(source);
+                }
+                oom::remove_baseline(name, &self.oom_baselines);
+                self.oom_stopping.remove(name);
+                self.oom_recent.remove(name);
             }
             Err(error) => {
                 eprintln!("rustd: reading cgroup state for '{name}' failed: {error}");
