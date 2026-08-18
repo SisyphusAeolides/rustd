@@ -1,4 +1,5 @@
 name: Integrate certified journal send ABI
+# trigger-v2
 
 on:
   push:
@@ -54,12 +55,7 @@ jobs:
 
           p = Path('libs/compat/systemd.c')
           s = p.read_text()
-          for name in (
-              'sd_journal_send',
-              'sd_journal_send_with_location',
-              'sd_journal_print_with_location',
-              'sd_journal_printv_with_location',
-          ):
+          for name in ('sd_journal_send','sd_journal_send_with_location','sd_journal_print_with_location','sd_journal_printv_with_location'):
               s = remove_function(s, name)
           p.write_text(s)
 
