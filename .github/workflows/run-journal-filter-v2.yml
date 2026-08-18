@@ -1,0 +1,132 @@
+name: Run isolated journal filter closure
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/run-journal-filter-v2.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: run-journal-filter-v2
+  cancel-in-progress: true
+
+jobs:
+  close:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install compatibility dependencies
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential gfortran pkg-config libsystemd-dev libudev-dev
+      - name: Apply and verify native journal filtering
+        id: verify
+        continue-on-error: true
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          exec > >(tee /tmp/rustd-journal-filter.log) 2>&1
+          python3 - <<'PY'
+          from pathlib import Path
+
+          text = Path('.github/workflows/land-journal-filter-abi.yml').read_text()
+          step = text.index('      - name: Apply native journal filtering and verify\n')
+          marker = '        run: |\n'
+          start = text.index(marker, step) + len(marker)
+          raw = text[start:]
+          lines = []
+          for line in raw.splitlines():
+              if line.startswith('          '):
+                  line = line[10:]
+              lines.append(line)
+          script = '\n'.join(lines) + '\n'
+          cut_points = [
+              point for point in (
+                  'git fetch origin main',
+                  'rm -f .github/workflows/land-journal-filter-abi.yml',
+                  'git add -A',
+                  'git config user.name',
+              ) if point in script
+          ]
+          if not cut_points:
+              raise SystemExit('journal workflow commit boundary is missing')
+          script = script[:min(script.index(point) for point in cut_points)]
+          Path('/tmp/apply-rustd-journal-filter.sh').write_text(script)
+          PY
+          bash -x /tmp/apply-rustd-journal-filter.sh
+          git diff --check
+          cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong \
+            -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -Iinclude \
+            libs/journal/journal.c libs/tests/test_journal_filters.c \
+            -o /tmp/test-journal-filters
+          /tmp/test-journal-filters
+          make check-compat
+          python3 scripts/check-compat-source-readiness.py \
+            --report target/journal-compat-readiness.json
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('target/journal-compat-readiness.json').read_text())
+          if report['missing_source_definition'] != 0:
+              raise SystemExit(report)
+          if report['supported'] < 122 or report['unsupported'] > 62:
+              raise SystemExit(report)
+          PY
+      - name: Publish journal failure diagnostic
+        if: steps.verify.outcome != 'success'
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          git reset --hard HEAD
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-journal-filter-diagnostic-v2\n'
+            printf 'status=failure\n'
+            printf 'tested_sha=%s\n' "$GITHUB_SHA"
+            printf '%s\n' '--- tail ---'
+            tail -n 600 /tmp/rustd-journal-filter.log || true
+          } > certification/journal-filter-diagnostic.txt
+          git add certification/journal-filter-diagnostic.txt
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Record journal filter diagnostic'
+          git push origin HEAD:main
+          exit 1
+      - name: Land verified journal filtering
+        if: steps.verify.outcome == 'success'
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          mkdir -p certification
+          {
+            printf 'schema=rustd-journal-filter-v2\n'
+            printf 'status=pass\n'
+            printf 'tested_base_sha=%s\n' "$GITHUB_SHA"
+            printf 'matching=implemented\n'
+            printf 'disjunction=implemented\n'
+            printf 'flush=implemented\n'
+            printf 'compat_link=pass\n'
+          } > certification/journal-filter-latest.txt
+          rm -f \
+            .github/workflows/land-journal-filter-abi.yml \
+            .github/workflows/run-journal-filter-v2.yml \
+            .github/journal-filter-trigger \
+            certification/journal-filter-diagnostic.txt
+          git fetch origin main
+          git rebase --autostash origin/main
+          git add -A
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Implement journal match filtering'
+          git push origin HEAD:main
