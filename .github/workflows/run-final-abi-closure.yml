@@ -1,5 +1,5 @@
 name: Run final RustD ABI closure
-# raw extraction for malformed legacy workflow payloads
+# rerun on finalized native FFI head
 
 defaults:
   run:
