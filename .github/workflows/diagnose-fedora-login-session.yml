@@ -1,5 +1,5 @@
 name: Diagnose Fedora Login1 session support
-# raw step extraction preserves zero-indented embedded Rust
+# raw step extraction preserves zero-indented embedded Rust; diagnostic v6
 
 on:
   push:
@@ -10,9 +10,14 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: diagnose-fedora-login1
+  cancel-in-progress: false
+
 jobs:
   diagnose:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -39,9 +44,6 @@ jobs:
           marker = '        run: |\n'
           start = text.index(marker, step) + len(marker)
           raw = text[start:]
-          # The canonical file is intentionally treated as a raw payload because
-          # embedded Rust heredoc lines are not YAML-indented. Remove the workflow
-          # block indentation where present, but preserve zero-indented payload.
           lines = [line[10:] if line.startswith('          ') else line for line in raw.splitlines()]
           script = '\n'.join(lines) + '\n'
           cut = 'git fetch origin main'
@@ -71,15 +73,17 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-login1-diagnostic-v5\n'
+            printf 'schema=rustd-fedora-login1-diagnostic-v6\n'
             printf 'status=%s\n' "$outcome"
             printf 'tested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 420 /tmp/fedora-login1.log || true
+            tail -n 700 /tmp/fedora-login1.log || true
           } > certification/fedora-login1-diagnostic.txt
           git add certification/fedora-login1-diagnostic.txt
+          git diff --cached --check
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m "Record Fedora Login1 ${outcome}" || exit 0
+          git pull --rebase origin main
           git push origin HEAD:main
           [[ "$outcome" == success ]]
