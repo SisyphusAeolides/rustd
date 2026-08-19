@@ -1,0 +1,264 @@
+name: Land strict Fedora Login1 session support
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-login1-strict.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: land-fedora-login1-strict
+  cancel-in-progress: false
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          toolchain: 1.75.0
+          components: rustfmt,clippy
+      - name: Install native dependencies
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential gfortran libdbus-1-dev libpam0g-dev \
+            libjson-c-dev libssl-dev liburing-dev pkg-config python3
+      - name: Apply and verify Login1 source transaction
+        id: verify
+        continue-on-error: true
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          exec > >(tee /tmp/rustd-login1-strict.log) 2>&1
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          base_sha="$(git rev-parse HEAD)"
+          python3 - <<'PY'
+          from pathlib import Path
+
+          workflow = Path('.github/workflows/land-fedora-login-session.yml').read_text()
+          step = workflow.index('      - name: Add complete Login1 session registration path\n')
+          marker = '        run: |\n'
+          start = workflow.index(marker, step) + len(marker)
+          raw = workflow[start:]
+          lines = [line[10:] if line.startswith('          ') else line for line in raw.splitlines()]
+          script = '\n'.join(lines) + '\n'
+          cut = 'git fetch origin main'
+          if cut in script:
+              script = script[:script.index(cut)]
+          script = script.replace(
+              'cargo test --locked --lib logind\n',
+              'cargo test --locked --lib -- --test-threads=1\n',
+              1,
+          )
+          cleanup = r'''python3 - <<'FIXES'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old in text:
+                  if text.count(old) != 1:
+                      raise SystemExit(f"expected one source fragment in {path}: {old!r}")
+                  file.write_text(text.replace(old, new, 1))
+              elif new not in text:
+                  raise SystemExit(f"source fragment missing in {path}: {old!r}")
+
+          replace_once(
+              'src/cgroup.rs',
+              'fs::read_to_string(&controllers_path)',
+              'fs::read_to_string(controllers_path)',
+          )
+          replace_once(
+              'src/ffi/spawn.rs',
+              'pub unsafe fn rustd_spawn(p: *const SdSpawnParams) -> pid_t {',
+              '#[must_use]\npub unsafe fn rustd_spawn(p: *const SdSpawnParams) -> pid_t {',
+          )
+          replace_once(
+              'src/reexec_state.rs',
+              '''            let root = std::env::var_os("XDG_RUNTIME_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| {
+                    PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }))
+                });
+''',
+              '''            let root = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(
+                || PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })),
+                PathBuf::from,
+            );
+''',
+          )
+          replace_once(
+              'src/sandbox.rs',
+              'pub fn resolve_user(user: &str) -> anyhow::Result<libc::uid_t> {',
+              '''/// Resolve a numeric or named user to its UID.
+///
+/// # Errors
+/// Returns an error when the name contains a NUL byte or is absent from the
+/// account database.
+pub fn resolve_user(user: &str) -> anyhow::Result<libc::uid_t> {''',
+          )
+          replace_once(
+              'src/sandbox.rs',
+              'pub fn resolve_group(group: &str) -> anyhow::Result<libc::gid_t> {',
+              '''/// Resolve a numeric or named group to its GID.
+///
+/// # Errors
+/// Returns an error when the name contains a NUL byte or is absent from the
+/// group database.
+pub fn resolve_group(group: &str) -> anyhow::Result<libc::gid_t> {''',
+          )
+          replace_once(
+              'src/unit/loader.rs',
+              'std::fs::read_dir(&wants_dir)',
+              'std::fs::read_dir(wants_dir)',
+          )
+
+          logind = Path('src/logind/mod.rs')
+          text = logind.read_text()
+          old = '''/// Securely create and own the XDG runtime directory for a login session.
+pub fn prepare_user_runtime(uid: u32, gid: u32) -> io::Result<PathBuf> {'''
+          new = '''/// Securely create and own the XDG runtime directory for a login session.
+///
+/// # Errors
+/// Returns an error when the runtime root cannot be created, the target is not
+/// a real directory, permissions cannot be set, or ownership cannot be applied
+/// while running with effective UID zero.
+pub fn prepare_user_runtime(uid: u32, gid: u32) -> io::Result<PathBuf> {'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('prepare_user_runtime documentation preimage missing')
+
+          if 'fn user_runtime_directory_is_private_and_session_metadata_round_trips()' not in text:
+              text += r'''
+
+#[cfg(test)]
+mod login1_runtime_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Mutex;
+
+    static ENVIRONMENT: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn user_runtime_directory_is_private_and_session_metadata_round_trips() {
+        let _guard = ENVIRONMENT.lock().expect("environment lock");
+        let runtime = tempfile::tempdir().expect("temporary runtime root");
+        let user_runtime = runtime.path().join("users");
+        std::env::set_var("RUSTD_USER_RUNTIME_ROOT", &user_runtime);
+        std::env::set_var("RUSTD_LOGIND_RUNTIME", runtime.path().join("logind"));
+
+        let uid = unsafe { libc::getuid() };
+        let gid = unsafe { libc::getgid() };
+        let path = prepare_user_runtime(uid, gid).expect("create user runtime");
+        assert_eq!(path, user_runtime.join(uid.to_string()));
+        assert_eq!(
+            fs::metadata(&path).expect("runtime metadata").permissions().mode() & 0o777,
+            0o700
+        );
+
+        let expected = Session {
+            id: "r-test".to_owned(),
+            uid,
+            user: "test-user".to_owned(),
+            gid,
+            seat: "seat0".to_owned(),
+            tty: "tty2".to_owned(),
+            service: "login".to_owned(),
+            session_type: "tty".to_owned(),
+            class: "user".to_owned(),
+            desktop: "console".to_owned(),
+            display: ":0".to_owned(),
+            remote: true,
+            remote_user: "remote-user".to_owned(),
+            remote_host: "example.test".to_owned(),
+            leader: std::process::id(),
+            state: "active".to_owned(),
+            locked: false,
+        };
+        save(&expected).expect("save session");
+        let loaded = session(&expected.id).expect("load session");
+        assert_eq!(loaded.desktop, expected.desktop);
+        assert_eq!(loaded.display, expected.display);
+        assert_eq!(loaded.remote, expected.remote);
+        assert_eq!(loaded.remote_user, expected.remote_user);
+        assert_eq!(loaded.remote_host, expected.remote_host);
+
+        std::env::remove_var("RUSTD_USER_RUNTIME_ROOT");
+        std::env::remove_var("RUSTD_LOGIND_RUNTIME");
+    }
+}
+'''
+          logind.write_text(text)
+          FIXES
+          '''
+          needle = 'cargo fmt --all\n'
+          if needle not in script:
+              raise SystemExit('Login1 verification command block is incomplete')
+          script = script.replace(needle, cleanup + needle, 1)
+          Path('/tmp/login1-source-transaction.sh').write_text('set -euo pipefail\n' + script)
+          PY
+          bash -x /tmp/login1-source-transaction.sh
+          make check-native
+          make check-packaging
+          cargo test --locked --all-targets --all-features -- --test-threads=1
+          git diff --check
+          mkdir -p certification
+          cat > certification/fedora-login1-latest.txt <<EOF
+          schema=rustd-fedora-login1-v2
+          status=pass
+          tested_base_sha=$base_sha
+          create_session=pass
+          release_session=pass
+          runtime_directory=pass
+          session_reference_fd=pass
+          metadata_roundtrip=pass
+          all_library_tests=pass
+          EOF
+          rm -f \
+            .github/workflows/land-fedora-login-session.yml \
+            .github/workflows/diagnose-fedora-login-session.yml \
+            .github/workflows/land-login1-strict.yml \
+            certification/fedora-login1-diagnostic.txt
+          git add -A
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Implement Login1 session registration'
+          git pull --rebase origin main
+          cargo fmt --all -- --check
+          cargo check --locked --bin rustd-logind
+          git push origin HEAD:main
+      - name: Publish strict Login1 diagnostic
+        if: steps.verify.outcome != 'success'
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          git reset --hard HEAD
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-fedora-login1-diagnostic-v8\n'
+            printf 'status=failure\n'
+            printf 'tested_sha=%s\n' "$GITHUB_SHA"
+            printf '%s\n' '--- tail ---'
+            tail -n 500 /tmp/rustd-login1-strict.log || true
+          } > certification/fedora-login1-diagnostic.txt
+          git add certification/fedora-login1-diagnostic.txt
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Record strict Fedora Login1 diagnostic'
+          git push origin HEAD:main
+          exit 1
