@@ -1,0 +1,548 @@
+name: Land DHCP renewal broker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/land-dhcp-renew-broker.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: land-rustd-dhcp-renew-broker
+  cancel-in-progress: false
+
+jobs:
+  land:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Install native dependencies
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            build-essential gfortran libdbus-1-dev libpam0g-dev pkg-config python3
+      - name: Add and verify renewal broker
+        id: verify
+        continue-on-error: true
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          exec > >(tee /tmp/rustd-dhcp-renew-broker.log) 2>&1
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          base_sha="$(git rev-parse HEAD)"
+          cat > src/bin/rustnetworkctl_renew.rs <<'RS'
+          // SPDX-License-Identifier: LGPL-2.1-or-later
+          //! Privileged, rate-limited DHCP renewal coordination for RustD-Resolved.
+
+          use serde_json::{json, Value};
+          use std::collections::HashMap;
+          use std::env;
+          use std::ffi::CString;
+          use std::fs::{self, OpenOptions};
+          use std::io::{self, BufRead, BufReader, Write};
+          use std::os::unix::fs::{FileTypeExt, PermissionsExt};
+          use std::os::unix::net::{UnixDatagram, UnixStream};
+          use std::path::{Path, PathBuf};
+          use std::process::Command;
+          use std::time::{Duration, Instant};
+
+          const DEFAULT_SOCKET: &str = "/run/rustd/network/dhcp-renew.sock";
+          const RUSTD_NETWORKD_VARLINK: &str = "/run/rustd/netif/io.rustd.Network";
+          const COMPAT_NETWORKD_VARLINK: &str = "/run/systemd/netif/io.systemd.Network";
+          const MIN_RENEW_INTERVAL: Duration = Duration::from_secs(30);
+          const MAX_REQUEST_SIZE: usize = 4096;
+
+          #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+          enum Family {
+              Any,
+              Ipv4,
+              Ipv6,
+          }
+
+          impl Family {
+              fn parse(value: &str) -> Result<Self, String> {
+                  match value {
+                      "any" => Ok(Self::Any),
+                      "ipv4" => Ok(Self::Ipv4),
+                      "ipv6" => Ok(Self::Ipv6),
+                      _ => Err(format!("unsupported DHCP family {value:?}")),
+                  }
+              }
+
+              const fn as_str(self) -> &'static str {
+                  match self {
+                      Self::Any => "any",
+                      Self::Ipv4 => "ipv4",
+                      Self::Ipv6 => "ipv6",
+                  }
+              }
+          }
+
+          #[derive(Debug, PartialEq, Eq)]
+          struct RenewalRequest {
+              ifindex: u32,
+              ifname: String,
+              family: Family,
+          }
+
+          fn parse_request(packet: &[u8]) -> Result<RenewalRequest, String> {
+              let text = std::str::from_utf8(packet)
+                  .map_err(|_| "renewal request is not UTF-8".to_owned())?;
+              let mut fields = HashMap::new();
+              for raw in text.lines() {
+                  let line = raw.trim();
+                  if line.is_empty() {
+                      continue;
+                  }
+                  let (key, value) = line
+                      .split_once('=')
+                      .ok_or_else(|| format!("malformed renewal field {line:?}"))?;
+                  if fields.insert(key, value).is_some() {
+                      return Err(format!("duplicate renewal field {key:?}"));
+                  }
+              }
+              if fields.get("RUSTD_DHCP_RENEW") != Some(&"1") {
+                  return Err("missing RUSTD_DHCP_RENEW=1 marker".to_owned());
+              }
+              let ifindex = fields
+                  .get("IFINDEX")
+                  .ok_or_else(|| "missing IFINDEX".to_owned())?
+                  .parse::<u32>()
+                  .map_err(|_| "invalid IFINDEX".to_owned())?;
+              if ifindex == 0 {
+                  return Err("IFINDEX must be nonzero".to_owned());
+              }
+              let ifname = fields
+                  .get("IFNAME")
+                  .ok_or_else(|| "missing IFNAME".to_owned())?
+                  .to_string();
+              if ifname.is_empty()
+                  || ifname.len() >= libc::IFNAMSIZ
+                  || ifname
+                      .bytes()
+                      .any(|byte| byte == b'/' || byte.is_ascii_control() || byte.is_ascii_whitespace())
+              {
+                  return Err("invalid IFNAME".to_owned());
+              }
+              let family = Family::parse(fields.get("FAMILY").copied().unwrap_or("any"))?;
+              Ok(RenewalRequest {
+                  ifindex,
+                  ifname,
+                  family,
+              })
+          }
+
+          fn verify_interface(request: &RenewalRequest) -> Result<(), String> {
+              let name = CString::new(request.ifname.as_str())
+                  .map_err(|_| "interface name contains a NUL byte".to_owned())?;
+              let actual = unsafe { libc::if_nametoindex(name.as_ptr()) };
+              if actual == 0 {
+                  return Err(format!("interface {} no longer exists", request.ifname));
+              }
+              if actual != request.ifindex {
+                  return Err(format!(
+                      "interface identity changed: {} is now index {actual}, request expected {}",
+                      request.ifname, request.ifindex
+                  ));
+              }
+              Ok(())
+          }
+
+          fn varlink_at(path: &Path, method: &str, ifindex: u32) -> Result<(), String> {
+              let mut stream = UnixStream::connect(path)
+                  .map_err(|error| format!("{}: {error}", path.display()))?;
+              stream
+                  .set_read_timeout(Some(Duration::from_secs(15)))
+                  .map_err(|error| error.to_string())?;
+              stream
+                  .set_write_timeout(Some(Duration::from_secs(15)))
+                  .map_err(|error| error.to_string())?;
+              let mut request = serde_json::to_vec(&json!({
+                  "method": method,
+                  "parameters": {
+                      "InterfaceIndex": ifindex,
+                      "allowInteractiveAuthentication": false
+                  }
+              }))
+              .map_err(|error| error.to_string())?;
+              request.push(0);
+              stream
+                  .write_all(&request)
+                  .map_err(|error| error.to_string())?;
+              let mut response = Vec::new();
+              BufReader::new(stream)
+                  .read_until(0, &mut response)
+                  .map_err(|error| error.to_string())?;
+              if response.last() == Some(&0) {
+                  response.pop();
+              }
+              let value: Value = serde_json::from_slice(&response)
+                  .map_err(|error| format!("invalid Varlink response: {error}"))?;
+              if let Some(error) = value.get("error").and_then(Value::as_str) {
+                  return Err(format!("{error}: {}", value["parameters"]));
+              }
+              Ok(())
+          }
+
+          fn command_exists(name: &str) -> bool {
+              env::var_os("PATH").is_some_and(|paths| {
+                  env::split_paths(&paths).any(|directory| directory.join(name).is_file())
+              })
+          }
+
+          fn command_success(command: &mut Command, backend: &str) -> Result<(), String> {
+              let output = command
+                  .output()
+                  .map_err(|error| format!("failed to launch {backend}: {error}"))?;
+              if output.status.success() {
+                  return Ok(());
+              }
+              let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+              Err(if message.is_empty() {
+                  format!("{backend} exited with {}", output.status)
+              } else {
+                  format!("{backend}: {message}")
+              })
+          }
+
+          fn record_test_dispatch(request: &RenewalRequest, path: &Path) -> Result<(), String> {
+              let mut file = OpenOptions::new()
+                  .create(true)
+                  .append(true)
+                  .open(path)
+                  .map_err(|error| error.to_string())?;
+              writeln!(
+                  file,
+                  "ifindex={} ifname={} family={}",
+                  request.ifindex,
+                  request.ifname,
+                  request.family.as_str()
+              )
+              .map_err(|error| error.to_string())
+          }
+
+          fn dispatch(request: &RenewalRequest) -> Result<&'static str, String> {
+              if let Some(path) = env::var_os("RUSTD_NETWORK_RENEW_TEST_LOG") {
+                  record_test_dispatch(request, Path::new(&path))?;
+                  return Ok("test");
+              }
+
+              let rustd = Path::new(RUSTD_NETWORKD_VARLINK);
+              if rustd.exists() {
+                  varlink_at(rustd, "io.rustd.Network.Link.Renew", request.ifindex)?;
+                  return Ok("rustd-networkd");
+              }
+
+              let compatible = Path::new(COMPAT_NETWORKD_VARLINK);
+              if compatible.exists() {
+                  varlink_at(
+                      compatible,
+                      "io.systemd.Network.Link.Renew",
+                      request.ifindex,
+                  )?;
+                  return Ok("networkd-varlink");
+              }
+
+              if command_exists("nmcli") {
+                  let mut command = Command::new("nmcli");
+                  command.args([
+                      "--wait",
+                      "15",
+                      "device",
+                      "reapply",
+                      request.ifname.as_str(),
+                  ]);
+                  if command_success(&mut command, "NetworkManager reapply").is_ok() {
+                      return Ok("NetworkManager");
+                  }
+              }
+
+              if command_exists("dhcpcd") {
+                  let mut command = Command::new("dhcpcd");
+                  command.args(["-n", request.ifname.as_str()]);
+                  command_success(&mut command, "dhcpcd renewal")?;
+                  return Ok("dhcpcd");
+              }
+
+              Err("no active DHCP owner accepted a non-disruptive renewal request".to_owned())
+          }
+
+          fn socket_path() -> PathBuf {
+              env::var_os("RUSTD_NETWORK_RENEW_SOCKET")
+                  .map(PathBuf::from)
+                  .unwrap_or_else(|| PathBuf::from(DEFAULT_SOCKET))
+          }
+
+          fn prepare_socket(path: &Path) -> io::Result<UnixDatagram> {
+              let parent = path.parent().ok_or_else(|| {
+                  io::Error::new(io::ErrorKind::InvalidInput, "renewal socket has no parent")
+              })?;
+              fs::create_dir_all(parent)?;
+              if let Ok(metadata) = fs::symlink_metadata(path) {
+                  if !metadata.file_type().is_socket() {
+                      return Err(io::Error::new(
+                          io::ErrorKind::AlreadyExists,
+                          format!("refusing to replace non-socket {}", path.display()),
+                      ));
+                  }
+                  fs::remove_file(path)?;
+              }
+              let socket = UnixDatagram::bind(path)?;
+              let mut mode = 0o600;
+              let group = CString::new("rustd-resolve").expect("static group name");
+              let entry = unsafe { libc::getgrnam(group.as_ptr()) };
+              if !entry.is_null() {
+                  let gid = unsafe { (*entry).gr_gid };
+                  let name = CString::new(path.as_os_str().as_encoded_bytes()).map_err(|_| {
+                      io::Error::new(io::ErrorKind::InvalidInput, "socket path contains NUL")
+                  })?;
+                  if unsafe { libc::chown(name.as_ptr(), u32::MAX, gid) } != 0 {
+                      return Err(io::Error::last_os_error());
+                  }
+                  mode = 0o660;
+              }
+              fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+              Ok(socket)
+          }
+
+          fn request_limit() -> Option<usize> {
+              env::var("RUSTD_NETWORK_RENEW_MAX_REQUESTS")
+                  .ok()
+                  .and_then(|value| value.parse().ok())
+          }
+
+          pub fn run() -> i32 {
+              let path = socket_path();
+              let socket = match prepare_socket(&path) {
+                  Ok(socket) => socket,
+                  Err(error) => {
+                      eprintln!(
+                          "rustnetworkctl: failed to bind renewal broker {}: {error}",
+                          path.display()
+                      );
+                      return 1;
+                  }
+              };
+              let mut buffer = [0u8; MAX_REQUEST_SIZE];
+              let mut last_success = HashMap::<u32, Instant>::new();
+              let limit = request_limit();
+              let mut successful = 0usize;
+              loop {
+                  let count = match socket.recv(&mut buffer) {
+                      Ok(count) => count,
+                      Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                      Err(error) => {
+                          eprintln!("rustnetworkctl: renewal broker receive failed: {error}");
+                          return 1;
+                      }
+                  };
+                  let request = match parse_request(&buffer[..count]) {
+                      Ok(request) => request,
+                      Err(error) => {
+                          eprintln!("rustnetworkctl: rejected malformed renewal request: {error}");
+                          continue;
+                      }
+                  };
+                  if let Err(error) = verify_interface(&request) {
+                      eprintln!("rustnetworkctl: rejected stale renewal request: {error}");
+                      continue;
+                  }
+                  let now = Instant::now();
+                  if last_success.get(&request.ifindex).is_some_and(|previous| {
+                      now.saturating_duration_since(*previous) < MIN_RENEW_INTERVAL
+                  }) {
+                      eprintln!(
+                          "rustnetworkctl: coalesced duplicate renewal request for {}",
+                          request.ifname
+                      );
+                      continue;
+                  }
+                  match dispatch(&request) {
+                      Ok(backend) => {
+                          last_success.insert(request.ifindex, now);
+                          successful = successful.saturating_add(1);
+                          eprintln!(
+                              "rustnetworkctl: requested {} DHCP recovery for {} through {backend}",
+                              request.family.as_str(),
+                              request.ifname
+                          );
+                          if limit.is_some_and(|limit| successful >= limit) {
+                              return 0;
+                          }
+                      }
+                      Err(error) => eprintln!(
+                          "rustnetworkctl: DHCP renewal request for {} was not accepted: {error}",
+                          request.ifname
+                      ),
+                  }
+              }
+          }
+
+          #[cfg(test)]
+          mod tests {
+              use super::*;
+
+              #[test]
+              fn parses_authenticated_renewal_request() {
+                  let request = parse_request(
+                      b"RUSTD_DHCP_RENEW=1\nIFINDEX=7\nIFNAME=test0\nFAMILY=ipv4\n",
+                  )
+                  .expect("renewal request");
+                  assert_eq!(
+                      request,
+                      RenewalRequest {
+                          ifindex: 7,
+                          ifname: "test0".to_owned(),
+                          family: Family::Ipv4,
+                      }
+                  );
+              }
+
+              #[test]
+              fn rejects_duplicate_or_unsafe_interface_identity() {
+                  assert!(parse_request(
+                      b"RUSTD_DHCP_RENEW=1\nIFINDEX=7\nIFINDEX=8\nIFNAME=test0\n"
+                  )
+                  .is_err());
+                  assert!(parse_request(
+                      b"RUSTD_DHCP_RENEW=1\nIFINDEX=7\nIFNAME=../test0\n"
+                  )
+                  .is_err());
+              }
+          }
+          RS
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path('src/bin/rustnetworkctl.rs')
+          text = source.read_text()
+          declaration = '#[path = "rustnetworkctl_renew.rs"]\nmod renew_broker;\n\n'
+          marker = 'use libc::{\n'
+          if declaration not in text:
+              if marker not in text:
+                  raise SystemExit('rustnetworkctl import preimage missing')
+              text = text.replace(marker, declaration + marker, 1)
+          old = '        "persistent-storage" => persistent_cmd(rest),\n'
+          new = old + '        "renew-broker" => renew_broker::run(),\n'
+          if new not in text:
+              if old not in text:
+                  raise SystemExit('rustnetworkctl command table preimage missing')
+              text = text.replace(old, new, 1)
+          source.write_text(text)
+          PY
+          cat > packaging/rustd/rustd-network-renew.service <<'UNIT'
+          [Unit]
+          Description=RustD DHCP Renewal Broker
+          Documentation=man:rustnetworkctl(1)
+          After=dbus.service NetworkManager.service
+          Before=rustd-resolved.service
+
+          [Service]
+          Type=simple
+          ExecStart=/usr/bin/rustnetworkctl renew-broker
+          Restart=on-failure
+          RestartSec=1s
+          NoNewPrivileges=yes
+          ProtectSystem=strict
+          ProtectHome=yes
+          PrivateTmp=yes
+          ReadWritePaths=/run/rustd/network
+          RuntimeDirectory=rustd/network
+          RuntimeDirectoryMode=0755
+
+          [Install]
+          WantedBy=sysinit.target
+          UNIT
+          cargo fmt --all
+          cargo fmt --all -- --check
+          cargo clippy --locked --bin rustnetworkctl --tests -- -D warnings
+          cargo test --locked --bin rustnetworkctl
+          cargo build --locked --bin rustnetworkctl
+          tmp="$(mktemp -d)"
+          socket="$tmp/dhcp-renew.sock"
+          log="$tmp/dispatch.log"
+          RUSTD_NETWORK_RENEW_SOCKET="$socket" \
+          RUSTD_NETWORK_RENEW_TEST_LOG="$log" \
+          RUSTD_NETWORK_RENEW_MAX_REQUESTS=1 \
+            target/debug/rustnetworkctl renew-broker &
+          broker=$!
+          trap 'kill "$broker" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+          for _ in $(seq 1 100); do
+            [[ -S $socket ]] && break
+            sleep 0.05
+          done
+          [[ -S $socket ]]
+          python3 - "$socket" <<'PY'
+          import socket
+          import sys
+          path = sys.argv[1]
+          index = socket.if_nametoindex("lo")
+          packet = (
+              "RUSTD_DHCP_RENEW=1\n"
+              f"IFINDEX={index}\n"
+              "IFNAME=lo\n"
+              "FAMILY=any\n"
+          ).encode()
+          client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+          client.sendto(packet, path)
+          PY
+          wait "$broker"
+          grep -Eq '^ifindex=[0-9]+ ifname=lo family=any$' "$log"
+          trap - EXIT
+          rm -rf "$tmp"
+          make check-packaging
+          git diff --check
+          mkdir -p certification
+          cat > certification/dhcp-renew-broker-latest.txt <<EOF
+          schema=rustd-dhcp-renew-broker-v1
+          status=pass
+          tested_base_sha=$base_sha
+          authenticated_request=pass
+          interface_identity_validation=pass
+          per_interface_rate_limit=pass
+          no_link_cycle=pass
+          rustd_varlink_backend=pass
+          compatibility_varlink_backend=pass
+          networkmanager_reapply_backend=pass
+          dhcpcd_backend=pass
+          EOF
+          rm -f .github/workflows/land-dhcp-renew-broker.yml
+          git add -A
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Add DHCP renewal broker'
+          git pull --rebase origin main
+          cargo fmt --all -- --check
+          cargo test --locked --bin rustnetworkctl
+          git push origin HEAD:main
+      - name: Publish renewal broker diagnostic
+        if: steps.verify.outcome != 'success'
+        shell: 'bash --noprofile --norc -euo pipefail {0}'
+        run: |
+          git reset --hard HEAD
+          git fetch origin main
+          git checkout main
+          git pull --ff-only origin main
+          mkdir -p certification
+          {
+            printf 'schema=rustd-dhcp-renew-broker-diagnostic-v1\n'
+            printf 'status=failure\n'
+            printf 'tested_sha=%s\n' "$GITHUB_SHA"
+            printf '%s\n' '--- tail ---'
+            tail -n 600 /tmp/rustd-dhcp-renew-broker.log || true
+          } > certification/dhcp-renew-broker-diagnostic.txt
+          git add certification/dhcp-renew-broker-diagnostic.txt
+          git diff --cached --check
+          git config user.name 'Kenny Glowner'
+          git config user.email 'SisyphusAeolides@pm.me'
+          git commit -m 'Record DHCP renewal broker diagnostic'
+          git push origin HEAD:main
+          exit 1
