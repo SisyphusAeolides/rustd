@@ -1,5 +1,5 @@
 name: Diagnose Fedora Login1 session support
-# raw step extraction preserves zero-indented embedded Rust; diagnostic v6
+# strict raw-step extraction preserves embedded Rust and stops on the first failure
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends gfortran libdbus-1-dev libpam0g-dev pkg-config
-      - name: Run canonical Login1 patch and capture result
+      - name: Run canonical Login1 patch and capture first failure
         id: test
         continue-on-error: true
         shell: 'bash --noprofile --norc -euo pipefail {0}'
@@ -59,7 +59,7 @@ jobs:
           )
           if not all(item in script for item in required):
               raise SystemExit('Login1 extraction is incomplete')
-          Path('/tmp/login1-step.sh').write_text(script)
+          Path('/tmp/login1-step.sh').write_text('set -euo pipefail\n' + script)
           PY
           bash -x /tmp/login1-step.sh
       - name: Publish diagnostic
@@ -73,17 +73,17 @@ jobs:
           git pull --ff-only origin main
           mkdir -p certification
           {
-            printf 'schema=rustd-fedora-login1-diagnostic-v6\n'
+            printf 'schema=rustd-fedora-login1-diagnostic-v7\n'
             printf 'status=%s\n' "$outcome"
             printf 'tested_sha=%s\n' "$GITHUB_SHA"
             printf '%s\n' '--- tail ---'
-            tail -n 700 /tmp/fedora-login1.log || true
+            tail -n 320 /tmp/fedora-login1.log || true
           } > certification/fedora-login1-diagnostic.txt
           git add certification/fedora-login1-diagnostic.txt
           git diff --cached --check
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
-          git commit -m "Record Fedora Login1 ${outcome}" || exit 0
+          git commit -m "Record strict Fedora Login1 ${outcome}" || exit 0
           git pull --rebase origin main
           git push origin HEAD:main
           [[ "$outcome" == success ]]
