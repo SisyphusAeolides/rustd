@@ -2215,7 +2215,7 @@ fn cmd_bind(
             if cli.mkdir {
                 let target_dir = Path::new(&format!("/proc/{}/root", m.leader))
                     .join(dest.strip_prefix("/").unwrap_or(dest));
-                let _ = fs::create_dir_all(&target_dir);
+                let _ = fs::create_dir_all(target_dir);
             }
 
             let mut mount_cmd = Command::new("nsenter");
@@ -2582,7 +2582,7 @@ fn cmd_rename_image(source: &str, dest: &str, _cli: &Cli) -> anyhow::Result<i32>
             .map(|e| format!(".{}", e.to_string_lossy()))
             .unwrap_or_default();
         let dest_path = PathBuf::from("/var/lib/machines").join(format!("{dest}{ext}"));
-        if let Err(e) = fs::rename(src_path, &dest_path) {
+        if let Err(e) = fs::rename(src_path, dest_path) {
             eprintln!("Failed to rename image '{source}' to '{dest}': {e}");
             return Ok(1);
         }

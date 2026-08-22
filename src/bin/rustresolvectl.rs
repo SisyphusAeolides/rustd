@@ -193,7 +193,7 @@ fn parse_resolv_conf(path: &Path) -> ResolvConfInfo {
             if parts.is_empty() {
                 continue;
             }
-            match parts[0] {
+            match parts.first().copied().unwrap_or_default() {
                 "nameserver" => {
                     for ns in &parts[1..] {
                         info.nameservers.push((*ns).to_string());

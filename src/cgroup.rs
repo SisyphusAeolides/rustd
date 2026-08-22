@@ -90,7 +90,7 @@ impl CgroupManager {
     /// controllers are unavailable, or the manager cannot enable them.
     pub fn setup_delegated_root(&self) -> anyhow::Result<()> {
         let controllers_path = self.root.join("cgroup.controllers");
-        let available = fs::read_to_string(&controllers_path).map_err(|error| {
+        let available = fs::read_to_string(controllers_path).map_err(|error| {
             anyhow::anyhow!(
                 "{} is not a usable cgroup v2 delegation: {error}",
                 self.root.display()

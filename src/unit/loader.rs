@@ -156,7 +156,7 @@ fn standard_unit_search_dirs() -> Vec<PathBuf> {
 /// Collect unit names enabled under `<dir>/<unit_name>.<kind>/`.
 fn collect_dependency_links(directory: &Path, unit_name: &str, kind: &str, into: &mut Vec<String>) {
     let wants_dir = directory.join(format!("{unit_name}.{kind}"));
-    let Ok(entries) = std::fs::read_dir(&wants_dir) else {
+    let Ok(entries) = std::fs::read_dir(wants_dir) else {
         return;
     };
     for entry in entries.flatten() {

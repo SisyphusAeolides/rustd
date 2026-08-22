@@ -2227,12 +2227,9 @@ impl Manager {
         self.oom_recent.retain(|_, expires| *expires > now);
         let names: Vec<String> = self.oom_sources.keys().cloned().collect();
         for name in names {
-            if let Err(error) = oom::sync_unit(
-                &self.cgroup,
-                &name,
-                &self.oom_events,
-                &self.oom_baselines,
-            ) {
+            if let Err(error) =
+                oom::sync_unit(&self.cgroup, &name, &self.oom_events, &self.oom_baselines)
+            {
                 if !is_not_found(&error) {
                     eprintln!("rustd: synchronizing OOM state for '{name}' failed: {error}");
                 }

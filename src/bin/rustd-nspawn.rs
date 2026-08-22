@@ -425,7 +425,7 @@ fn main() {
     set_container_hostname(&machine_name).unwrap_or_else(|error| fail(error));
 
     let proc_path = root_path.join("proc");
-    fs::create_dir_all(&proc_path)
+    fs::create_dir_all(proc_path)
         .unwrap_or_else(|error| fail(format!("cannot create container /proc: {error}")));
 
     let root_c = cstring_path(&root_path).unwrap_or_else(|error| fail(error));

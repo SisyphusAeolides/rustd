@@ -37,7 +37,9 @@ fn validate_read_write_paths(paths: &[String]) -> anyhow::Result<Vec<String>> {
         .map(|raw| {
             let path = raw.strip_prefix('-').unwrap_or(raw.as_str());
             if path.is_empty() || !path.starts_with('/') {
-                return Err(anyhow!("ReadWritePaths= entry '{raw}' is not an absolute path"));
+                return Err(anyhow!(
+                    "ReadWritePaths= entry '{raw}' is not an absolute path"
+                ));
             }
             if raw.as_bytes().contains(&0) {
                 return Err(anyhow!("ReadWritePaths= entry contains a NUL byte"));
@@ -217,7 +219,8 @@ impl SecurityContext {
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(|_| anyhow!("ReadWritePaths= entry contains a NUL byte"))?;
             let pointers = strings.iter().map(|path| path.as_ptr()).collect::<Vec<_>>();
-            let rc = unsafe { rustd_sandbox_make_writable_paths(pointers.as_ptr(), pointers.len()) };
+            let rc =
+                unsafe { rustd_sandbox_make_writable_paths(pointers.as_ptr(), pointers.len()) };
             if rc < 0 {
                 return Err(anyhow!("ReadWritePaths= setup failed: errno {}", -rc));
             }

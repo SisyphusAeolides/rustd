@@ -642,7 +642,7 @@ mod tests {
         let _guard = env_lock();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("00-keyboard.conf");
-        std::env::set_var("SYSTEMD_X11_KEYBOARD_CONF", &path);
+        std::env::set_var("SYSTEMD_X11_KEYBOARD_CONF", path);
         let expected = X11Keyboard {
             layout: "us".into(),
             model: "pc105".into(),

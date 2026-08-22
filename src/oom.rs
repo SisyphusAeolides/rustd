@@ -115,9 +115,9 @@ pub fn sync_unit(
     baselines: &OomBaselines,
 ) -> anyhow::Result<()> {
     let procs = cgroup.unit_procs_path(unit_name);
-    let directory = procs.parent().ok_or_else(|| {
-        anyhow::anyhow!("unit cgroup path has no parent: {}", procs.display())
-    })?;
+    let directory = procs
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("unit cgroup path has no parent: {}", procs.display()))?;
     let mut file = File::open(directory.join("memory.events"))?;
     let current = read_counter(&mut file, "oom_kill")?;
     observe_value(unit_name, current, pending, baselines);
@@ -138,9 +138,9 @@ pub fn configure_group_kill(
     enabled: bool,
 ) -> anyhow::Result<()> {
     let procs = cgroup.unit_procs_path(unit_name);
-    let directory = procs.parent().ok_or_else(|| {
-        anyhow::anyhow!("unit cgroup path has no parent: {}", procs.display())
-    })?;
+    let directory = procs
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("unit cgroup path has no parent: {}", procs.display()))?;
     std::fs::write(
         directory.join("memory.oom.group"),
         if enabled { "1\n" } else { "0\n" },
@@ -232,15 +232,27 @@ mod tests {
 
     #[test]
     fn policy_defaults_match_manager_scope() {
-        assert_eq!(OomPolicy::resolve(ManagerScope::System, ""), OomPolicy::Stop);
-        assert_eq!(OomPolicy::resolve(ManagerScope::User, ""), OomPolicy::Continue);
-        assert_eq!(OomPolicy::resolve(ManagerScope::System, "kill"), OomPolicy::Kill);
+        assert_eq!(
+            OomPolicy::resolve(ManagerScope::System, ""),
+            OomPolicy::Stop
+        );
+        assert_eq!(
+            OomPolicy::resolve(ManagerScope::User, ""),
+            OomPolicy::Continue
+        );
+        assert_eq!(
+            OomPolicy::resolve(ManagerScope::System, "kill"),
+            OomPolicy::Kill
+        );
     }
 
     #[test]
     fn parses_oom_kill_counter() {
         assert_eq!(
-            parse_counter("low 2\nhigh 3\noom 4\noom_kill 5\noom_group_kill 1\n", "oom_kill"),
+            parse_counter(
+                "low 2\nhigh 3\noom 4\noom_kill 5\noom_group_kill 1\n",
+                "oom_kill"
+            ),
             Some(5)
         );
         assert_eq!(parse_counter("oom 4\n", "oom_kill"), None);
@@ -258,7 +270,11 @@ mod tests {
     fn queues_unit_once_when_oom_kill_increases() {
         let (_temporary, cgroup, pending, _baselines, mut source) =
             fake_source("low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n");
-        let directory = cgroup.unit_procs_path("demo.service").parent().unwrap().to_path_buf();
+        let directory = cgroup
+            .unit_procs_path("demo.service")
+            .parent()
+            .unwrap()
+            .to_path_buf();
         fs::write(
             directory.join("memory.events"),
             "low 0\nhigh 0\nmax 1\noom 1\noom_kill 1\noom_group_kill 0\n",
@@ -275,7 +291,11 @@ mod tests {
     fn synchronous_scan_shares_the_event_baseline() {
         let (_temporary, cgroup, pending, baselines, mut source) =
             fake_source("low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n");
-        let directory = cgroup.unit_procs_path("demo.service").parent().unwrap().to_path_buf();
+        let directory = cgroup
+            .unit_procs_path("demo.service")
+            .parent()
+            .unwrap()
+            .to_path_buf();
         fs::write(
             directory.join("memory.events"),
             "low 0\nhigh 0\nmax 0\noom 1\noom_kill 1\noom_group_kill 0\n",
@@ -290,7 +310,11 @@ mod tests {
     fn unrelated_memory_events_do_not_queue_oom_policy() {
         let (_temporary, cgroup, pending, _baselines, mut source) =
             fake_source("low 0\nhigh 0\nmax 0\noom 0\noom_kill 2\noom_group_kill 0\n");
-        let directory = cgroup.unit_procs_path("demo.service").parent().unwrap().to_path_buf();
+        let directory = cgroup
+            .unit_procs_path("demo.service")
+            .parent()
+            .unwrap()
+            .to_path_buf();
         fs::write(
             directory.join("memory.events"),
             "low 1\nhigh 2\nmax 3\noom 4\noom_kill 2\noom_group_kill 0\n",
@@ -306,19 +330,33 @@ mod tests {
     fn configures_kernel_group_kill_mode() {
         let (_temporary, cgroup, _pending, _baselines, _source) =
             fake_source("low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n");
-        let directory = cgroup.unit_procs_path("demo.service").parent().unwrap().to_path_buf();
+        let directory = cgroup
+            .unit_procs_path("demo.service")
+            .parent()
+            .unwrap()
+            .to_path_buf();
         fs::write(directory.join("memory.oom.group"), "0\n").unwrap();
         configure_group_kill(&cgroup, "demo.service", true).unwrap();
-        assert_eq!(fs::read_to_string(directory.join("memory.oom.group")).unwrap(), "1\n");
+        assert_eq!(
+            fs::read_to_string(directory.join("memory.oom.group")).unwrap(),
+            "1\n"
+        );
         configure_group_kill(&cgroup, "demo.service", false).unwrap();
-        assert_eq!(fs::read_to_string(directory.join("memory.oom.group")).unwrap(), "0\n");
+        assert_eq!(
+            fs::read_to_string(directory.join("memory.oom.group")).unwrap(),
+            "0\n"
+        );
     }
 
     #[test]
     fn lower_counter_rebaselines_recreated_cgroup() {
         let (_temporary, cgroup, pending, _baselines, mut source) =
             fake_source("low 0\nhigh 0\nmax 0\noom 3\noom_kill 3\noom_group_kill 0\n");
-        let directory = cgroup.unit_procs_path("demo.service").parent().unwrap().to_path_buf();
+        let directory = cgroup
+            .unit_procs_path("demo.service")
+            .parent()
+            .unwrap()
+            .to_path_buf();
         fs::write(
             directory.join("memory.events"),
             "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n",

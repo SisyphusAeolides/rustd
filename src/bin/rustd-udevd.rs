@@ -110,12 +110,7 @@ fn main() -> anyhow::Result<()> {
                 let event = &buffer[..count as usize];
                 let sequence = uevent_sequence(event);
                 if let Some(mut device) = Device::from_uevent(event) {
-                    process_device(
-                        &rules,
-                        &global_properties,
-                        &mut device,
-                        arguments.dry_run,
-                    );
+                    process_device(&rules, &global_properties, &mut device, arguments.dry_run);
                 }
                 // Publish the watermark only after this event has either been
                 // fully processed or deliberately rejected by the parser.
@@ -155,7 +150,10 @@ fn daemonize() -> io::Result<()> {
     }
 
     std::env::set_current_dir("/")?;
-    let null = fs::OpenOptions::new().read(true).write(true).open("/dev/null")?;
+    let null = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/null")?;
     for fd in libc::STDIN_FILENO..=libc::STDERR_FILENO {
         if unsafe { libc::dup2(null.as_raw_fd(), fd) } < 0 {
             return Err(io::Error::last_os_error());
@@ -288,12 +286,8 @@ mod tests {
 
     #[test]
     fn accepts_dracut_daemon_arguments() {
-        let args = Arguments::try_parse_from([
-            "rustd-udevd",
-            "--daemon",
-            "--resolve-names=never",
-        ])
-        .expect("dracut udev daemon arguments must parse");
+        let args = Arguments::try_parse_from(["rustd-udevd", "--daemon", "--resolve-names=never"])
+            .expect("dracut udev daemon arguments must parse");
         assert!(args.daemon);
         assert!(matches!(args.resolve_names, Some(ResolveNames::Never)));
     }

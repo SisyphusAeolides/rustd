@@ -12,9 +12,21 @@ use rustd::unit::section_service::{ProtectSystem, ServiceSection};
 fn wait_success(pid: libc::pid_t) {
     let mut status = 0;
     let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
-    assert_eq!(waited, pid, "waitpid failed: {}", std::io::Error::last_os_error());
-    assert!(libc::WIFEXITED(status), "sandbox payload did not exit normally: {status}");
-    assert_eq!(libc::WEXITSTATUS(status), 0, "sandbox payload failed: {status}");
+    assert_eq!(
+        waited,
+        pid,
+        "waitpid failed: {}",
+        std::io::Error::last_os_error()
+    );
+    assert!(
+        libc::WIFEXITED(status),
+        "sandbox payload did not exit normally: {status}"
+    );
+    assert_eq!(
+        libc::WEXITSTATUS(status),
+        0,
+        "sandbox payload failed: {status}"
+    );
 }
 
 #[test]
