@@ -78,7 +78,7 @@ jobs:
               dnf -y install \
                 git-core findutils make rpm-build rpmdevtools createrepo_c dnf-plugins-core \
                 selinux-policy selinux-policy-devel policycoreutils-devel bzip2 \
-                gcc gcc-gfortran python3 cargo rust pkgconf-pkg-config \
+                gcc gcc-gfortran libasan libubsan python3 cargo rust pkgconf-pkg-config \
                 dbus-devel dbus-daemon pam-devel json-c-devel openssl-devel liburing-devel \
                 tar gzip systemd systemd-libs systemd-udev
               git config --global --add safe.directory /work

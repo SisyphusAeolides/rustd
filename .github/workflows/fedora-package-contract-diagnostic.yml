@@ -23,7 +23,7 @@ jobs:
               set -euo pipefail
               dnf -y install git-core findutils make rpm-build rpmdevtools \
                 selinux-policy selinux-policy-devel policycoreutils-devel bzip2 \
-                gcc gcc-gfortran python3 cargo rust pkgconf-pkg-config \
+                gcc gcc-gfortran libasan libubsan python3 cargo rust pkgconf-pkg-config \
                 dbus-devel dbus-daemon pam-devel json-c-devel
               cp -a /source /tmp/rustd
               cd /tmp/rustd
