@@ -548,6 +548,7 @@ impl Manager {
                 .collect();
 
             let ready = self.job_queue.drain_ready(&states, &afters);
+            let dispatched_jobs = !ready.is_empty();
             self.run_ready_jobs(ready);
 
             // 5. Try to activate pending targets.
@@ -610,6 +611,14 @@ impl Manager {
 
             if let Some(result) = self.requested_lifecycle_result() {
                 return Ok(result);
+            }
+
+            // A completed dispatch batch may make ordered successor jobs
+            // runnable without producing an fd event. Re-enter scheduling
+            // immediately instead of sleeping until an unrelated wakeup or
+            // the bounded poll timeout.
+            if dispatched_jobs {
+                continue;
             }
 
             if exit_when_idle && self.is_idle() {
@@ -904,6 +913,7 @@ impl Manager {
                 if let Some(record) = self.units.get_mut(&name) {
                     reset_failed_record(record);
                 }
+                self.cleanup_unit_cgroup_if_empty(&name);
             }
         }
     }
@@ -2362,13 +2372,11 @@ impl Manager {
         // it. Treating that still-empty hierarchy as garbage deletes the path
         // the helper is about to open and every subsequent spawn fails with
         // ENOENT.
-        if self.units.get(name).is_some_and(|record| {
-            matches!(
-                record.state,
-                UnitState::Activating | UnitState::Deactivating
-            ) || record.active_pid.is_some()
-                || record.control_pid.is_some()
-        }) {
+        if self
+            .units
+            .get(name)
+            .is_some_and(unit_cgroup_must_remain_realized)
+        {
             return;
         }
 
@@ -2641,6 +2649,17 @@ fn reset_failed_record(record: &mut UnitRecord) {
     record.service_result = "success".to_owned();
     record.exec_main_code = 0;
     record.exec_main_status = 0;
+}
+
+fn unit_cgroup_must_remain_realized(record: &UnitRecord) -> bool {
+    matches!(
+        record.state,
+        UnitState::Activating
+            | UnitState::Deactivating
+            | UnitState::Failed
+            | UnitState::Maintenance
+    ) || record.active_pid.is_some()
+        || record.control_pid.is_some()
 }
 
 fn automatic_restart_delay(
@@ -3241,9 +3260,11 @@ mod tests {
         record.service_result = "exit-code".into();
         record.exec_main_code = 1;
         record.exec_main_status = 42;
+        assert!(unit_cgroup_must_remain_realized(&record));
 
         reset_failed_record(&mut record);
 
+        assert!(!unit_cgroup_must_remain_realized(&record));
         assert_eq!(record.state, UnitState::Inactive);
         assert_eq!(record.restart_count, 0);
         assert_eq!(record.last_start_ns, 0);

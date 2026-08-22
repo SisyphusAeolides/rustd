@@ -71,9 +71,14 @@ impl CgroupManager {
     /// # Errors
     /// Returns an error if the slice directory cannot be created.
     pub fn setup_root(&self) -> anyhow::Result<()> {
-        fs::create_dir_all(self.root.join(&self.slice))?;
+        let slice = self.root.join(&self.slice);
+        fs::create_dir_all(&slice)?;
         let _ = fs::write(
             self.root.join("cgroup.subtree_control"),
+            "+cpu +io +memory +pids\n",
+        );
+        let _ = fs::write(
+            slice.join("cgroup.subtree_control"),
             "+cpu +io +memory +pids\n",
         );
         Ok(())
@@ -133,7 +138,26 @@ impl CgroupManager {
                     subtree_path.display()
                 )
             })?;
-        fs::create_dir_all(self.root.join(&self.slice))?;
+        let slice = self.root.join(&self.slice);
+        fs::create_dir_all(&slice)?;
+        let slice_subtree = slice.join("cgroup.subtree_control");
+        let mut slice_subtree_file = OpenOptions::new()
+            .write(true)
+            .open(&slice_subtree)
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "{} is not writable by the RustD manager: {error}",
+                    slice_subtree.display()
+                )
+            })?;
+        slice_subtree_file
+            .write_all(b"+cpu +io +memory +pids\n")
+            .map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to enable required controllers in {}: {error}",
+                    slice_subtree.display()
+                )
+            })?;
         Ok(())
     }
 
@@ -938,12 +962,23 @@ mod tests {
         .unwrap();
         fs::write(temporary.path().join("cgroup.procs"), "").unwrap();
         fs::write(temporary.path().join("cgroup.subtree_control"), "").unwrap();
+        fs::create_dir(temporary.path().join("system.slice")).unwrap();
+        fs::write(
+            temporary.path().join("system.slice/cgroup.subtree_control"),
+            "",
+        )
+        .unwrap();
         let manager = CgroupManager::with_root(temporary.path());
 
         manager.setup_delegated_root().unwrap();
 
         assert_eq!(
             fs::read_to_string(temporary.path().join("cgroup.subtree_control")).unwrap(),
+            "+cpu +io +memory +pids\n"
+        );
+        assert_eq!(
+            fs::read_to_string(temporary.path().join("system.slice/cgroup.subtree_control"))
+                .unwrap(),
             "+cpu +io +memory +pids\n"
         );
         assert!(temporary.path().join("system.slice").is_dir());

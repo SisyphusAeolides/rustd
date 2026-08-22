@@ -13,6 +13,8 @@ OVMF_CODE="${RUSTD_OVMF_CODE:-}"
 OVMF_VARS="${RUSTD_OVMF_VARS:-}"
 QEMU_TIMEOUT="${RUSTD_ROLLBACK_QEMU_TIMEOUT:-120s}"
 LOADER_GUID="4a67b082-0a4c-41cf-b6c7-440b29bb8c4f"
+QEMU="${RUSTD_QEMU_BINARY:-}"
+GRUB_MKSTANDALONE="${RUSTD_GRUB_MKSTANDALONE:-}"
 
 cleanup() {
     status=$?
@@ -29,15 +31,30 @@ for binary in rustd rustctl rustd-bless-boot; do
         exit 1
     }
 done
-for command in busybox cpio grub-mkstandalone gzip ldd python3 qemu-system-x86_64 timeout; do
+for command in busybox cpio gzip ldd python3 timeout; do
     command -v "$command" >/dev/null || {
         echo "required command not found: $command" >&2
         exit 1
     }
 done
+if [[ -z "$QEMU" ]]; then
+    QEMU="$(command -v qemu-system-x86_64 || true)"
+    [[ -n "$QEMU" ]] || QEMU=/usr/libexec/qemu-kvm
+fi
+[[ -x "$QEMU" ]] || {
+    echo "required QEMU x86_64 binary not found" >&2
+    exit 1
+}
+if [[ -z "$GRUB_MKSTANDALONE" ]]; then
+    GRUB_MKSTANDALONE="$(command -v grub-mkstandalone || command -v grub2-mkstandalone || true)"
+fi
+[[ -x "$GRUB_MKSTANDALONE" ]] || {
+    echo "required GRUB standalone image builder not found" >&2
+    exit 1
+}
 
 if [[ -z "$KERNEL" ]]; then
-    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -print | sort -V | tail -1)"
+    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' ! -name '*+debug*' -print | sort -V | tail -1)"
 fi
 [[ -n "$KERNEL" && -r "$KERNEL" ]] || {
     echo "bootable kernel not found" >&2
@@ -268,26 +285,26 @@ INITRAMFS="$ROOT/rustd-rollback-initramfs.cpio.gz"
 
 ESP="$ROOT/esp"
 mkdir -p "$ESP/EFI/BOOT"
-cp "$KERNEL" "$ESP/vmlinuz"
-cp "$INITRAMFS" "$ESP/initramfs.cpio.gz"
 cat >"$ROOT/grub.cfg" <<'EOF'
 set timeout=0
 set default=0
 terminal_output console
-search --file --set=root /vmlinuz
+set root=(memdisk)
 linux /vmlinuz console=ttyS0 rdinit=/init panic=-1
 initrd /initramfs.cpio.gz
 boot
 EOF
-grub-mkstandalone \
+"$GRUB_MKSTANDALONE" \
     -O x86_64-efi \
     -o "$ESP/EFI/BOOT/BOOTX64.EFI" \
-    "boot/grub/grub.cfg=$ROOT/grub.cfg"
+    "boot/grub/grub.cfg=$ROOT/grub.cfg" \
+    "vmlinuz=$KERNEL" \
+    "initramfs.cpio.gz=$INITRAMFS"
 
 cp "$OVMF_VARS" "$ROOT/OVMF_VARS.fd"
 set +e
 timeout --signal=TERM --kill-after=5s "$QEMU_TIMEOUT" \
-    qemu-system-x86_64 \
+    "$QEMU" \
         -machine q35,accel=tcg \
         -m 256M \
         -smp 2 \
@@ -297,6 +314,7 @@ timeout --signal=TERM --kill-after=5s "$QEMU_TIMEOUT" \
         -drive "if=pflash,format=raw,file=$ROOT/OVMF_VARS.fd" \
         -drive "format=raw,file=fat:rw:$ESP" \
         -serial "file:$SERIAL_LOG" \
+        -monitor none \
         -display none
 qemu_status=$?
 set -e

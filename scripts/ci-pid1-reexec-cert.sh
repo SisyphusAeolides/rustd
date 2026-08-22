@@ -11,6 +11,7 @@ SERIAL_LOG="${RUSTD_PID1_SERIAL_LOG:-pid1-reexec.log}"
 KERNEL="${RUSTD_PID1_KERNEL:-}"
 QEMU_TIMEOUT="${RUSTD_PID1_QEMU_TIMEOUT:-180s}"
 CYCLES="${RUSTD_PID1_REEXEC_CYCLES:-100}"
+QEMU="${RUSTD_QEMU_BINARY:-}"
 
 if [[ ! "$CYCLES" =~ ^[0-9]+$ ]] || (( CYCLES < 100 )); then
     echo "RUSTD_PID1_REEXEC_CYCLES must be an integer >= 100" >&2
@@ -32,15 +33,23 @@ for binary in rustd rustctl; do
         exit 1
     }
 done
-for command in busybox cpio gzip ldd qemu-system-x86_64 timeout; do
+for command in busybox cpio gzip ldd timeout; do
     command -v "$command" >/dev/null || {
         echo "required command not found: $command" >&2
         exit 1
     }
 done
+if [[ -z "$QEMU" ]]; then
+    QEMU="$(command -v qemu-system-x86_64 || true)"
+    [[ -n "$QEMU" ]] || QEMU=/usr/libexec/qemu-kvm
+fi
+[[ -x "$QEMU" ]] || {
+    echo "required QEMU x86_64 binary not found" >&2
+    exit 1
+}
 
 if [[ -z "$KERNEL" ]]; then
-    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -print | sort -V | tail -1)"
+    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' ! -name '*+debug*' -print | sort -V | tail -1)"
 fi
 [[ -n "$KERNEL" && -r "$KERNEL" ]] || {
     echo "bootable kernel not found" >&2
@@ -146,6 +155,7 @@ cycles="${1:-100}"
 fail() {
     echo "RUSTD_PID1_REEXEC_CERT_FAIL: $*" >/dev/ttyS0
     /usr/bin/rustctl --no-pager --plain list-units >/dev/ttyS0 2>&1 || true
+    /usr/bin/rustctl --no-pager --plain list-jobs >/dev/ttyS0 2>&1 || true
     /usr/bin/rustctl --no-pager --plain status rustd-ci-keeper.service >/dev/ttyS0 2>&1 || true
     /bin/poweroff -f
     exit 1
@@ -242,7 +252,7 @@ INITRAMFS="$ROOT/rustd-pid1-reexec.cpio.gz"
 
 set +e
 timeout --signal=TERM --kill-after=5s "$QEMU_TIMEOUT" \
-    qemu-system-x86_64 \
+    "$QEMU" \
     -machine accel=tcg -cpu max -m 768M -smp 2 \
     -kernel "$KERNEL" -initrd "$INITRAMFS" \
     -append "console=ttyS0 panic=-1 random.trust_cpu=on rustd.unit=default.target rustd.log_target=console" \

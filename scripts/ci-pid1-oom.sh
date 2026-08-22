@@ -10,6 +10,7 @@ RELEASE_DIR="${RUSTD_RELEASE_DIR:-target/release}"
 SERIAL_LOG="${RUSTD_PID1_OOM_SERIAL_LOG:-pid1-oom-serial.log}"
 KERNEL="${RUSTD_PID1_KERNEL:-}"
 QEMU_TIMEOUT="${RUSTD_PID1_OOM_QEMU_TIMEOUT:-120s}"
+QEMU="${RUSTD_QEMU_BINARY:-}"
 
 cleanup() {
     status=$?
@@ -26,15 +27,23 @@ for binary in rustd rustctl; do
         exit 1
     }
 done
-for command in busybox cc cpio gzip ldd qemu-system-x86_64 timeout; do
+for command in busybox cc cpio gzip ldd timeout; do
     command -v "$command" >/dev/null || {
         echo "required command not found: $command" >&2
         exit 1
     }
 done
+if [[ -z "$QEMU" ]]; then
+    QEMU="$(command -v qemu-system-x86_64 || true)"
+    [[ -n "$QEMU" ]] || QEMU=/usr/libexec/qemu-kvm
+fi
+[[ -x "$QEMU" ]] || {
+    echo "required QEMU x86_64 binary not found" >&2
+    exit 1
+}
 
 if [[ -z "$KERNEL" ]]; then
-    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -print | sort -V | tail -1)"
+    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' ! -name '*+debug*' -print | sort -V | tail -1)"
 fi
 [[ -n "$KERNEL" && -r "$KERNEL" ]] || {
     echo "bootable kernel not found" >&2
@@ -311,16 +320,17 @@ INITRAMFS="$ROOT/rustd-pid1-oom.cpio.gz"
 
 set +e
 timeout --signal=TERM --kill-after=5s "$QEMU_TIMEOUT" \
-    qemu-system-x86_64 \
+    "$QEMU" \
         -machine accel=tcg \
+        -cpu max \
         -m 256M \
         -smp 2 \
-        -nodefaults \
         -no-reboot \
         -kernel "$KERNEL" \
         -initrd "$INITRAMFS" \
         -append 'console=ttyS0 rdinit=/init panic=-1' \
         -serial "file:$SERIAL_LOG" \
+        -monitor none \
         -display none
 qemu_status=$?
 set -e
