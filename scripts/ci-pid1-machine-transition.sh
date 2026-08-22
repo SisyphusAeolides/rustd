@@ -36,15 +36,31 @@ for binary in rustd rustctl; do
     fi
 done
 
-for command in busybox cpio gzip ldd qemu-system-x86_64 timeout; do
+for command in busybox cpio gzip ldd timeout; do
     command -v "$command" >/dev/null || {
         echo "required command not found: $command" >&2
         exit 1
     }
 done
 
+QEMU_BIN="${RUSTD_PID1_QEMU_BIN:-}"
+if [[ -z "$QEMU_BIN" ]]; then
+    if command -v qemu-system-x86_64 >/dev/null 2>&1; then
+        QEMU_BIN="$(command -v qemu-system-x86_64)"
+    elif [[ -x /usr/libexec/qemu-kvm ]]; then
+        QEMU_BIN=/usr/libexec/qemu-kvm
+    else
+        echo "required QEMU x86_64 binary not found" >&2
+        exit 1
+    fi
+fi
+[[ -x "$QEMU_BIN" ]] || {
+    echo "QEMU binary is not executable: $QEMU_BIN" >&2
+    exit 1
+}
+
 if [[ -z "$KERNEL" ]]; then
-    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -print | sort -V | tail -1)"
+    KERNEL="$(find /boot -maxdepth 1 \( -type f -o -type l \) -name 'vmlinuz-*' ! -name '*debug*' -print | sort -V | tail -1)"
 fi
 if [[ -z "$KERNEL" || ! -r "$KERNEL" ]]; then
     echo "bootable kernel not found" >&2
@@ -210,7 +226,7 @@ INITRAMFS="$ROOT/rustd-pid1-machine-transition.cpio.gz"
 
 set +e
 timeout --signal=TERM --kill-after=5s "$QEMU_TIMEOUT" \
-    qemu-system-x86_64 \
+    "$QEMU_BIN" \
     -machine accel=tcg \
     -cpu max \
     -m 512M \

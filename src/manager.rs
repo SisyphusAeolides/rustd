@@ -636,6 +636,16 @@ impl Manager {
             self.apply_child_exits(exits);
             self.cleanup_empty_cgroups();
 
+            if matches!(
+                r,
+                LoopResult::Reboot | LoopResult::Poweroff | LoopResult::Halt | LoopResult::Kexec
+            ) {
+                let requested = self.event_loop.take_result();
+                if let Some(result) = self.queue_shutdown_transaction(requested) {
+                    return Ok(result);
+                }
+                continue;
+            }
             if r != LoopResult::Continue {
                 return Ok(r);
             }
@@ -659,33 +669,26 @@ impl Manager {
             Some(LoopResult::Exit)
         } else {
             let requested = match self.shutdown_action.swap(SHUTDOWN_NONE, Ordering::AcqRel) {
-                SHUTDOWN_REBOOT => {
-                    self.capture_shutdown_start_timestamp();
-                    Some(LoopResult::Reboot)
-                }
-                SHUTDOWN_POWEROFF => {
-                    self.capture_shutdown_start_timestamp();
-                    Some(LoopResult::Poweroff)
-                }
-                SHUTDOWN_HALT => {
-                    self.capture_shutdown_start_timestamp();
-                    Some(LoopResult::Halt)
-                }
-                SHUTDOWN_KEXEC => {
-                    self.capture_shutdown_start_timestamp();
-                    Some(LoopResult::Kexec)
-                }
+                SHUTDOWN_REBOOT => Some(LoopResult::Reboot),
+                SHUTDOWN_POWEROFF => Some(LoopResult::Poweroff),
+                SHUTDOWN_HALT => Some(LoopResult::Halt),
+                SHUTDOWN_KEXEC => Some(LoopResult::Kexec),
                 _ => None,
             };
             if let Some(result) = requested {
-                self.begin_shutdown_transaction();
-                self.pending_shutdown_result = Some(result);
-                if self.is_idle() {
-                    return self.pending_shutdown_result.take();
-                }
+                return self.queue_shutdown_transaction(result);
             }
             None
         }
+    }
+
+    fn queue_shutdown_transaction(&mut self, result: LoopResult) -> Option<LoopResult> {
+        self.capture_shutdown_start_timestamp();
+        self.begin_shutdown_transaction();
+        self.pending_shutdown_result = Some(result);
+        self.is_idle()
+            .then(|| self.pending_shutdown_result.take())
+            .flatten()
     }
 
     fn begin_shutdown_transaction(&mut self) {

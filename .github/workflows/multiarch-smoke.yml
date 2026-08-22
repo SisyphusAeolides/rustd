@@ -32,6 +32,7 @@ jobs:
           sudo apt-get install -y \
             gfortran \
             libdbus-1-dev \
+            libjson-c-dev \
             libpam0g-dev \
             libsystemd-dev \
             libudev-dev \

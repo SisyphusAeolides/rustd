@@ -32,7 +32,7 @@ jobs:
           dnf -y install git-core findutils make rpm-build rpmdevtools \
             selinux-policy selinux-policy-devel policycoreutils-devel bzip2 \
             gcc gcc-gfortran python3 cargo rust pkgconf-pkg-config \
-            dbus-devel pam-devel json-c-devel
+            dbus-devel dbus-daemon pam-devel json-c-devel
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           fetch-depth: 0

@@ -420,6 +420,12 @@ impl EventLoop {
         Ok(self.result)
     }
 
+    /// Consume a terminal result after the service manager has translated it
+    /// into an orderly unit transaction.
+    pub fn take_result(&mut self) -> LoopResult {
+        std::mem::replace(&mut self.result, LoopResult::Continue)
+    }
+
     /// Run the event loop until a non-`Continue` result is returned.
     ///
     /// # Errors
