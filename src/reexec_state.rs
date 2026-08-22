@@ -55,11 +55,10 @@ pub fn state_path(scope: ManagerScope) -> PathBuf {
     match scope {
         ManagerScope::System => PathBuf::from("/run/rustd/reexec-state.json"),
         ManagerScope::User => {
-            let root = std::env::var_os("XDG_RUNTIME_DIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| {
-                    PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() }))
-                });
+            let root = std::env::var_os("XDG_RUNTIME_DIR").map_or_else(
+                || PathBuf::from(format!("/run/user/{}", unsafe { libc::getuid() })),
+                PathBuf::from,
+            );
             root.join("rustd/reexec-state.json")
         }
     }

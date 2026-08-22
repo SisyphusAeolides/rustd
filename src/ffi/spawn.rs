@@ -240,6 +240,7 @@ extern "C" {
 /// # Safety
 /// `p` must point to a fully initialized [`SdSpawnParams`] whose pointer fields
 /// remain valid for the duration of this call.
+#[must_use]
 pub unsafe fn rustd_spawn(p: *const SdSpawnParams) -> pid_t {
     if p.is_null() {
         return -libc::EINVAL;

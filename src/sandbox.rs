@@ -287,6 +287,11 @@ impl SecurityContext {
     }
 }
 
+/// Resolve a user name or decimal UID.
+///
+/// # Errors
+/// Returns an error when `user` contains an interior NUL byte or does not name
+/// an existing account.
 pub fn resolve_user(user: &str) -> anyhow::Result<libc::uid_t> {
     if user.is_empty() {
         #[allow(clippy::cast_sign_loss)]
@@ -303,6 +308,11 @@ pub fn resolve_user(user: &str) -> anyhow::Result<libc::uid_t> {
     Ok(unsafe { (*pw).pw_uid })
 }
 
+/// Resolve a group name or decimal GID.
+///
+/// # Errors
+/// Returns an error when `group` contains an interior NUL byte or does not name
+/// an existing group.
 pub fn resolve_group(group: &str) -> anyhow::Result<libc::gid_t> {
     if group.is_empty() {
         #[allow(clippy::cast_sign_loss)]
