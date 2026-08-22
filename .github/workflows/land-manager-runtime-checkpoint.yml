@@ -118,10 +118,196 @@ jobs:
           PY
 
           bash -x /tmp/apply-login1-source.sh
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("src/bin/rustd-logind.rs")
+          text = path.read_text()
+
+          replacements = (
+              (
+                  '''fn set_locked(id: &str, locked: bool) -> zbus::fdo::Result<()> {
+    let mut sessions = logind::sessions();
+    if let Some(session) = sessions.iter_mut().find(|session| session.id == id) {
+        session.locked = locked;
+        Ok(())
+    } else {
+        Err(zbus::fdo::Error::Failed("No such session".into()))
+    }
+}''',
+                  '''fn set_locked(id: &str, locked: bool) -> zbus::fdo::Result<()> {
+    let mut session = logind::session(id)
+        .ok_or_else(|| zbus::fdo::Error::Failed("No such session".into()))?;
+    session.locked = locked;
+    logind::save(&session).map_err(dbus_error)
+}''',
+              ),
+              (
+                  '''    fn scope(&self) -> String {
+        String::new()
+    }''',
+                  '''    fn scope(&self) -> String {
+        format!("session-{}.scope", self.id)
+    }''',
+              ),
+              (
+                  '''    fn active(&self) -> bool {
+        true
+    }''',
+                  '''    fn active(&self) -> bool {
+        logind::session(&self.id).is_some_and(|session| session.state == "active")
+    }''',
+              ),
+              (
+                  '''    fn state(&self) -> &'static str {
+        "active"
+    }''',
+                  '''    fn state(&self) -> String {
+        logind::session(&self.id)
+            .map(|session| session.state)
+            .unwrap_or_else(|| "closing".into())
+    }''',
+              ),
+              (
+                  '''    fn activate(&self) -> zbus::fdo::Result<()> {
+        Ok(())
+    }''',
+                  '''    fn activate(&self) -> zbus::fdo::Result<()> {
+        if logind::session(&self.id).is_some() {
+            Ok(())
+        } else {
+            Err(zbus::fdo::Error::Failed("No such session".into()))
+        }
+    }''',
+              ),
+          )
+          for old, new in replacements:
+              if old in text:
+                  text = text.replace(old, new, 1)
+              elif new not in text:
+                  raise SystemExit(f"Login1 source fragment is missing: {old[:40]!r}")
+
+          session_start = text.index("struct SessionObject")
+          user_start = text.index("struct UserObject", session_start)
+          session_prefix = text[:session_start]
+          session_block = text[session_start:user_start]
+          remainder = text[user_start:]
+          old = '''    fn terminate(&self) -> zbus::fdo::Result<()> {
+        Ok(())
+    }'''
+          new = '''    fn terminate(&self) -> zbus::fdo::Result<()> {
+        logind::remove(&self.id).map_err(dbus_error)
+    }'''
+          if old in session_block:
+              session_block = session_block.replace(old, new, 1)
+          elif new not in session_block:
+              raise SystemExit("session terminate source fragment is missing")
+          text = session_prefix + session_block + remainder
+
+          old = '''    fn display(&self) -> (String, OwnedObjectPath) {
+        (
+            String::new(),
+            OwnedObjectPath::try_from("/").unwrap_or_default(),
+        )
+    }'''
+          new = '''    fn display(&self) -> (String, OwnedObjectPath) {
+        let session = logind::sessions()
+            .into_iter()
+            .find(|session| session.uid == self.uid && !session.display.is_empty());
+        match session {
+            Some(session) => (
+                session.id.clone(),
+                path(logind::session_path(&session.id))
+                    .unwrap_or_else(|_| OwnedObjectPath::default()),
+            ),
+            None => (
+                String::new(),
+                OwnedObjectPath::try_from("/").unwrap_or_default(),
+            ),
+        }
+    }'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit("user display source fragment is missing")
+
+          user_start = text.index("struct UserObject")
+          seat_start = text.index("struct SeatObject", user_start)
+          prefix = text[:user_start]
+          user_block = text[user_start:seat_start]
+          suffix = text[seat_start:]
+          old = '''    fn terminate(&self) -> zbus::fdo::Result<()> {
+        Ok(())
+    }
+    fn kill(&self, signal: i32) -> zbus::fdo::Result<()> {
+        let _ = signal;
+        Ok(())
+    }'''
+          new = '''    fn terminate(&self) -> zbus::fdo::Result<()> {
+        for session in logind::sessions()
+            .into_iter()
+            .filter(|session| session.uid == self.uid)
+        {
+            logind::remove(&session.id).map_err(dbus_error)?;
+        }
+        Ok(())
+    }
+    fn kill(&self, signal: i32) -> zbus::fdo::Result<()> {
+        for session in logind::sessions()
+            .into_iter()
+            .filter(|session| session.uid == self.uid && session.leader > 0)
+        {
+            if unsafe { libc::kill(session.leader as libc::pid_t, signal) } != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(dbus_error(error));
+                }
+            }
+        }
+        Ok(())
+    }'''
+          if old in user_block:
+              user_block = user_block.replace(old, new, 1)
+          elif new not in user_block:
+              raise SystemExit("user terminate/kill source fragment is missing")
+          text = prefix + user_block + suffix
+
+          old = '''    fn active_session(&self) -> (String, OwnedObjectPath) {
+        (
+            String::new(),
+            OwnedObjectPath::try_from("/").unwrap_or_default(),
+        )
+    }'''
+          new = '''    fn active_session(&self) -> (String, OwnedObjectPath) {
+        let session = logind::sessions()
+            .into_iter()
+            .find(|session| session.seat == self.id && session.state == "active");
+        match session {
+            Some(session) => (
+                session.id.clone(),
+                path(logind::session_path(&session.id))
+                    .unwrap_or_else(|_| OwnedObjectPath::default()),
+            ),
+            None => (
+                String::new(),
+                OwnedObjectPath::try_from("/").unwrap_or_default(),
+            ),
+        }
+    }'''
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit("seat active-session source fragment is missing")
+
+          path.write_text(text)
+          PY
+
           bash -x /tmp/apply-renewal-source.sh
           bash -x /tmp/apply-full-abi-source.sh
 
           grep -Fq 'async fn create_session(' src/bin/rustd-logind.rs
+          grep -Fq 'logind::save(&session).map_err(dbus_error)' src/bin/rustd-logind.rs
           grep -Fq 'renew-broker' src/bin/rustnetworkctl.rs
           test -f src/bin/rustnetworkctl_renew.rs
           test -f packaging/rustd/rustd-network-renew.service
