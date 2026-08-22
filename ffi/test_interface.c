@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #include <assert.h>
+#include <stddef.h>
 
 unsigned rustd_interface_abi_version(void);
 int rustd_interface_valid_object_path(const char *path);
