@@ -1,6 +1,6 @@
 schema=rustd-final-abi-closure-v1
 status=pass
-tested_sha=6c323600237b52a8eef69301a532d8abce5a3399
+tested_sha=232e349ef8998cf5db0706283a5c1350a1f4f115
 required=184
 supported=184
 unsupported=0
