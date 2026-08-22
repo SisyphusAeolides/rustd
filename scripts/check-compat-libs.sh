@@ -42,15 +42,17 @@ if readelf -d "$systemd_lib" "$udev_lib" | grep -Eq \
 fi
 pass "compatibility libraries have no systemd/udev runtime dependency"
 
+systemd_symbols="$(nm -D --defined-only "$systemd_lib")"
+udev_symbols="$(nm -D --defined-only "$udev_lib")"
 missing=0
 while IFS= read -r symbol; do
     [[ -n "$symbol" && "${symbol:0:1}" != '#' ]] || continue
     case "$symbol" in
-        udev_*) library="$udev_lib" ;;
-        sd_*) library="$systemd_lib" ;;
+        udev_*) symbols="$udev_symbols" ;;
+        sd_*) symbols="$systemd_symbols" ;;
         *) continue ;;
     esac
-    if ! nm -D --defined-only "$library" | grep -Eq "[[:space:]][TDRB] ${symbol}(@@|$)"; then
+    if ! grep -Eq "[[:space:]][TDRB] ${symbol}(@@|$)" <<<"$symbols"; then
         echo "missing installed compatibility symbol: $symbol" >&2
         missing=1
     fi
