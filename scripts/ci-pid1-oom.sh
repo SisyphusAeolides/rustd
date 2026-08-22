@@ -104,6 +104,29 @@ copy_shared_libraries() {
 copy_shared_libraries "$RELEASE_DIR/rustd"
 copy_shared_libraries "$RELEASE_DIR/rustctl"
 copy_shared_libraries "$ROOT/oom-hog"
+if [[ -x /usr/bin/dbus-daemon ]]; then
+    install -m0755 /usr/bin/dbus-daemon "$INITROOT/usr/bin/dbus-daemon"
+    copy_shared_libraries /usr/bin/dbus-daemon
+else
+    echo "required command not found: dbus-daemon" >&2
+    exit 1
+fi
+
+mkdir -p "$INITROOT/etc/dbus-1" "$INITROOT/usr/share/dbus-1"
+cat >"$INITROOT/usr/share/dbus-1/system.conf" <<'EOF'
+<busconfig>
+  <type>system</type>
+  <user>root</user>
+  <listen>unix:path=/run/dbus/system_bus_socket</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+cp "$INITROOT/usr/share/dbus-1/system.conf" "$INITROOT/etc/dbus-1/system.conf"
 
 cat >"$INITROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
@@ -254,11 +277,13 @@ set -eu
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
-mkdir -p /dev/pts /dev/shm /run /tmp /sys/fs/cgroup
+mkdir -p /dev/pts /dev/shm /run /run/dbus /tmp /sys/fs/cgroup
 mount -t devpts devpts /dev/pts
 mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run
 mount -t cgroup2 none /sys/fs/cgroup
+
+/usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --fork --nopidfile
 
 echo 'RUSTD_PID1_OOM_BOOT_BEGIN' >/dev/ttyS0
 exec >/dev/ttyS0 2>&1
