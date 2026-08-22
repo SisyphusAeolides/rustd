@@ -90,7 +90,7 @@ jobs:
           if [ "$status" = pass ]; then
               rm -f certification/readwritepaths-build-diagnostic.txt
           fi
-          git add -A certification/readwritepaths-latest.txt certification/readwritepaths-build-diagnostic.txt
+          git add -A certification/
           if git diff --cached --quiet; then
               [ "$status" = pass ]
               exit

@@ -45,6 +45,8 @@ jobs:
       - name: Bind resolver checkout to RustD pin
         shell: 'bash --noprofile --norc -euo pipefail {0}'
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/rustd-resolved"
           pinned="$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)"
           [[ $pinned =~ ^[0-9a-f]{40}$ ]]
           git -C rustd-resolved fetch origin "$pinned"
