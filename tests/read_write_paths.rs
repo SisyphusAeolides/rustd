@@ -53,7 +53,10 @@ fn production_spawn_strict_root_preserves_declared_writable_exception() {
     };
     let security = SecurityContext::from_service(&section).expect("resolve strict sandbox context");
     assert_eq!(security.protect_system, 3);
-    assert_eq!(security.read_write_paths, [writable_path.clone()]);
+    assert_eq!(
+        security.read_write_paths,
+        std::slice::from_ref(&writable_path)
+    );
 
     let root_exception = ServiceSection {
         read_write_paths: vec!["/".to_owned()],

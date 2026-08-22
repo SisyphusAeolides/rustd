@@ -131,7 +131,7 @@ impl Manager {
         remote: bool,
         remote_user: String,
         remote_host: String,
-        _properties: Vec<(String, zbus::zvariant::OwnedValue)>,
+        properties: Vec<(String, zbus::zvariant::OwnedValue)>,
         #[zbus(connection)] connection: &zbus::Connection,
     ) -> zbus::fdo::Result<(
         String,
@@ -143,6 +143,7 @@ impl Manager {
         u32,
         bool,
     )> {
+        drop(properties);
         let (user, gid) =
             passwd_record(uid).ok_or_else(|| zbus::fdo::Error::Failed("No such user".into()))?;
         let runtime = logind::prepare_user_runtime(uid, gid).map_err(dbus_error)?;
@@ -481,9 +482,7 @@ impl SessionObject {
 
     #[zbus(property)]
     fn seat(&self) -> (String, OwnedObjectPath) {
-        let seat = logind::session(&self.id)
-            .map(|session| session.seat)
-            .unwrap_or_else(|| "seat0".into());
+        let seat = logind::session(&self.id).map_or_else(|| "seat0".into(), |session| session.seat);
         (
             seat.clone(),
             path(logind::seat_path(&seat)).unwrap_or_else(|_| OwnedObjectPath::default()),
@@ -575,9 +574,7 @@ impl SessionObject {
 
     #[zbus(property)]
     fn state(&self) -> String {
-        logind::session(&self.id)
-            .map(|session| session.state)
-            .unwrap_or_else(|| "closing".into())
+        logind::session(&self.id).map_or_else(|| "closing".into(), |session| session.state)
     }
 
     #[zbus(property)]
