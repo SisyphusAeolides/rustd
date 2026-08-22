@@ -1,6 +1,6 @@
 schema=rustd-sd-bus-behavior-v1
 status=failure
-tested_sha=d0a6d76387ac5813568e06df2862c3f0207b700f
+tested_sha=232e349ef8998cf5db0706283a5c1350a1f4f115
 behavior_outcome=failure
 backend=libdbus-1
 session_bus=end-to-end
