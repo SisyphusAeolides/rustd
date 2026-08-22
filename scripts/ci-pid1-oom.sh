@@ -281,6 +281,7 @@ mkdir -p /dev/pts /dev/shm /run /run/dbus /tmp /sys/fs/cgroup
 mount -t devpts devpts /dev/pts
 mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run
+mkdir -p /run/dbus
 mount -t cgroup2 none /sys/fs/cgroup
 
 /usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --fork --nopidfile

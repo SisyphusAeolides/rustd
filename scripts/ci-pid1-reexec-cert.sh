@@ -76,6 +76,29 @@ copy_shared_libraries() {
 }
 copy_shared_libraries "$RELEASE_DIR/rustd"
 copy_shared_libraries "$RELEASE_DIR/rustctl"
+if [[ -x /usr/bin/dbus-daemon ]]; then
+    install -m0755 /usr/bin/dbus-daemon "$INITROOT/usr/bin/dbus-daemon"
+    copy_shared_libraries /usr/bin/dbus-daemon
+else
+    echo "required command not found: dbus-daemon" >&2
+    exit 1
+fi
+
+mkdir -p "$INITROOT/etc/dbus-1" "$INITROOT/usr/share/dbus-1"
+cat >"$INITROOT/usr/share/dbus-1/system.conf" <<'EOF'
+<busconfig>
+  <type>system</type>
+  <user>root</user>
+  <listen>unix:path=/run/dbus/system_bus_socket</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+cp "$INITROOT/usr/share/dbus-1/system.conf" "$INITROOT/etc/dbus-1/system.conf"
 
 cat >"$INITROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
@@ -201,7 +224,9 @@ mkdir -p /dev/pts /dev/shm /run /run/rustd /tmp /sys/fs/cgroup
 mount -t devpts devpts /dev/pts
 mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run
+mkdir -p /run/dbus
 mount -t cgroup2 none /sys/fs/cgroup
+/usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --fork --nopidfile
 echo 'RUSTD_PID1_REEXEC_BOOT_BEGIN' >/dev/ttyS0
 exec >/dev/ttyS0 2>&1
 /bin/sh /usr/lib/rustd/reexec-cert.sh '$CYCLES' &

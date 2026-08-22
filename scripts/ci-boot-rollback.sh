@@ -99,6 +99,29 @@ copy_shared_libraries() {
 copy_shared_libraries "$RELEASE_DIR/rustd"
 copy_shared_libraries "$RELEASE_DIR/rustctl"
 copy_shared_libraries "$RELEASE_DIR/rustd-bless-boot"
+if [[ -x /usr/bin/dbus-daemon ]]; then
+    install -m0755 /usr/bin/dbus-daemon "$INITROOT/usr/bin/dbus-daemon"
+    copy_shared_libraries /usr/bin/dbus-daemon
+else
+    echo "required command not found: dbus-daemon" >&2
+    exit 1
+fi
+
+mkdir -p "$INITROOT/etc/dbus-1" "$INITROOT/usr/share/dbus-1"
+cat >"$INITROOT/usr/share/dbus-1/system.conf" <<'EOF'
+<busconfig>
+  <type>system</type>
+  <user>root</user>
+  <listen>unix:path=/run/dbus/system_bus_socket</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+cp "$INITROOT/usr/share/dbus-1/system.conf" "$INITROOT/etc/dbus-1/system.conf"
 
 cat >"$INITROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
@@ -225,7 +248,9 @@ mkdir -p /dev/pts /dev/shm /run /tmp /sys/fs/cgroup
 mount -t devpts devpts /dev/pts
 mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run
+mkdir -p /run/dbus
 mount -t cgroup2 none /sys/fs/cgroup
+/usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --fork --nopidfile
 
 echo 'RUSTD_BOOT_ROLLBACK_BEGIN' >/dev/ttyS0
 exec >/dev/ttyS0 2>&1
@@ -249,6 +274,7 @@ cat >"$ROOT/grub.cfg" <<'EOF'
 set timeout=0
 set default=0
 terminal_output console
+search --file --set=root /vmlinuz
 linux /vmlinuz console=ttyS0 rdinit=/init panic=-1
 initrd /initramfs.cpio.gz
 boot
