@@ -1,6 +1,7 @@
 name: sd-bus header independence certification
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:

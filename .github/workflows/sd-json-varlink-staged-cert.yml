@@ -2,6 +2,7 @@ name: JSON Varlink staged certification
 # trigger
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:

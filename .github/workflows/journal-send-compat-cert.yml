@@ -1,6 +1,7 @@
 name: Journal send compatibility certification
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
