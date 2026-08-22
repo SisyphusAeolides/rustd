@@ -1,6 +1,6 @@
 schema=rustd-fedora-package-contract-v5
 status=success
-tested_sha=36793484981e8544661995d11abcb109e7bd59e2
+tested_sha=bbf5c73e664baacc34d765285a33811ce4b52e15
 selinux_reference_policy=compiled
 rpm_specs=parsed
 capability.systemd=rustd-fedora-compat
