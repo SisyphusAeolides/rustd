@@ -1,0 +1,6 @@
+schema=rustd-json-varlink-staged-v1
+status=pass
+tested_sha=514b0ca4d243b771bb40f14824767f392593e365
+behavior_outcome=success
+backend=json-c+af-unix
+systemd_headers=none
