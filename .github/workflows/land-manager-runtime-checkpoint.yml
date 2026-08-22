@@ -81,6 +81,7 @@ jobs:
           manifest.write_text(text)
 
           marker = "        run: |\n"
+
           workflow = Path(".github/workflows/land-fedora-login-session.yml").read_text()
           step = workflow.index(
               "      - name: Add complete Login1 session registration path\n"
@@ -101,6 +102,21 @@ jobs:
           script = script[script.index("cat > src/bin/rustnetworkctl_renew.rs") :]
           script = script[: script.index("cargo fmt --all\n")]
           Path("/tmp/apply-renewal-source.sh").write_text("set -euo pipefail\n" + script)
+
+          workflow = Path(".github/workflows/integrate-sd-bus-production.yml").read_text()
+          step = workflow.index(
+              "      - name: Verify bus behavior and switch production ABI\n"
+          )
+          start = workflow.index(marker, step) + len(marker)
+          raw = workflow[start:]
+          lines = [line[10:] if line.startswith("          ") else line for line in raw.splitlines()]
+          script = "\n".join(lines) + "\n"
+          script = script[: script.index("git fetch origin main")]
+          script = script.replace(
+              "STUB_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}",
+              "UNSUPPORTED_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}",
+          )
+          Path("/tmp/apply-sd-bus-source.sh").write_text(script)
           PY
 
           bash -x /tmp/apply-login1-source.sh
@@ -227,68 +243,15 @@ mod login1_runtime_tests {
           PY
 
           bash -x /tmp/apply-renewal-source.sh
+          bash -x /tmp/apply-sd-bus-source.sh
 
           grep -Fq 'async fn create_session(' src/bin/rustd-logind.rs
           grep -Fq 'renew-broker' src/bin/rustnetworkctl.rs
           test -f src/bin/rustnetworkctl_renew.rs
           test -f packaging/rustd/rustd-network-renew.service
-
-          grep -Fq 'dbus_connection_read_write_dispatch' libs/compat/sd_bus_impl.c
-          cc -std=c17 -Wall -Wextra -Werror -Ilibs/compat -Iinclude \
-            $(pkg-config --cflags dbus-1) \
-            libs/tests/test_sd_bus_impl.c libs/compat/sd_bus_impl.c \
-            $(pkg-config --libs dbus-1) -o /tmp/test-sd-bus
-          dbus-run-session -- /tmp/test-sd-bus
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          makefile = Path("Makefile")
-          text = makefile.read_text()
-          start = text.index("$(LIBS_DIR)/libsystemd.so.0:")
-          end = text.index("\n$(LIBS_DIR)/librustd_service.so.1:", start)
-          block = text[start:end]
-          block = block.replace(
-              "libs/compat/sd_bus_stubs.c",
-              "libs/compat/sd_bus_impl.c",
-          )
-          compile_old = "\t$(CC) $(CFLAGS) -fPIC $(LIB_CPPFLAGS) -shared \\\n"
-          compile_new = "\t$(CC) $(CFLAGS) -fPIC $(LIB_CPPFLAGS) $(shell pkg-config --cflags dbus-1) -shared \\\n"
-          if "$(shell pkg-config --cflags dbus-1)" not in block:
-              if compile_old not in block:
-                  raise SystemExit("libsystemd compile line missing")
-              block = block.replace(compile_old, compile_new, 1)
-          libraries_old = "\t\t-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 \\\n"
-          libraries_new = "\t\t-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 $(shell pkg-config --libs dbus-1) \\\n"
-          if "$(shell pkg-config --libs dbus-1)" not in block:
-              if libraries_old not in block:
-                  raise SystemExit("libsystemd link line missing")
-              block = block.replace(libraries_old, libraries_new, 1)
-          makefile.write_text(text[:start] + block + text[end:])
-
-          closure = Path("scripts/check-compat-closure.py")
-          text = closure.read_text()
-          text = text.replace(
-              'STUB_DATA_SYMBOLS = {"sd_bus_object_vtable_format"}',
-              'STUB_DATA_SYMBOLS = set()',
-          )
-          text = text.replace(
-              '        STUB_SOURCE,\n',
-              '        Path("libs/compat/sd_bus_impl.c"),\n',
-          )
-          text = text.replace(
-              '            if relative == STUB_SOURCE and name not in SUPPORTED_STUB_FUNCTIONS:\n                unsupported.add(name)\n                continue\n',
-              '',
-          )
-          closure.write_text(text)
-
-          readiness = Path("scripts/check-compat-source-readiness.py")
-          text = readiness.read_text().replace(
-              '        Path("libs/compat/sd_bus_stubs.c"),\n',
-              '        Path("libs/compat/sd_bus_impl.c"),\n',
-          )
-          readiness.write_text(text)
-          PY
+          grep -Fq 'libs/compat/sd_bus_impl.c' Makefile
+          ! grep -Fq 'libs/compat/sd_bus_stubs.c' Makefile
+          grep -Fq 'UNSUPPORTED_DATA_SYMBOLS = set()' scripts/check-compat-closure.py
 
           cargo +stable fmt --all
           cargo +stable fmt --all -- --check
