@@ -13,6 +13,7 @@ BuildRequires:  gcc-gfortran
 BuildRequires:  make
 BuildRequires:  python3
 BuildRequires:  pkgconfig(dbus-1)
+BuildRequires:  dbus-daemon
 BuildRequires:  pkgconfig(json-c)
 
 Requires:       rustd%{?_isa} = %{version}-%{release}

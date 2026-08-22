@@ -171,7 +171,7 @@ check-compat: compat
 	$(CC) $(CFLAGS) $(COMPAT_CFLAGS) -Ilibs/compat libs/tests/test_sd_bus_impl.c \
 		-Wl,-rpath,$(abspath $(LIBS_DIR)) -L$(LIBS_DIR) -lsystemd \
 		-o build/test_sd_bus_impl
-	./build/test_sd_bus_impl
+	dbus-run-session -- ./build/test_sd_bus_impl
 	$(CC) $(CFLAGS) $(COMPAT_CFLAGS) -Ilibs/compat libs/tests/test_sd_json_varlink_impl.c \
 		-Wl,-rpath,$(abspath $(LIBS_DIR)) -L$(LIBS_DIR) -lsystemd \
 		-o build/test_sd_json_varlink_impl
