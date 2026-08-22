@@ -61,8 +61,8 @@ fn reap_inhibitors(map: &mut HashMap<u64, InhibitorEntry>) {
 }
 
 fn set_locked(id: &str, locked: bool) -> zbus::fdo::Result<()> {
-    let mut session = logind::session(id)
-        .ok_or_else(|| zbus::fdo::Error::Failed("No such session".into()))?;
+    let mut session =
+        logind::session(id).ok_or_else(|| zbus::fdo::Error::Failed("No such session".into()))?;
     session.locked = locked;
     logind::save(&session).map_err(dbus_error)
 }
@@ -143,8 +143,8 @@ impl Manager {
         u32,
         bool,
     )> {
-        let (user, gid) = passwd_record(uid)
-            .ok_or_else(|| zbus::fdo::Error::Failed("No such user".into()))?;
+        let (user, gid) =
+            passwd_record(uid).ok_or_else(|| zbus::fdo::Error::Failed("No such user".into()))?;
         let runtime = logind::prepare_user_runtime(uid, gid).map_err(dbus_error)?;
         let id = loop {
             let candidate = format!("r{}", NEXT_SESSION.fetch_add(1, Ordering::Relaxed));
@@ -570,8 +570,7 @@ impl SessionObject {
 
     #[zbus(property)]
     fn active(&self) -> bool {
-        logind::session(&self.id)
-            .is_some_and(|session| session.state == "active")
+        logind::session(&self.id).is_some_and(|session| session.state == "active")
     }
 
     #[zbus(property)]

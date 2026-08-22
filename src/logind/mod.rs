@@ -63,8 +63,14 @@ fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
 impl Session {
     fn from_map(id: String, values: BTreeMap<String, String>) -> Self {
         Self {
-            uid: values.get("UID").and_then(|value| value.parse().ok()).unwrap_or(0),
-            gid: values.get("GID").and_then(|value| value.parse().ok()).unwrap_or(0),
+            uid: values
+                .get("UID")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
+            gid: values
+                .get("GID")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
             leader: values
                 .get("LEADER")
                 .and_then(|value| value.parse().ok())
@@ -180,8 +186,9 @@ pub fn prepare_user_runtime(uid: u32, gid: u32) -> io::Result<PathBuf> {
     let effective_uid = unsafe { libc::geteuid() };
     let effective_gid = unsafe { libc::getegid() };
     if effective_uid == 0 {
-        let c_path = CString::new(path.as_os_str().as_bytes())
-            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "runtime path contains NUL"))?;
+        let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidInput, "runtime path contains NUL")
+        })?;
         if unsafe { libc::chown(c_path.as_ptr(), uid, gid) } != 0 {
             return Err(io::Error::last_os_error());
         }
@@ -312,10 +319,7 @@ pub fn rebuild_summaries() -> io::Result<()> {
             .join(" ");
         atomic_write(
             &directory("seats").join(&seat),
-            &format!(
-                "ID={seat}\nACTIVE_SESSION={}\nSESSIONS={ids}\n",
-                first.id
-            ),
+            &format!("ID={seat}\nACTIVE_SESSION={}\nSESSIONS={ids}\n", first.id),
         )?;
     }
     Ok(())
