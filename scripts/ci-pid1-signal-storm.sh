@@ -11,6 +11,7 @@ SERIAL_LOG="${RUSTD_PID1_SERIAL_LOG:-pid1-signal-storm.log}"
 KERNEL="${RUSTD_PID1_KERNEL:-}"
 QEMU_TIMEOUT="${RUSTD_PID1_QEMU_TIMEOUT:-120s}"
 SIGNAL_COUNT="${RUSTD_PID1_SIGNAL_COUNT:-1000}"
+QEMU="${RUSTD_QEMU_BINARY:-}"
 
 if [[ ! "$SIGNAL_COUNT" =~ ^[0-9]+$ ]] || (( SIGNAL_COUNT < 1000 )); then
     echo "RUSTD_PID1_SIGNAL_COUNT must be an integer >= 1000" >&2
@@ -33,15 +34,23 @@ for binary in rustd rustctl; do
     fi
 done
 
-for command in busybox cpio gzip ldd qemu-system-x86_64 timeout; do
+for command in busybox cpio gzip ldd timeout; do
     command -v "$command" >/dev/null || {
         echo "required command not found: $command" >&2
         exit 1
     }
 done
+if [[ -z "$QEMU" ]]; then
+    QEMU="$(command -v qemu-system-x86_64 || true)"
+    [[ -n "$QEMU" ]] || QEMU=/usr/libexec/qemu-kvm
+fi
+[[ -x "$QEMU" ]] || {
+    echo "required QEMU x86_64 binary not found" >&2
+    exit 1
+}
 
 if [[ -z "$KERNEL" ]]; then
-    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -print | sort -V | tail -1)"
+    KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' ! -name '*+debug*' -print | sort -V | tail -1)"
 fi
 if [[ -z "$KERNEL" || ! -r "$KERNEL" ]]; then
     echo "bootable kernel not found" >&2
@@ -53,6 +62,7 @@ mkdir -p \
     "$INITROOT/bin" \
     "$INITROOT/dev/pts" \
     "$INITROOT/dev/shm" \
+    "$INITROOT/etc/dbus-1" \
     "$INITROOT/etc/rustd/system" \
     "$INITROOT/proc" \
     "$INITROOT/run" \
@@ -60,6 +70,7 @@ mkdir -p \
     "$INITROOT/tmp" \
     "$INITROOT/usr/bin" \
     "$INITROOT/usr/lib/rustd" \
+    "$INITROOT/usr/share/dbus-1" \
     "$INITROOT/var"
 ln -s ../run "$INITROOT/var/run"
 
@@ -87,6 +98,28 @@ copy_shared_libraries() {
 
 copy_shared_libraries "$RELEASE_DIR/rustd"
 copy_shared_libraries "$RELEASE_DIR/rustctl"
+if [[ -x /usr/bin/dbus-daemon ]]; then
+    install -m0755 /usr/bin/dbus-daemon "$INITROOT/usr/bin/dbus-daemon"
+    copy_shared_libraries /usr/bin/dbus-daemon
+else
+    echo "required command not found: dbus-daemon" >&2
+    exit 1
+fi
+
+cat >"$INITROOT/usr/share/dbus-1/system.conf" <<'EOF'
+<busconfig>
+  <type>system</type>
+  <user>root</user>
+  <listen>unix:path=/run/dbus/system_bus_socket</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+EOF
+cp "$INITROOT/usr/share/dbus-1/system.conf" "$INITROOT/etc/dbus-1/system.conf"
 
 cat >"$INITROOT/etc/passwd" <<'EOF'
 root:x:0:0:root:/root:/bin/sh
@@ -242,6 +275,8 @@ mount -t devpts devpts /dev/pts
 mount -t tmpfs tmpfs /dev/shm
 mount -t tmpfs tmpfs /run
 mount -t cgroup2 none /sys/fs/cgroup
+mkdir -p /run/dbus
+/usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --fork --nopidfile
 echo 'RUSTD_PID1_SIGNAL_STORM_BOOT_BEGIN' >/dev/ttyS0
 exec >/dev/ttyS0 2>&1
 exec /usr/lib/rustd/rustd
@@ -258,7 +293,7 @@ INITRAMFS="$ROOT/rustd-pid1-signal-storm.cpio.gz"
 
 set +e
 timeout --signal=TERM --kill-after=5s "$QEMU_TIMEOUT" \
-    qemu-system-x86_64 \
+    "$QEMU" \
     -machine accel=tcg \
     -cpu max \
     -m 512M \

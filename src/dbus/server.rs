@@ -109,6 +109,10 @@ impl DbusServer {
         let handle = thread::Builder::new()
             .name("rustd-dbus".into())
             .spawn(move || {
+                if let Err(error) = crate::event::signal::block_all_signals_for_current_thread() {
+                    eprintln!("rustd: D-Bus worker signal mask setup failed: {error}");
+                    return;
+                }
                 rt.block_on(async move {
                     let fatal_exit_requested = Arc::clone(&exit_requested);
                     let fatal_wake = wake.clone();

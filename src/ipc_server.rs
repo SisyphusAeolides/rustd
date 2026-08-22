@@ -83,6 +83,10 @@ impl IpcServer {
         std::thread::Builder::new()
             .name("ipc-server".into())
             .spawn(move || {
+                if let Err(error) = crate::event::signal::block_all_signals_for_current_thread() {
+                    eprintln!("rustd: IPC worker signal mask setup failed: {error}");
+                    return;
+                }
                 server_loop(
                     &thr_listener,
                     &thr_snapshot,

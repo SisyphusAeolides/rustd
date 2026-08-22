@@ -7,6 +7,34 @@
 
 use std::os::unix::io::{FromRawFd, OwnedFd};
 
+/// Block every signal in the calling thread so process-directed signals remain
+/// pending for the manager's signalfd. Internal worker threads call this at
+/// entry as a defense against runtimes or libraries changing their mask while
+/// creating the thread.
+pub(crate) fn block_all_signals_for_current_thread() -> anyhow::Result<()> {
+    let mut mask = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+    // Safety: `sigfillset` initializes the provided sigset_t and
+    // `pthread_sigmask` only reads it for the duration of the call.
+    let fill_result = unsafe { libc::sigfillset(mask.as_mut_ptr()) };
+    if fill_result != 0 {
+        return Err(anyhow::anyhow!("sigfillset failed: errno {}", errno()));
+    }
+    // Safety: the successful call above initialized `mask`.
+    let mask = unsafe { mask.assume_init() };
+    // pthread_sigmask returns an errno value directly rather than setting
+    // errno.
+    let result = unsafe { libc::pthread_sigmask(libc::SIG_BLOCK, &mask, std::ptr::null_mut()) };
+    if result != 0 {
+        return Err(anyhow::anyhow!("pthread_sigmask failed: errno {result}"));
+    }
+    Ok(())
+}
+
+fn errno() -> libc::c_int {
+    // Safety: libc exposes a valid thread-local errno pointer on Linux.
+    unsafe { *libc::__errno_location() }
+}
+
 /// Fixed (non-RT) signals that PID 1 manages via signalfd.
 ///
 /// `libc::SIGRTMIN` is a function on Linux (the value is not a compile-time
@@ -116,5 +144,40 @@ impl SignalFd {
         } else {
             Err(anyhow::anyhow!("signalfd_read failed: errno {}", -r))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::block_all_signals_for_current_thread;
+
+    #[test]
+    fn worker_signal_mask_blocks_realtime_manager_signals() {
+        std::thread::spawn(|| {
+            let mut empty = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+            // Safety: these libc calls initialize and then install the local
+            // signal set for this test thread only.
+            assert_eq!(unsafe { libc::sigemptyset(empty.as_mut_ptr()) }, 0);
+            let empty = unsafe { empty.assume_init() };
+            assert_eq!(
+                unsafe { libc::pthread_sigmask(libc::SIG_SETMASK, &empty, std::ptr::null_mut()) },
+                0
+            );
+
+            block_all_signals_for_current_thread().unwrap();
+
+            let mut current = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+            assert_eq!(
+                unsafe {
+                    libc::pthread_sigmask(libc::SIG_SETMASK, std::ptr::null(), current.as_mut_ptr())
+                },
+                0
+            );
+            let current = unsafe { current.assume_init() };
+            assert_eq!(unsafe { libc::sigismember(&current, libc::SIGRTMIN()) }, 1);
+            assert_eq!(unsafe { libc::sigismember(&current, libc::SIGTERM) }, 1);
+        })
+        .join()
+        .unwrap();
     }
 }
