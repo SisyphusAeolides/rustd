@@ -38,7 +38,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             build-essential dbus gfortran libdbus-1-dev libpam0g-dev \
-            libjson-c-dev libssl-dev liburing-dev pkg-config python3
+            libjson-c-dev libssl-dev libudev-dev liburing-dev pkg-config python3
 
       - name: Apply and verify manager runtime checkpoint
         shell: 'bash --noprofile --norc -euo pipefail {0}'
@@ -104,62 +104,55 @@ jobs:
           script = script[: script.index("cargo fmt --all\n")]
           Path("/tmp/apply-renewal-source.sh").write_text("set -euo pipefail\n" + script)
 
-          integration = Path(".github/workflows/integrate-sd-bus-production.yml").read_text()
-          step = integration.index(
-              "      - name: Verify bus behavior and switch production ABI\n"
+          closure = Path(".github/workflows/land-full-abi-v2.yml").read_text()
+          step = closure.index(
+              "      - name: Apply, verify, and commit complete ABI\n"
           )
-          start = integration.index(marker, step) + len(marker)
-          raw = integration[start:]
+          start = closure.index(marker, step) + len(marker)
+          raw = closure[start:]
           lines = [line[10:] if line.startswith("          ") else line for line in raw.splitlines()]
           script = "\n".join(lines) + "\n"
-          script = script[: script.index("git fetch origin main")]
-          script = script.replace(
-              "cs=cs.replace('STUB_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'STUB_DATA_SYMBOLS = set()')",
-              "cs=cs.replace('UNSUPPORTED_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'UNSUPPORTED_DATA_SYMBOLS = set()')",
-          )
-          Path("/tmp/apply-sd-bus-source.sh").write_text(script)
+          script = script[script.index("python3 - <<'PY'\n") :]
+          script = script[: script.index("mkdir -p certification\n")]
+          Path("/tmp/apply-full-abi-source.sh").write_text("set -euo pipefail\n" + script)
           PY
 
           bash -x /tmp/apply-login1-source.sh
           bash -x /tmp/apply-renewal-source.sh
-          bash -x /tmp/apply-sd-bus-source.sh
+          bash -x /tmp/apply-full-abi-source.sh
 
           grep -Fq 'async fn create_session(' src/bin/rustd-logind.rs
           grep -Fq 'renew-broker' src/bin/rustnetworkctl.rs
           test -f src/bin/rustnetworkctl_renew.rs
           test -f packaging/rustd/rustd-network-renew.service
           grep -Fq 'libs/compat/sd_bus_impl.c' Makefile
+          grep -Fq 'libs/compat/journal_send_impl.c' Makefile
+          grep -Fq 'libs/compat/sd_json_varlink_impl.c' Makefile
+          grep -Fq 'libs/compat/sd_varlink_idl_impl.c' Makefile
           ! grep -Fq 'libs/compat/sd_bus_stubs.c' Makefile
-          grep -Fq 'UNSUPPORTED_DATA_SYMBOLS = set()' scripts/check-compat-closure.py
+
+          python3 - <<'PY'
+          import json
+
+          report = json.load(open("target/compat-readiness.json", encoding="utf-8"))
+          expected = {
+              "required": 184,
+              "supported": 184,
+              "unsupported": 0,
+              "missing_source_definition": 0,
+          }
+          for key, value in expected.items():
+              if report.get(key) != value:
+                  raise SystemExit(report)
+          PY
 
           cargo +stable fmt --all
           cargo +stable fmt --all -- --check
           make clean
           make check-native
           make check-compat
-          python3 scripts/check-compat-source-readiness.py --report target/compat-readiness.json
-          python3 - <<'PY'
-          import json
-
-          report = json.load(open("target/compat-readiness.json", encoding="utf-8"))
-          unsupported = [
-              symbol
-              for symbol in report["unsupported_symbols"]
-              if symbol.startswith("sd_bus_")
-          ]
-          missing = [
-              symbol
-              for symbol in report["missing_symbols"]
-              if symbol.startswith("sd_bus_")
-          ]
-          if unsupported or missing:
-              raise SystemExit(
-                  {"unsupported_bus": unsupported, "missing_bus": missing}
-              )
-          if report["supported"] < 168 or report["missing_source_definition"] != 0:
-              raise SystemExit(report)
-          PY
-
+          python3 scripts/check-compat-source-readiness.py \
+            --report target/compat-readiness.json --require-complete
           cargo +1.75.0 clippy --all-targets --all-features --locked -- \
             -D warnings \
             -A unknown-lints \
@@ -210,6 +203,32 @@ jobs:
           make check-packaging
           git diff --check
 
+          mkdir -p certification
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path("target/compat-readiness.json").read_text())
+          report["schema"] = "rustd-source-readiness-v2"
+          report["production_engine"] = "native-real-implementations"
+          Path("certification/source-readiness-latest.json").write_text(
+              json.dumps(report, indent=2, sort_keys=True) + "\n"
+          )
+          PY
+          cat > certification/final-abi-closure-latest.txt <<'EOF'
+          schema=rustd-final-abi-closure-v2
+          status=pass
+          required=184
+          supported=184
+          unsupported=0
+          missing=0
+          systemd_headers=none
+          systemd_runtime_link=none
+          sd_bus_engine=real
+          journal_engine=real
+          json_varlink_engine=real
+          EOF
+
           rm -f \
             .github/workflows/land-manager-runtime-checkpoint.yml \
             .github/workflows/land-rust175-clippy-cleanup.yml \
@@ -219,10 +238,15 @@ jobs:
             .github/workflows/land-dhcp-renew-broker.yml \
             .github/workflows/integrate-sd-bus-production.yml \
             .github/workflows/check-sd-bus-impl.yml \
+            .github/workflows/integrate-journal-send.yml \
+            .github/workflows/final-abi-closure.yml \
+            .github/workflows/run-final-abi-closure.yml \
+            .github/workflows/land-full-abi-v2.yml \
             certification/fedora-login1-diagnostic.txt \
             certification/dhcp-renew-broker-diagnostic.txt \
             certification/rust175-clippy-diagnostic.txt \
-            certification/sd-bus-staged-diagnostic.txt
+            certification/sd-bus-staged-diagnostic.txt \
+            certification/final-abi-closure-diagnostic.txt
 
           git add -A
           git diff --cached --check
@@ -242,4 +266,6 @@ jobs:
             -A clippy::map_unwrap_or \
             -A clippy::bool_to_int_with_if
           make check-compat
+          python3 scripts/check-compat-source-readiness.py \
+            --report target/compat-readiness.json --require-complete
           git push origin HEAD:main
