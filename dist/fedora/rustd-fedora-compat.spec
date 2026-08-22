@@ -1,4 +1,8 @@
 %{!?systemd_compat_evr:%global systemd_compat_evr 0:0-0}
+# This subpackage contains only shell frontends and symlinks.  Disable RPM's
+# automatic debuginfo split so platforms whose macros emit an empty
+# debugsource file list (Rocky/RHEL) do not reject the otherwise valid RPM.
+%global debug_package %{nil}
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
