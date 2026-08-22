@@ -201,13 +201,12 @@ fn stream_header_encodes_unit_rate_limits() {
             Err(error) => panic!("accept failed: {error}"),
         }
     };
+    let client_stream = client.join().unwrap();
+    drop(client_stream);
+
     let mut buf = Vec::new();
     use std::io::Read as _;
-    // Read the fixed header plus extras the client wrote before returning.
-    let mut tmp = [0u8; 512];
-    let n = server_side.read(&mut tmp).unwrap();
-    buf.extend_from_slice(&tmp[..n]);
-    drop(client.join().unwrap());
+    server_side.read_to_end(&mut buf).unwrap();
 
     let text = String::from_utf8_lossy(&buf);
     assert!(text.contains("RUSTD_LOG_RATE_INTERVAL_USEC=2000000"));
