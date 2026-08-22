@@ -69,7 +69,11 @@ jobs:
           p.write_text(s)
           PY
           fi
-          git add -A certification/json-varlink-staged-latest.txt certification/json-varlink-staged-diagnostic.txt libs/compat/sd_json_varlink_impl.c
+          git add -A certification/json-varlink-staged-latest.txt libs/compat/sd_json_varlink_impl.c
+          if [ -e certification/json-varlink-staged-diagnostic.txt ] || \
+             git ls-files --error-unmatch certification/json-varlink-staged-diagnostic.txt >/dev/null 2>&1; then
+            git add -A certification/json-varlink-staged-diagnostic.txt
+          fi
           if ! git diff --cached --quiet; then
             git config user.name 'Kenny Glowner'
             git config user.email 'SisyphusAeolides@pm.me'
