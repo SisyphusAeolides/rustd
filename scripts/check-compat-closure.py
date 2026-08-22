@@ -16,20 +16,15 @@ FUNCTION = re.compile(
     r"(?m)^[\w\s*]+\b((?:sd_|udev_)[A-Za-z0-9_]+)\s*\([^;]*?\)\s*\{"
 )
 UNSUPPORTED_MARKERS = ("ENOSYS", "rustd_bus_enosys")
-STUB_SOURCE = Path("libs/compat/sd_bus_stubs.c")
+COMPAT_SOURCES = (
+    Path("libs/compat/systemd.c"),
+    Path("libs/compat/journal_send_impl.c"),
+    Path("libs/compat/sd_bus_impl.c"),
+    Path("libs/compat/sd_json_varlink_impl.c"),
+    Path("libs/compat/sd_varlink_idl_impl.c"),
+    Path("libs/compat/udev.c"),
+)
 DATA_SYMBOLS = {"sd_bus_object_vtable_format"}
-UNSUPPORTED_DATA_SYMBOLS = {"sd_bus_object_vtable_format"}
-SUPPORTED_STUB_FUNCTIONS = {
-    "sd_bus_error_set_errno",
-    "sd_bus_error_free",
-    "sd_bus_error_get_errno",
-    "sd_bus_error_has_name",
-}
-SEMANTIC_PLACEHOLDERS = {
-    "sd_journal_send_with_location",
-    "sd_journal_print_with_location",
-    "sd_journal_printv_with_location",
-}
 
 
 def dynamic_symbols(path: Path, *, undefined: bool) -> set[str]:
@@ -63,20 +58,12 @@ def function_body(source: str, start: int) -> str:
 
 
 def unsupported_symbols(root: Path) -> set[str]:
-    unsupported = set(UNSUPPORTED_DATA_SYMBOLS)
-    unsupported.update(SEMANTIC_PLACEHOLDERS)
-    for relative in (
-        Path("libs/compat/systemd.c"),
-        STUB_SOURCE,
-        Path("libs/compat/udev.c"),
-    ):
+    unsupported: set[str] = set()
+    for relative in COMPAT_SOURCES:
         source = (root / relative).read_text(encoding="utf-8")
         for match in FUNCTION.finditer(source):
             name = match.group(1)
             body = function_body(source, match.end())
-            if relative == STUB_SOURCE and name not in SUPPORTED_STUB_FUNCTIONS:
-                unsupported.add(name)
-                continue
             if any(marker in body for marker in UNSUPPORTED_MARKERS):
                 unsupported.add(name)
     return unsupported

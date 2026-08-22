@@ -26,6 +26,7 @@ PAM_MODULE := build/pam_rustd.so
 LIBS_DIR := build/libs
 LIB_CPPFLAGS := -Iinclude -iquote ffi
 LIB_LDFLAGS := -Wl,-z,relro,-z,now
+COMPAT_CFLAGS := $(shell pkg-config --cflags dbus-1 json-c 2>/dev/null)
 IDRIS2 ?= $(shell command -v idris2 2>/dev/null || find $(HOME)/.local/state/pack -name idris2 -type f -executable 2>/dev/null | head -1)
 
 SHARED_LIBS := \
@@ -70,17 +71,23 @@ $(LIBS_DIR)/libudev.so.1: libs/compat/udev.c libs/maps/libudev.map include/rustd
 		-Wl,-rpath,'$$ORIGIN' -L$(LIBS_DIR) -l:librustd_device.so.1 \
 		-o $@
 
-$(LIBS_DIR)/libsystemd.so.0: libs/compat/systemd.c libs/compat/sd_bus_stubs.c libs/maps/libsystemd.map \
+$(LIBS_DIR)/libsystemd.so.0: libs/compat/systemd.c libs/compat/journal_send_impl.c \
+		libs/compat/sd_bus_impl.c libs/compat/sd_json_varlink_impl.c \
+		libs/compat/sd_varlink_idl_impl.c libs/compat/sd_bus_abi.h \
+		libs/compat/sd_json_varlink_abi.h libs/maps/libsystemd.map \
 		include/rustd/service.h include/rustd/journal.h include/rustd/login.h include/rustd/device.h \
 		$(LIBS_DIR)/librustd_service.so.1 $(LIBS_DIR)/librustd_journal.so.1 \
 		$(LIBS_DIR)/librustd_login.so.1 $(LIBS_DIR)/librustd_device.so.1
 	mkdir -p $(LIBS_DIR)
-	$(CC) $(CFLAGS) -fPIC $(LIB_CPPFLAGS) -shared \
-		libs/compat/systemd.c libs/compat/sd_bus_stubs.c \
+	$(CC) $(CFLAGS) $(COMPAT_CFLAGS) -fPIC $(LIB_CPPFLAGS) -shared \
+		libs/compat/systemd.c libs/compat/journal_send_impl.c \
+		libs/compat/sd_bus_impl.c libs/compat/sd_json_varlink_impl.c \
+		libs/compat/sd_varlink_idl_impl.c \
 		-Wl,--version-script=libs/maps/libsystemd.map \
 		-Wl,-soname,libsystemd.so.0 $(LIB_LDFLAGS) \
 		-Wl,-rpath,'$$ORIGIN' -L$(LIBS_DIR) \
 		-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 \
+		-ldbus-1 -ljson-c \
 		-o $@
 
 $(LIBS_DIR)/librustd_service.so.1: ffi/native.c ffi/notify.c libs/service/abi.c libs/maps/librustd_service.map include/rustd/service.h
@@ -161,6 +168,21 @@ check-compat: compat
 	done < libs/compat/needed_syms.txt; \
 	if [ "$$missing" = 1 ]; then exit 1; fi; \
 	echo "compat SONAMEs and symbol policy OK"
+	$(CC) $(CFLAGS) $(COMPAT_CFLAGS) -Ilibs/compat libs/tests/test_sd_bus_impl.c \
+		-Wl,-rpath,$(abspath $(LIBS_DIR)) -L$(LIBS_DIR) -lsystemd \
+		-o build/test_sd_bus_impl
+	./build/test_sd_bus_impl
+	$(CC) $(CFLAGS) $(COMPAT_CFLAGS) -Ilibs/compat libs/tests/test_sd_json_varlink_impl.c \
+		-Wl,-rpath,$(abspath $(LIBS_DIR)) -L$(LIBS_DIR) -lsystemd \
+		-o build/test_sd_json_varlink_impl
+	./build/test_sd_json_varlink_impl
+	$(CC) $(CFLAGS) -Ilibs/compat libs/tests/test_sd_varlink_idl_impl.c \
+		-Wl,-rpath,$(abspath $(LIBS_DIR)) -L$(LIBS_DIR) -lsystemd \
+		-o build/test_sd_varlink_idl_impl
+	./build/test_sd_varlink_idl_impl
+	$(CC) $(CFLAGS) -Iinclude libs/tests/test_journal_send_impl.c \
+		libs/compat/journal_send_impl.c -o build/test_journal_send_impl
+	./build/test_journal_send_impl
 
 check-compat-closure: compat
 	@test -n "$(REPORT)" || (echo "REPORT=<systemd closure audit JSON> is required" >&2; exit 64)

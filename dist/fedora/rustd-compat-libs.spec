@@ -23,10 +23,9 @@ Conflicts:      systemd-libs
 
 %description
 RustD-owned runtime compatibility SONAMEs for Fedora binaries already linked to
-libsystemd.so.0 or libudev.so.1. This package is intentionally build-blocked
-until RustD's measured compatibility surface is 184/184 with zero unsupported
-or missing definitions. It does not provide the package-level "systemd"
-capability.
+libsystemd.so.0 or libudev.so.1. The build and check phases require RustD's
+measured compatibility surface to be 184/184 with zero unsupported or missing
+definitions. It does not provide the package-level "systemd" capability.
 
 %prep
 %autosetup -n rustd-%{version}

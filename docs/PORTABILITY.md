@@ -63,7 +63,7 @@ Rules:
 | B | Preview/compat ABI covers the audited host profile (or certified client libraries are retained) |
 | C | Exclusive PID1 + resolver ownership boots with reversible rollback |
 
-Exclusive cutover (Tier C) may retain `systemd-libs` until `make check-compat-closure` reports zero missing versioned symbols for the target host profile **and** those symbols are backed by a real native bus/JSON/Varlink implementation (not ENOSYS stubs). Symbol closure with fail-closed stubs is necessary but not sufficient to Provide/Replace `systemd-libs`.
+Exclusive cutover (Tier C) may retain `systemd-libs` until `make check-compat-closure` reports zero missing versioned symbols for the target host profile and the installed-image campaign passes. The compatibility library now uses native bus/JSON/Varlink implementations; symbol presence and source tests still do not replace target-host runtime certification.
 
 ## Required gates
 
@@ -75,4 +75,8 @@ Exclusive cutover (Tier C) may retain `systemd-libs` until `make check-compat-cl
 
 ## Compat ABI status (host profile)
 
-Host closure audit (`check-compat-closure`) is green for the current CachyOS profile with fail-closed `sd_bus`/`sd_json`/`sd_varlink` stubs in `libs/compat/sd_bus_stubs.c`. These stubs return `-ENOSYS`/`NULL` and do **not** implement D-Bus. Exclusive Tier C cutover still retains `systemd-libs` until a real native bus stack replaces the stubs and runtime certification passes.
+The measured compatibility surface is green at source level (`184/184`) and
+`make check-compat` exercises the native D-Bus, JSON/Varlink, and journal
+implementations. Exclusive Tier C cutover still retains `systemd-libs` until a
+host-specific closure report and the complete installed-image runtime campaign
+pass.

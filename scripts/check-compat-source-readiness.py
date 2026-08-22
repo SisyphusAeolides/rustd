@@ -47,7 +47,10 @@ def main() -> int:
     source_functions: set[str] = set()
     for relative in (
         Path("libs/compat/systemd.c"),
-        Path("libs/compat/sd_bus_stubs.c"),
+        Path("libs/compat/journal_send_impl.c"),
+        Path("libs/compat/sd_bus_impl.c"),
+        Path("libs/compat/sd_json_varlink_impl.c"),
+        Path("libs/compat/sd_varlink_idl_impl.c"),
         Path("libs/compat/udev.c"),
     ):
         source = (root / relative).read_text(encoding="utf-8")

@@ -67,10 +67,11 @@ has completed on the actual hardware profile.
 ## Complete removal of systemd-libs
 
 Replacing systemd as PID 1 and removing the `systemd` package is a different
-boundary from removing `systemd-libs`. The current compatibility SONAME build
-still contains fail-closed sd-bus/sd-json/sd-varlink placeholders that return
-unsupported errors. Therefore the existing exclusive cutover gate deliberately
-retains `systemd-libs` for third-party ABI compatibility.
+boundary from removing `systemd-libs`. RustD now builds the measured
+sd-bus/sd-json/sd-varlink and journal-location ABI through native implementations
+and exercises those paths in `make check-compat`. The exclusive cutover gate
+still retains `systemd-libs` until the target host's executable closure and
+installed-image campaign are independently certified.
 
 A host is not eligible for complete `systemd-libs` removal until
 `check-compat-closure` passes against the target executable closure with native,

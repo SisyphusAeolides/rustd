@@ -11,7 +11,8 @@ RustD (`rustctl`, `rustd-tmpfiles`, `rustd-sysusers`, `rustd-sysctl`,
 
 Production cutover remains fail-closed until:
 
-- the RustD `libsystemd.so.0` / `libudev.so.1` compatibility ABI is complete;
+- the RustD `libsystemd.so.0` / `libudev.so.1` compatibility ABI and its native
+  behavioral tests pass;
 - Fedora RPM dependency capabilities are satisfied by RustD-owned libraries;
 - the Fedora transaction compatibility certificate passes;
 - RustD-Resolved's exact candidate passes its installed and resolver gates;

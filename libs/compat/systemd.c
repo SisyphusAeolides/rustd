@@ -118,69 +118,6 @@ int sd_journal_sendv(const struct iovec *iov, int n) {
     return rustd_journal_sendv(iov, n);
 }
 
-int sd_journal_send(const char *format, ...) {
-    char buffer[2048];
-    struct iovec iov;
-    va_list ap;
-    int n;
-
-    if (!format)
-        return -EINVAL;
-    va_start(ap, format);
-    n = vsnprintf(buffer, sizeof(buffer), format, ap);
-    va_end(ap);
-    if (n < 0)
-        return -EINVAL;
-    if ((size_t)n >= sizeof(buffer))
-        return -ENOBUFS;
-    iov.iov_base = buffer;
-    iov.iov_len = (size_t)n;
-    return rustd_journal_sendv(&iov, 1);
-}
-
-int sd_journal_send_with_location(
-    const char *file, const char *line, const char *func, const char *format, ...) {
-    char buffer[2048];
-    struct iovec iov;
-    va_list ap;
-    int n;
-    (void)file;
-    (void)line;
-    (void)func;
-
-    if (!format)
-        return -EINVAL;
-    va_start(ap, format);
-    n = vsnprintf(buffer, sizeof(buffer), format, ap);
-    va_end(ap);
-    if (n < 0)
-        return -EINVAL;
-    if ((size_t)n >= sizeof(buffer))
-        return -ENOBUFS;
-    iov.iov_base = buffer;
-    iov.iov_len = (size_t)n;
-    return rustd_journal_sendv(&iov, 1);
-}
-
-int sd_journal_print_with_location(
-    int priority, const char *file, const char *line, const char *func, const char *format, ...) {
-    char message[1600];
-    va_list ap;
-    int n;
-    (void)file;
-    (void)line;
-    (void)func;
-
-    if (!format)
-        return -EINVAL;
-    va_start(ap, format);
-    n = vsnprintf(message, sizeof(message), format, ap);
-    va_end(ap);
-    if (n < 0)
-        return -EINVAL;
-    return rustd_journal_print(priority, "%s", message);
-}
-
 int sd_journal_open(rustd_journal **ret, int flags) {
     (void)flags;
     return rustd_journal_open(ret, NULL);
@@ -853,22 +790,6 @@ int sd_notifyf(int unset_environment, const char *format, ...) {
     if ((size_t)n >= sizeof(buffer))
         return -ENOBUFS;
     return sd_notify(unset_environment, buffer);
-}
-
-int sd_journal_printv_with_location(
-    int priority, const char *file, const char *line, const char *func, const char *format,
-    va_list ap) {
-    char message[1600];
-    int n;
-    (void)file;
-    (void)line;
-    (void)func;
-    if (!format)
-        return -EINVAL;
-    n = vsnprintf(message, sizeof(message), format, ap);
-    if (n < 0)
-        return -EINVAL;
-    return rustd_journal_print(priority, "%s", message);
 }
 
 int sd_login_monitor_get_timeout(rustd_login_monitor *monitor, uint64_t *timeout_usec) {

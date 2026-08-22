@@ -1,7 +1,6 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #define _GNU_SOURCE
-#include <systemd/sd-json.h>
-#include <systemd/sd-varlink.h>
+#include "sd_json_varlink_abi.h"
 
 #include <json-c/json.h>
 
