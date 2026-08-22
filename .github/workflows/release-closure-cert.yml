@@ -119,6 +119,6 @@ jobs:
             git config user.name 'Kenny Glowner'
             git config user.email 'SisyphusAeolides@pm.me'
             git commit -m "Record complete ABI release certification $status"
-            git push origin HEAD:main
+            bash scripts/push-certification-voucher.sh
           fi
           [ "$status" = pass ]

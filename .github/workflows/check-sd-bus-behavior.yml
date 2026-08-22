@@ -39,7 +39,7 @@ jobs:
           set -o pipefail
           cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong \
              -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 \
-             $(pkg-config --cflags dbus-1) \
+             -Ilibs/compat $(pkg-config --cflags dbus-1) \
              libs/compat/sd_bus_impl.c libs/tests/test_sd_bus_impl.c \
              $(pkg-config --libs dbus-1) -o /tmp/test-sd-bus-impl
           dbus-run-session -- /tmp/test-sd-bus-impl 2>&1 | tee /tmp/sd-bus-behavior.log
@@ -58,12 +58,16 @@ jobs:
           mkdir -p certification
           printf 'schema=rustd-sd-bus-behavior-v1\nstatus=%s\ntested_sha=%s\nbehavior_outcome=%s\nbackend=libdbus-1\nsession_bus=end-to-end\nmessage_codec=recursive\n' \
              "$status" "$GITHUB_SHA" "$OUTCOME" > certification/sd-bus-behavior-latest.txt
-          if [ -f /tmp/sd-bus-behavior.log ]; then
+          if [ "$status" = failure ] && [ -f /tmp/sd-bus-behavior.log ]; then
              tail -n 160 /tmp/sd-bus-behavior.log > certification/sd-bus-behavior-diagnostic.txt
+          else
+             rm -f certification/sd-bus-behavior-diagnostic.txt
           fi
-          git add certification/sd-bus-behavior-latest.txt certification/sd-bus-behavior-diagnostic.txt
-          if git diff --cached --quiet; then exit 0; fi
-          git config user.name 'Kenny Glowner'
-          git config user.email 'SisyphusAeolides@pm.me'
-          git commit -m "Record staged sd-bus behavior $status"
-          git push origin HEAD:main
+          git add -A certification/
+          if ! git diff --cached --quiet; then
+            git config user.name 'Kenny Glowner'
+            git config user.email 'SisyphusAeolides@pm.me'
+            git commit -m "Record staged sd-bus behavior $status"
+            bash scripts/push-certification-voucher.sh
+          fi
+          [ "$status" = pass ]

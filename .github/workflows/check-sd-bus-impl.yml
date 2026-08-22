@@ -55,12 +55,16 @@ jobs:
           mkdir -p certification
           printf 'schema=rustd-sd-bus-staged-v1\nstatus=%s\ntested_sha=%s\ncompile_outcome=%s\nbackend=libdbus-1\n' \
              "$status" "$GITHUB_SHA" "$OUTCOME" > certification/sd-bus-staged-latest.txt
-          if [ -f /tmp/sd-bus-compile.log ]; then
+          if [ "$status" = failure ] && [ -f /tmp/sd-bus-compile.log ]; then
              tail -n 160 /tmp/sd-bus-compile.log > certification/sd-bus-staged-diagnostic.txt
+          else
+             rm -f certification/sd-bus-staged-diagnostic.txt
           fi
-          git add certification/sd-bus-staged-latest.txt certification/sd-bus-staged-diagnostic.txt
-          if git diff --cached --quiet; then exit 0; fi
-          git config user.name 'Kenny Glowner'
-          git config user.email 'SisyphusAeolides@pm.me'
-          git commit -m "Record staged sd-bus compile $status"
-          git push origin HEAD:main
+          git add -A certification/
+          if ! git diff --cached --quiet; then
+            git config user.name 'Kenny Glowner'
+            git config user.email 'SisyphusAeolides@pm.me'
+            git commit -m "Record staged sd-bus compile $status"
+            bash scripts/push-certification-voucher.sh
+          fi
+          [ "$status" = pass ]

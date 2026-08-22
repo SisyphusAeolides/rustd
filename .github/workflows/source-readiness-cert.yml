@@ -13,6 +13,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: exact-source-readiness
+  cancel-in-progress: true
+
 jobs:
   readiness:
     runs-on: ubuntu-24.04
@@ -24,7 +28,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/check-compat-source-readiness.py --report /tmp/readiness.json || true
+          python3 scripts/check-compat-source-readiness.py \
+            --report /tmp/readiness.json --require-complete
           python3 - "$GITHUB_SHA" <<'PY'
           import json, pathlib, sys
           source = json.load(open('/tmp/readiness.json'))
@@ -44,5 +49,5 @@ jobs:
             git config user.name 'Kenny Glowner'
             git config user.email 'SisyphusAeolides@pm.me'
             git commit -m 'Record exact source readiness'
-            git push origin HEAD:main
+            bash scripts/push-certification-voucher.sh
           fi

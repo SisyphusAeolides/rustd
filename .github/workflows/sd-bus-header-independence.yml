@@ -13,6 +13,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: sd-bus-header-independence
+  cancel-in-progress: true
+
 jobs:
   certify:
     runs-on: ubuntu-24.04
@@ -28,14 +32,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential pkg-config libdbus-1-dev dbus
           sudo apt-get remove -y libsystemd-dev || true
-          python3 - <<'PY'
-          from pathlib import Path
-          for name in ('libs/compat/sd_bus_impl.c', 'libs/tests/test_sd_bus_impl.c'):
-              p=Path(name)
-              s=p.read_text()
-              s=s.replace('#include <systemd/sd-bus.h>', '#include "sd_bus_abi.h"')
-              p.write_text(s)
-          PY
           cc -std=c17 -Wall -Wextra -Werror -fPIC -Ilibs/compat $(pkg-config --cflags dbus-1) \
              -c libs/compat/sd_bus_impl.c -o /tmp/sd_bus_impl.o 2>&1 | tee /tmp/sd-bus-header.log
           cc -std=c17 -Wall -Wextra -Werror -Ilibs/compat $(pkg-config --cflags dbus-1) \
@@ -60,19 +56,12 @@ jobs:
             tail -n 180 /tmp/sd-bus-header.log > certification/sd-bus-header-independence-diagnostic.txt 2>/dev/null || true
           else
             rm -f certification/sd-bus-header-independence-diagnostic.txt
-            python3 - <<'PY'
-          from pathlib import Path
-          for name in ('libs/compat/sd_bus_impl.c', 'libs/tests/test_sd_bus_impl.c'):
-              p=Path(name)
-              s=p.read_text().replace('#include <systemd/sd-bus.h>', '#include "sd_bus_abi.h"')
-              p.write_text(s)
-          PY
           fi
-          git add -A certification/sd-bus-header-independence-latest.txt certification/sd-bus-header-independence-diagnostic.txt libs/compat/sd_bus_impl.c libs/tests/test_sd_bus_impl.c
+          git add -A certification/
           if ! git diff --cached --quiet; then
             git config user.name 'Kenny Glowner'
             git config user.email 'SisyphusAeolides@pm.me'
             git commit -m "Record sd-bus header independence $status"
-            git push origin HEAD:main
+            bash scripts/push-certification-voucher.sh
           fi
           [ "$status" = pass ]

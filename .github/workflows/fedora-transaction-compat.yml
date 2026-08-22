@@ -67,5 +67,5 @@ jobs:
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m "Record Fedora transaction ${outcome}" || exit 0
-          git push origin HEAD:main
+            bash scripts/push-certification-voucher.sh
           [[ "$outcome" == success ]]

@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: journal-send-compat-certification
+  cancel-in-progress: true
+
 jobs:
   certify:
     runs-on: ubuntu-24.04
@@ -47,11 +51,11 @@ jobs:
           else
             rm -f certification/journal-send-compat-diagnostic.txt
           fi
-          git add -A certification/journal-send-compat-latest.txt certification/journal-send-compat-diagnostic.txt
+          git add -A certification/
           if ! git diff --cached --quiet; then
             git config user.name 'Kenny Glowner'
             git config user.email 'SisyphusAeolides@pm.me'
             git commit -m "Record journal send compatibility $status"
-            git push origin HEAD:main
+            bash scripts/push-certification-voucher.sh
           fi
           [ "$status" = pass ]
