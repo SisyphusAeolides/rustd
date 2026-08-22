@@ -47,7 +47,10 @@ jobs:
         run: |
           revision="$(tr -d '\n' < scripts/rustd-resolved-revision.txt)"
           [[ $revision =~ ^[0-9a-f]{40}$ ]]
-          test "$revision" = "7528e4d52a34c4dda401c82fe2f0a951215d8ec5"
+          git init --bare /tmp/rustd-resolved.git
+          git -C /tmp/rustd-resolved.git fetch --depth=1 \
+            https://github.com/SisyphusAeolides/rustd-resolved.git "$revision"
+          test "$(git -C /tmp/rustd-resolved.git rev-parse FETCH_HEAD)" = "$revision"
 
       - name: Verify Login1 runtime lifecycle
         run: |
