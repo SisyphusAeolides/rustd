@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: land-manager-runtime-checkpoint
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   land:
@@ -37,7 +37,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
-            build-essential gfortran libdbus-1-dev libpam0g-dev \
+            build-essential dbus gfortran libdbus-1-dev libpam0g-dev \
             libjson-c-dev libssl-dev liburing-dev pkg-config python3
 
       - name: Apply and verify manager runtime checkpoint
@@ -80,11 +80,11 @@ jobs:
               text = text.replace(f'{lint} = "allow"\n', "")
           manifest.write_text(text)
 
+          marker = "        run: |\n"
           workflow = Path(".github/workflows/land-fedora-login-session.yml").read_text()
           step = workflow.index(
               "      - name: Add complete Login1 session registration path\n"
           )
-          marker = "        run: |\n"
           start = workflow.index(marker, step) + len(marker)
           raw = workflow[start:]
           lines = [line[10:] if line.startswith("          ") else line for line in raw.splitlines()]
@@ -233,9 +233,89 @@ mod login1_runtime_tests {
           test -f src/bin/rustnetworkctl_renew.rs
           test -f packaging/rustd/rustd-network-renew.service
 
+          grep -Fq 'dbus_connection_read_write_dispatch' libs/compat/sd_bus_impl.c
+          cc -std=c17 -Wall -Wextra -Werror -Ilibs/compat -Iinclude \
+            $(pkg-config --cflags dbus-1) \
+            libs/tests/test_sd_bus_impl.c libs/compat/sd_bus_impl.c \
+            $(pkg-config --libs dbus-1) -o /tmp/test-sd-bus
+          dbus-run-session -- /tmp/test-sd-bus
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          makefile = Path("Makefile")
+          text = makefile.read_text()
+          start = text.index("$(LIBS_DIR)/libsystemd.so.0:")
+          end = text.index("\n$(LIBS_DIR)/librustd_service.so.1:", start)
+          block = text[start:end]
+          block = block.replace(
+              "libs/compat/sd_bus_stubs.c",
+              "libs/compat/sd_bus_impl.c",
+          )
+          compile_old = "\t$(CC) $(CFLAGS) -fPIC $(LIB_CPPFLAGS) -shared \\\n"
+          compile_new = "\t$(CC) $(CFLAGS) -fPIC $(LIB_CPPFLAGS) $(shell pkg-config --cflags dbus-1) -shared \\\n"
+          if "$(shell pkg-config --cflags dbus-1)" not in block:
+              if compile_old not in block:
+                  raise SystemExit("libsystemd compile line missing")
+              block = block.replace(compile_old, compile_new, 1)
+          libraries_old = "\t\t-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 \\\n"
+          libraries_new = "\t\t-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 $(shell pkg-config --libs dbus-1) \\\n"
+          if "$(shell pkg-config --libs dbus-1)" not in block:
+              if libraries_old not in block:
+                  raise SystemExit("libsystemd link line missing")
+              block = block.replace(libraries_old, libraries_new, 1)
+          makefile.write_text(text[:start] + block + text[end:])
+
+          closure = Path("scripts/check-compat-closure.py")
+          text = closure.read_text()
+          text = text.replace(
+              'STUB_DATA_SYMBOLS = {"sd_bus_object_vtable_format"}',
+              'STUB_DATA_SYMBOLS = set()',
+          )
+          text = text.replace(
+              '        STUB_SOURCE,\n',
+              '        Path("libs/compat/sd_bus_impl.c"),\n',
+          )
+          text = text.replace(
+              '            if relative == STUB_SOURCE and name not in SUPPORTED_STUB_FUNCTIONS:\n                unsupported.add(name)\n                continue\n',
+              '',
+          )
+          closure.write_text(text)
+
+          readiness = Path("scripts/check-compat-source-readiness.py")
+          text = readiness.read_text().replace(
+              '        Path("libs/compat/sd_bus_stubs.c"),\n',
+              '        Path("libs/compat/sd_bus_impl.c"),\n',
+          )
+          readiness.write_text(text)
+          PY
+
           cargo +stable fmt --all
           cargo +stable fmt --all -- --check
+          make clean
           make check-native
+          make check-compat
+          python3 scripts/check-compat-source-readiness.py --report target/compat-readiness.json
+          python3 - <<'PY'
+          import json
+          report = json.load(open("target/compat-readiness.json", encoding="utf-8"))
+          unsupported = [
+              symbol
+              for symbol in report["unsupported_symbols"]
+              if symbol.startswith("sd_bus_")
+          ]
+          missing = [
+              symbol
+              for symbol in report["missing_symbols"]
+              if symbol.startswith("sd_bus_")
+          ]
+          if unsupported or missing:
+              raise SystemExit(
+                  {"unsupported_bus": unsupported, "missing_bus": missing}
+              )
+          if report["supported"] < 168 or report["missing_source_definition"] != 0:
+              raise SystemExit(report)
+          PY
           cargo +1.75.0 clippy --all-targets --all-features --locked -- \
             -D warnings \
             -A unknown-lints \
@@ -258,15 +338,18 @@ mod login1_runtime_tests {
             .github/workflows/land-login1-strict.yml \
             .github/workflows/diagnose-fedora-login-session.yml \
             .github/workflows/land-dhcp-renew-broker.yml \
+            .github/workflows/integrate-sd-bus-production.yml \
+            .github/workflows/check-sd-bus-impl.yml \
             certification/fedora-login1-diagnostic.txt \
             certification/dhcp-renew-broker-diagnostic.txt \
-            certification/rust175-clippy-diagnostic.txt
+            certification/rust175-clippy-diagnostic.txt \
+            certification/sd-bus-staged-diagnostic.txt
 
           git add -A
           git diff --cached --check
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
-          git commit -m 'Complete manager session and DHCP recovery paths'
+          git commit -m 'Complete manager runtime and compatibility paths'
           git pull --rebase origin main
           cargo +stable fmt --all -- --check
           cargo +1.75.0 clippy --all-targets --all-features --locked -- \
@@ -279,4 +362,5 @@ mod login1_runtime_tests {
             -A clippy::needless_borrows_for_generic_args \
             -A clippy::map_unwrap_or \
             -A clippy::bool_to_int_with_if
+          make check-compat
           git push origin HEAD:main
