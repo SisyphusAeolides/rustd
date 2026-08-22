@@ -1,7 +1,7 @@
 schema=rustd-readwritepaths-cert-v1
-status=failure
-tested_sha=a638f2c0607cab1c1fe84d89d4c554b34bdee5af
-build_outcome=cancelled
-cert_outcome=skipped
+status=pass
+tested_sha=6446747659fccb89247f3e3864208bfdb4c78223
+build_outcome=success
+cert_outcome=success
 protect_system=strict
 read_write_paths=production-spawn-v2
