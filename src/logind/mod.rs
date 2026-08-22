@@ -2,13 +2,16 @@
 //! Runtime session records used by the `RustD` logind compatibility service.
 
 use std::collections::BTreeMap;
+use std::ffi::CString;
 use std::fs;
 use std::io;
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 pub const RUNTIME_ROOT: &str = "/run/rustd";
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Session {
     pub id: String,
     pub uid: u32,
@@ -19,6 +22,11 @@ pub struct Session {
     pub service: String,
     pub session_type: String,
     pub class: String,
+    pub desktop: String,
+    pub display: String,
+    pub remote: bool,
+    pub remote_user: String,
+    pub remote_host: String,
     pub leader: u32,
     pub state: String,
     pub locked: bool,
@@ -55,11 +63,11 @@ fn atomic_write(path: &Path, text: &str) -> io::Result<()> {
 impl Session {
     fn from_map(id: String, values: BTreeMap<String, String>) -> Self {
         Self {
-            uid: values.get("UID").and_then(|v| v.parse().ok()).unwrap_or(0),
-            gid: values.get("GID").and_then(|v| v.parse().ok()).unwrap_or(0),
+            uid: values.get("UID").and_then(|value| value.parse().ok()).unwrap_or(0),
+            gid: values.get("GID").and_then(|value| value.parse().ok()).unwrap_or(0),
             leader: values
                 .get("LEADER")
-                .and_then(|v| v.parse().ok())
+                .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
             user: values.get("USER").cloned().unwrap_or_default(),
             seat: values
@@ -76,20 +84,42 @@ impl Session {
                 .get("CLASS")
                 .cloned()
                 .unwrap_or_else(|| "user".into()),
+            desktop: values.get("DESKTOP").cloned().unwrap_or_default(),
+            display: values.get("DISPLAY").cloned().unwrap_or_default(),
+            remote: values.get("REMOTE").is_some_and(|value| value == "yes"),
+            remote_user: values.get("REMOTE_USER").cloned().unwrap_or_default(),
+            remote_host: values.get("REMOTE_HOST").cloned().unwrap_or_default(),
             state: values
                 .get("STATE")
                 .cloned()
                 .unwrap_or_else(|| "active".into()),
-            locked: values.get("LOCKED").is_some_and(|v| v == "yes"),
+            locked: values.get("LOCKED").is_some_and(|value| value == "yes"),
             id,
         }
     }
 
     fn serialize(&self) -> String {
         format!(
-            "UID={}\nGID={}\nUSER={}\nSEAT={}\nTTY={}\nSERVICE={}\nTYPE={}\nCLASS={}\nLEADER={}\nSTATE={}\nLOCKED={}\n",
-            self.uid, self.gid, self.user, self.seat, self.tty, self.service,
-            self.session_type, self.class, self.leader, self.state,
+            concat!(
+                "UID={}\nGID={}\nUSER={}\nSEAT={}\nTTY={}\nSERVICE={}\n",
+                "TYPE={}\nCLASS={}\nDESKTOP={}\nDISPLAY={}\nREMOTE={}\n",
+                "REMOTE_USER={}\nREMOTE_HOST={}\nLEADER={}\nSTATE={}\nLOCKED={}\n"
+            ),
+            self.uid,
+            self.gid,
+            self.user,
+            self.seat,
+            self.tty,
+            self.service,
+            self.session_type,
+            self.class,
+            self.desktop,
+            self.display,
+            if self.remote { "yes" } else { "no" },
+            self.remote_user,
+            self.remote_host,
+            self.leader,
+            self.state,
             if self.locked { "yes" } else { "no" }
         )
     }
@@ -105,6 +135,71 @@ pub fn prepare() -> io::Result<()> {
         fs::create_dir_all(directory(kind))?;
     }
     Ok(())
+}
+
+/// Root directory for per-user runtime directories.
+#[must_use]
+pub fn user_runtime_root() -> PathBuf {
+    std::env::var_os("RUSTD_USER_RUNTIME_ROOT")
+        .map_or_else(|| PathBuf::from("/run/user"), PathBuf::from)
+}
+
+/// Securely create and own the XDG runtime directory for a login session.
+///
+/// # Errors
+///
+/// Returns an error when the runtime root cannot be created, either path is a
+/// symlink or non-directory, permissions cannot be set, or ownership cannot be
+/// established for the requested account.
+pub fn prepare_user_runtime(uid: u32, gid: u32) -> io::Result<PathBuf> {
+    let root = user_runtime_root();
+    fs::create_dir_all(&root)?;
+    let root_metadata = fs::symlink_metadata(&root)?;
+    if root_metadata.file_type().is_symlink() || !root_metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unsafe user runtime root",
+        ));
+    }
+
+    let path = root.join(uid.to_string());
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "unsafe user runtime path",
+                ));
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => fs::create_dir(&path)?,
+        Err(error) => return Err(error),
+    }
+
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o700))?;
+    let effective_uid = unsafe { libc::geteuid() };
+    let effective_gid = unsafe { libc::getegid() };
+    if effective_uid == 0 {
+        let c_path = CString::new(path.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "runtime path contains NUL"))?;
+        if unsafe { libc::chown(c_path.as_ptr(), uid, gid) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+    } else if uid != effective_uid || gid != effective_gid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "unprivileged runtime ownership request",
+        ));
+    }
+
+    let metadata = fs::symlink_metadata(&path)?;
+    if metadata.uid() != uid || metadata.gid() != gid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "user runtime ownership mismatch",
+        ));
+    }
+    Ok(path)
 }
 
 /// Load every session record under the logind runtime root.
@@ -176,6 +271,7 @@ pub fn rebuild_summaries() -> io::Result<()> {
             }
         }
     }
+
     let all = sessions();
     let mut users = BTreeMap::<u32, Vec<&Session>>::new();
     let mut seats = BTreeMap::<String, Vec<&Session>>::new();
@@ -183,32 +279,42 @@ pub fn rebuild_summaries() -> io::Result<()> {
         users.entry(session.uid).or_default().push(session);
         seats.entry(session.seat.clone()).or_default().push(session);
     }
+
     for (uid, entries) in users {
-        let first = entries[0];
+        let Some(first) = entries.first() else {
+            continue;
+        };
         let ids = entries
             .iter()
-            .map(|s| s.id.as_str())
+            .map(|session| session.id.as_str())
             .collect::<Vec<_>>()
             .join(" ");
+        let runtime = user_runtime_root().join(uid.to_string());
         atomic_write(
             &directory("users").join(uid.to_string()),
             &format!(
-            "UID={uid}\nGID={}\nUSER={}\nSTATE=active\nRUNTIME=/run/user/{uid}\nSESSIONS={ids}\n",
-            first.gid, first.user
-        ),
+                "UID={uid}\nGID={}\nUSER={}\nSTATE=active\nRUNTIME={}\nSESSIONS={ids}\n",
+                first.gid,
+                first.user,
+                runtime.display()
+            ),
         )?;
     }
+
     for (seat, entries) in seats {
+        let Some(first) = entries.first() else {
+            continue;
+        };
         let ids = entries
             .iter()
-            .map(|s| s.id.as_str())
+            .map(|session| session.id.as_str())
             .collect::<Vec<_>>()
             .join(" ");
         atomic_write(
             &directory("seats").join(&seat),
             &format!(
                 "ID={seat}\nACTIVE_SESSION={}\nSESSIONS={ids}\n",
-                entries[0].id
+                first.id
             ),
         )?;
     }
@@ -245,4 +351,59 @@ pub fn user_path(uid: u32) -> String {
 #[must_use]
 pub fn seat_path(id: &str) -> String {
     format!("/io/rustd/Login1/seat/{}", object_component(id))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static ENVIRONMENT: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn user_runtime_and_session_metadata_round_trip() {
+        let _guard = ENVIRONMENT.lock().expect("environment lock");
+        let runtime = tempfile::tempdir().expect("temporary runtime root");
+        let user_runtime = runtime.path().join("users");
+        std::env::set_var("RUSTD_USER_RUNTIME_ROOT", &user_runtime);
+        std::env::set_var("RUSTD_LOGIND_RUNTIME", runtime.path().join("logind"));
+
+        let uid = unsafe { libc::getuid() };
+        let gid = unsafe { libc::getgid() };
+        let path = prepare_user_runtime(uid, gid).expect("create user runtime");
+        assert_eq!(path, user_runtime.join(uid.to_string()));
+        assert_eq!(
+            fs::metadata(&path)
+                .expect("runtime metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+
+        let expected = Session {
+            id: "r-test".to_owned(),
+            uid,
+            user: "test-user".to_owned(),
+            gid,
+            seat: "seat0".to_owned(),
+            tty: "tty2".to_owned(),
+            service: "login".to_owned(),
+            session_type: "tty".to_owned(),
+            class: "user".to_owned(),
+            desktop: "console".to_owned(),
+            display: ":0".to_owned(),
+            remote: true,
+            remote_user: "remote-user".to_owned(),
+            remote_host: "example.test".to_owned(),
+            leader: std::process::id(),
+            state: "active".to_owned(),
+            locked: false,
+        };
+        save(&expected).expect("save session");
+        assert_eq!(session(&expected.id), Some(expected));
+
+        std::env::remove_var("RUSTD_USER_RUNTIME_ROOT");
+        std::env::remove_var("RUSTD_LOGIND_RUNTIME");
+    }
 }
