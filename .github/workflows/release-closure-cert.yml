@@ -31,7 +31,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential gfortran pkg-config libdbus-1-dev libudev-dev
+            build-essential gfortran pkg-config dbus-daemon \
+            libdbus-1-dev libjson-c-dev libudev-dev
       - name: Build and require complete closure
         id: closure
         shell: bash
@@ -95,8 +96,22 @@ jobs:
           pathlib.Path('certification/release-closure-latest.json').write_text(
               json.dumps(out, indent=2, sort_keys=True) + '\n'
           )
+          final = (
+              'schema=rustd-final-abi-closure-v1\n'
+              f'status={status}\n'
+              f'tested_sha={sha}\n'
+              f"required={readiness.get('required', -1)}\n"
+              f"supported={readiness.get('supported', -1)}\n"
+              f"unsupported={readiness.get('unsupported', -1)}\n"
+              f"missing={readiness.get('missing_source_definition', -1)}\n"
+              f"systemd_headers={'none' if status == 'pass' else 'unknown'}\n"
+              f"systemd_runtime_link={'none' if status == 'pass' else 'unknown'}\n"
+          )
+          pathlib.Path('certification/final-abi-closure-latest.txt').write_text(final)
           PY
-          git add certification/release-closure-latest.json
+          git add \
+            certification/release-closure-latest.json \
+            certification/final-abi-closure-latest.txt
           if ! git diff --cached --quiet; then
             git config user.name 'Kenny Glowner'
             git config user.email 'SisyphusAeolides@pm.me'
