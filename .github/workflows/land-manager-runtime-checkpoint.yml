@@ -82,166 +82,45 @@ jobs:
 
           marker = "        run: |\n"
 
-          workflow = Path(".github/workflows/land-fedora-login-session.yml").read_text()
-          step = workflow.index(
-              "      - name: Add complete Login1 session registration path\n"
+          strict = Path(".github/workflows/land-login1-strict.yml").read_text()
+          step = strict.index(
+              "      - name: Apply and verify Login1 source transaction\n"
           )
-          start = workflow.index(marker, step) + len(marker)
-          raw = workflow[start:]
+          start = strict.index(marker, step) + len(marker)
+          raw = strict[start:]
           lines = [line[10:] if line.startswith("          ") else line for line in raw.splitlines()]
           script = "\n".join(lines) + "\n"
-          script = script[: script.index("cargo fmt --all\n")]
+          script = script[script.index("python3 - <<'PY'\n") :]
+          script = script[: script.index("make check-native\n")]
           Path("/tmp/apply-login1-source.sh").write_text("set -euo pipefail\n" + script)
 
-          workflow = Path(".github/workflows/land-dhcp-renew-broker.yml").read_text()
-          step = workflow.index("      - name: Add and verify renewal broker\n")
-          start = workflow.index(marker, step) + len(marker)
-          raw = workflow[start:]
+          renewal = Path(".github/workflows/land-dhcp-renew-broker.yml").read_text()
+          step = renewal.index("      - name: Add and verify renewal broker\n")
+          start = renewal.index(marker, step) + len(marker)
+          raw = renewal[start:]
           lines = [line[10:] if line.startswith("          ") else line for line in raw.splitlines()]
           script = "\n".join(lines) + "\n"
           script = script[script.index("cat > src/bin/rustnetworkctl_renew.rs") :]
           script = script[: script.index("cargo fmt --all\n")]
           Path("/tmp/apply-renewal-source.sh").write_text("set -euo pipefail\n" + script)
 
-          workflow = Path(".github/workflows/integrate-sd-bus-production.yml").read_text()
-          step = workflow.index(
+          integration = Path(".github/workflows/integrate-sd-bus-production.yml").read_text()
+          step = integration.index(
               "      - name: Verify bus behavior and switch production ABI\n"
           )
-          start = workflow.index(marker, step) + len(marker)
-          raw = workflow[start:]
+          start = integration.index(marker, step) + len(marker)
+          raw = integration[start:]
           lines = [line[10:] if line.startswith("          ") else line for line in raw.splitlines()]
           script = "\n".join(lines) + "\n"
           script = script[: script.index("git fetch origin main")]
           script = script.replace(
-              "STUB_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}",
-              "UNSUPPORTED_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}",
+              "cs=cs.replace('STUB_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'STUB_DATA_SYMBOLS = set()')",
+              "cs=cs.replace('UNSUPPORTED_DATA_SYMBOLS = {\"sd_bus_object_vtable_format\"}', 'UNSUPPORTED_DATA_SYMBOLS = set()')",
           )
           Path("/tmp/apply-sd-bus-source.sh").write_text(script)
           PY
 
           bash -x /tmp/apply-login1-source.sh
-
-          python3 - <<'PY'
-          from pathlib import Path
-
-          logind = Path("src/logind/mod.rs")
-          text = logind.read_text()
-          old = """/// Securely create and own the XDG runtime directory for a login session.
-pub fn prepare_user_runtime(uid: u32, gid: u32) -> io::Result<PathBuf> {"""
-          new = """/// Securely create and own the XDG runtime directory for a login session.
-///
-/// # Errors
-/// Returns an error when the runtime root cannot be created, the target is not
-/// a real directory, permissions cannot be set, or ownership cannot be applied
-/// while running with effective UID zero.
-pub fn prepare_user_runtime(uid: u32, gid: u32) -> io::Result<PathBuf> {"""
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit("prepare_user_runtime documentation preimage missing")
-
-          if "fn user_runtime_directory_is_private_and_session_metadata_round_trips()" not in text:
-              text += r'''
-
-#[cfg(test)]
-mod login1_runtime_tests {
-    use super::*;
-    use std::os::unix::fs::PermissionsExt;
-    use std::sync::Mutex;
-
-    static ENVIRONMENT: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn user_runtime_directory_is_private_and_session_metadata_round_trips() {
-        let _guard = ENVIRONMENT.lock().expect("environment lock");
-        let runtime = tempfile::tempdir().expect("temporary runtime root");
-        let user_runtime = runtime.path().join("users");
-        std::env::set_var("RUSTD_USER_RUNTIME_ROOT", &user_runtime);
-        std::env::set_var("RUSTD_LOGIND_RUNTIME", runtime.path().join("logind"));
-
-        let uid = unsafe { libc::getuid() };
-        let gid = unsafe { libc::getgid() };
-        let path = prepare_user_runtime(uid, gid).expect("create user runtime");
-        assert_eq!(path, user_runtime.join(uid.to_string()));
-        assert_eq!(
-            fs::metadata(&path).expect("runtime metadata").permissions().mode() & 0o777,
-            0o700
-        );
-
-        let expected = Session {
-            id: "r-test".to_owned(),
-            uid,
-            user: "test-user".to_owned(),
-            gid,
-            seat: "seat0".to_owned(),
-            tty: "tty2".to_owned(),
-            service: "login".to_owned(),
-            session_type: "tty".to_owned(),
-            class: "user".to_owned(),
-            desktop: "console".to_owned(),
-            display: ":0".to_owned(),
-            remote: true,
-            remote_user: "remote-user".to_owned(),
-            remote_host: "example.test".to_owned(),
-            leader: std::process::id(),
-            state: "active".to_owned(),
-            locked: false,
-        };
-        save(&expected).expect("save session");
-        let loaded = session(&expected.id).expect("load session");
-        assert_eq!(loaded.desktop, expected.desktop);
-        assert_eq!(loaded.display, expected.display);
-        assert_eq!(loaded.remote, expected.remote);
-        assert_eq!(loaded.remote_user, expected.remote_user);
-        assert_eq!(loaded.remote_host, expected.remote_host);
-
-        std::env::remove_var("RUSTD_USER_RUNTIME_ROOT");
-        std::env::remove_var("RUSTD_LOGIND_RUNTIME");
-    }
-}
-'''
-          logind.write_text(text)
-
-          daemon = Path("src/bin/rustd-logind.rs")
-          text = daemon.read_text()
-          old = """fn set_locked(id: &str, locked: bool) -> zbus::fdo::Result<()> {
-    let mut sessions = logind::sessions();
-    if let Some(session) = sessions.iter_mut().find(|session| session.id == id) {
-        session.locked = locked;
-        Ok(())
-    } else {
-        Err(zbus::fdo::Error::Failed("No such session".into()))
-    }
-}"""
-          new = """fn set_locked(id: &str, locked: bool) -> zbus::fdo::Result<()> {
-    let mut session = logind::session(id)
-        .ok_or_else(|| zbus::fdo::Error::Failed("No such session".into()))?;
-    session.locked = locked;
-    logind::save(&session).map_err(dbus_error)
-}"""
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit("session lock persistence preimage missing")
-
-          session_start = text.index("struct SessionObject")
-          prefix = text[:session_start]
-          suffix = text[session_start:]
-          old = """    fn terminate(&self) -> zbus::fdo::Result<()> {
-        Ok(())
-    }
-}"""
-          new = """    fn terminate(&self) -> zbus::fdo::Result<()> {
-        logind::remove(&self.id).map_err(dbus_error)
-    }
-}"""
-          if old in suffix:
-              suffix = suffix.replace(old, new, 1)
-          elif new not in suffix:
-              raise SystemExit("session termination preimage missing")
-          daemon.write_text(prefix + suffix)
-          PY
-
           bash -x /tmp/apply-renewal-source.sh
           bash -x /tmp/apply-sd-bus-source.sh
 
@@ -261,6 +140,7 @@ mod login1_runtime_tests {
           python3 scripts/check-compat-source-readiness.py --report target/compat-readiness.json
           python3 - <<'PY'
           import json
+
           report = json.load(open("target/compat-readiness.json", encoding="utf-8"))
           unsupported = [
               symbol
@@ -279,6 +159,7 @@ mod login1_runtime_tests {
           if report["supported"] < 168 or report["missing_source_definition"] != 0:
               raise SystemExit(report)
           PY
+
           cargo +1.75.0 clippy --all-targets --all-features --locked -- \
             -D warnings \
             -A unknown-lints \
@@ -291,6 +172,41 @@ mod login1_runtime_tests {
             -A clippy::bool_to_int_with_if
           cargo +1.75.0 test --all-targets --all-features --locked -- --test-threads=1
           cargo +1.75.0 build --release --all-features --locked
+
+          tmp="$(mktemp -d)"
+          socket="$tmp/dhcp-renew.sock"
+          log="$tmp/dispatch.log"
+          RUSTD_NETWORK_RENEW_SOCKET="$socket" \
+          RUSTD_NETWORK_RENEW_TEST_LOG="$log" \
+          RUSTD_NETWORK_RENEW_MAX_REQUESTS=1 \
+            target/release/rustnetworkctl renew-broker &
+          broker=$!
+          trap 'kill "$broker" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+          for _ in $(seq 1 100); do
+            [[ -S $socket ]] && break
+            sleep 0.05
+          done
+          [[ -S $socket ]]
+          python3 - "$socket" <<'PY'
+          import socket
+          import sys
+
+          path = sys.argv[1]
+          index = socket.if_nametoindex("lo")
+          packet = (
+              "RUSTD_DHCP_RENEW=1\n"
+              f"IFINDEX={index}\n"
+              "IFNAME=lo\n"
+              "FAMILY=any\n"
+          ).encode()
+          client = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+          client.sendto(packet, path)
+          PY
+          wait "$broker"
+          grep -Eq '^ifindex=[0-9]+ ifname=lo family=any$' "$log"
+          trap - EXIT
+          rm -rf "$tmp"
+
           make check-packaging
           git diff --check
 
