@@ -202,6 +202,10 @@ set +e
 cat_status=$?
 set -e
 echo "RUSTD_PID1_DISK_FULL_JOURNAL_ATTEMPT status=$cat_status" >/dev/ttyS0
+# The stdout worker records persistence errors asynchronously. A second
+# connection wakes the daemon's control loop so it can report the failure.
+/bin/sleep 0.1
+/usr/bin/rustd-cat -t rustd-disk-full-probe /bin/echo probe >/dev/null 2>&1 || true
 /bin/sleep 2
 
 probe=0
