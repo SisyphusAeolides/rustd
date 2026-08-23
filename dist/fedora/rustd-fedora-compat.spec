@@ -48,7 +48,10 @@ staged RustD PAM/NSS migration is active and valid.
 # Shell frontends are architecture-independent source, but this RPM is kept on
 # the native architecture because it has exact-version RustD dependencies.
 for file in dist/fedora/compat/*; do
-    [[ $file == *.c ]] || bash -n "$file"
+    case $file in
+        *.c|*.rules) ;;
+        *) bash -n "$file" ;;
+    esac
 done
 %{__cc} %{build_cflags} %{build_ldflags} \
     dist/fedora/compat/rustd-shutdown.c -o rustd-shutdown
@@ -80,6 +83,7 @@ install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_sbindir} \
            %{buildroot}%{_prefix}/lib/rustd \
            %{buildroot}%{_prefix}/lib/systemd \
+           %{buildroot}%{_prefix}/lib/udev/rules.d \
            %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d
 install -m0755 dist/fedora/compat/systemctl %{buildroot}%{_bindir}/systemctl
 install -m0755 dist/fedora/compat/systemd-tmpfiles %{buildroot}%{_bindir}/systemd-tmpfiles
@@ -88,6 +92,8 @@ install -m0755 dist/fedora/compat/udevadm %{buildroot}%{_bindir}/udevadm
 install -m0755 dist/fedora/compat/systemd-update-helper %{buildroot}%{_prefix}/lib/systemd/systemd-update-helper
 install -m0755 dist/fedora/compat/systemd-sysctl %{buildroot}%{_prefix}/lib/systemd/systemd-sysctl
 install -m0755 dist/fedora/compat/systemd-binfmt %{buildroot}%{_prefix}/lib/systemd/systemd-binfmt
+install -m0644 dist/fedora/compat/80-drivers.rules \
+    %{buildroot}%{_prefix}/lib/udev/rules.d/80-drivers.rules
 ln -s ../rustd/rustd-udevd %{buildroot}%{_prefix}/lib/systemd/systemd-udevd
 ln -s ../lib/rustd/rustd %{buildroot}%{_sbindir}/init
 install -m0755 rustd-shutdown %{buildroot}%{_prefix}/lib/rustd/rustd-shutdown
@@ -138,6 +144,7 @@ grep -R -Fq 'pam_rustd.so' /etc/pam.d \
 %{_prefix}/lib/systemd/systemd-sysctl
 %{_prefix}/lib/systemd/systemd-binfmt
 %{_prefix}/lib/systemd/systemd-udevd
+%{_prefix}/lib/udev/rules.d/80-drivers.rules
 %{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
 
 %changelog

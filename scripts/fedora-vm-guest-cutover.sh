@@ -186,6 +186,8 @@ fi
 grep -Fq 'usr/lib/rustd/rustd-udevd' /var/tmp/rustd-lsinitrd.txt
 grep -Eq 'usr/lib/systemd/systemd-udevd -> \.\./rustd/rustd-udevd$' /var/tmp/rustd-lsinitrd.txt
 grep -Fq 'usr/bin/rustudevadm' /var/tmp/rustd-lsinitrd.txt
+grep -Fq 'usr/lib/udev/rules.d/80-drivers.rules' /var/tmp/rustd-lsinitrd.txt
+grep -Fq 'RUN{builtin}+="kmod load"' /usr/lib/udev/rules.d/80-drivers.rules
 for old in usr/lib/systemd/systemd usr/lib/systemd/systemd-journald usr/lib/systemd/systemd-resolved; do
     if grep -Eq "[[:space:]]${old}$" /var/tmp/rustd-lsinitrd.txt; then
         echo "removed implementation executable remains in initramfs: $old" >&2

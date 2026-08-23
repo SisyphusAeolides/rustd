@@ -116,6 +116,7 @@ assert "%pretrans -p /bin/bash" in compat
 assert "authselect check" in compat
 assert "pam_systemd(_home|_loadkey)?" in compat
 assert "%{_sbindir}/init" in compat_files
+assert "%{_prefix}/lib/udev/rules.d/80-drivers.rules" in compat_files
 assert "%{_sbindir}/rustd-fedora-cutover" not in compat_files
 assert "Requires:       authselect" not in compat
 assert "Requires:       python3" not in compat
@@ -164,6 +165,10 @@ grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles' \
     packaging/rustd/rustd-tmpfiles-setup.service
 grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles --prefix=/dev --create --boot' \
     packaging/rustd/rustd-tmpfiles-setup-dev.service
+grep -Fxq 'ENV{MODALIAS}=="?*", RUN{builtin}+="kmod load"' \
+    dist/fedora/compat/80-drivers.rules
+grep -Fq "grep -Fq 'usr/lib/udev/rules.d/80-drivers.rules'" \
+    scripts/fedora-vm-guest-cutover.sh
 grep -Fq "owner_matches /usr/sbin/rustd-fedora-cutover '^rustd-cutover-tools$'" \
     scripts/fedora-cutover-gate.sh
 grep -Fq "owner_matches /usr/lib64/security/pam_rustd.so '^rustd-cutover-tools$'" \

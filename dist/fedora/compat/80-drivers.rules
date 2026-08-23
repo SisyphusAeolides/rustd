@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Load kernel drivers for devices discovered before and after the udev daemon
+# starts. RustD owns this rule because replacing systemd-udev removes the
+# distribution copy that otherwise invokes the kmod builtin.
+
+ACTION!="add", GOTO="rustd_drivers_end"
+
+ENV{MODALIAS}=="?*", RUN{builtin}+="kmod load"
+SUBSYSTEM=="tifm", ENV{TIFM_CARD_TYPE}=="SD", RUN{builtin}+="kmod load tifm_sd"
+SUBSYSTEM=="tifm", ENV{TIFM_CARD_TYPE}=="MS", RUN{builtin}+="kmod load tifm_ms"
+SUBSYSTEM=="memstick", RUN{builtin}+="kmod load ms_block mspro_block"
+SUBSYSTEM=="i2o", RUN{builtin}+="kmod load i2o_block"
+SUBSYSTEM=="module", KERNEL=="parport_pc", RUN{builtin}+="kmod load ppdev"
+KERNEL=="mtd*ro", ENV{MTD_FTL}=="smartmedia", RUN{builtin}+="kmod load sm_ftl"
+
+LABEL="rustd_drivers_end"
