@@ -87,27 +87,30 @@ jobs:
           root=/tmp/rustd-fedora-root
           rm -rf "$root"
           mkdir -p "$root"
-          common=(
+          base_common=(
             --installroot="$root"
             --releasever=44
             --use-host-config
             --setopt=install_weak_deps=False
             --setopt=keepcache=False
+            --setopt=tsflags=noscripts
+          )
+          common=(
+            "${base_common[@]}"
             --repofrompath=rustd,"file://$GITHUB_WORKSPACE/target/fedora-rpms"
             --setopt=rustd.gpgcheck=0
-            --setopt=tsflags=noscripts
           )
 
           # DNF5 may unpack libgcc before the filesystem package in a fresh
           # installroot, turning /lib64 into a directory before filesystem can
           # install the merged-/usr symlink. Bootstrap filesystem separately.
-          dnf -y "${common[@]}" install filesystem
+          dnf -y "${base_common[@]}" install filesystem
 
           # Establish an ordinary Fedora manager/PAM stack first.
           # The local replacement repository must not participate in this
           # baseline solve: its exact-EVR Provides intentionally outrank the
           # Fedora systemd packages during the later exclusive transaction.
-          dnf -y "${common[@]}" --disablerepo=rustd install \
+          dnf -y "${base_common[@]}" install \
             systemd systemd-libs systemd-udev systemd-pam authselect dbus-daemon
           rpm --root "$root" -q systemd systemd-libs systemd-udev systemd-pam authselect
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = systemd
