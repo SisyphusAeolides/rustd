@@ -1,67 +1,14 @@
 schema=rustd-final-abi-diagnostic-v6
 status=failure
-tested_sha=0464c40397b709fc265daec245faed036ed29c9f
+tested_sha=08a154a48701d7d0fefe3a2e00327d637a085544
 --- tail ---
-+ set -euo pipefail
-+ cat
-+ bash /tmp/apply-journal-filter.sh
-mkdir -p build/libs
-cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
-	ffi/native.c ffi/notify.c libs/service/abi.c \
-	-Wl,--version-script=libs/maps/librustd_service.map \
-	-Wl,-soname,librustd_service.so.1 -Wl,-z,relro,-z,now \
-	-o build/libs/librustd_service.so.1
-mkdir -p build/libs
-cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
-	libs/journal/journal.c \
-	-Wl,--version-script=libs/maps/librustd_journal.map \
-	-Wl,-soname,librustd_journal.so.1 -Wl,-z,relro,-z,now \
-	-o build/libs/librustd_journal.so.1
-mkdir -p build/libs
-cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
-	libs/device/device.c \
-	-Wl,--version-script=libs/maps/librustd_device.map \
-	-Wl,-soname,librustd_device.so.1 -Wl,-z,relro,-z,now \
-	-o build/libs/librustd_device.so.1
-mkdir -p build/libs
-cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
-	libs/login/login.c \
-	-Wl,--version-script=libs/maps/librustd_login.map \
-	-Wl,-soname,librustd_login.so.1 -Wl,-z,relro,-z,now \
-	-o build/libs/librustd_login.so.1
-mkdir -p build/libs
-cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
-	libs/manager/manager.c \
-	-Wl,--version-script=libs/maps/librustd_manager.map \
-	-Wl,-soname,librustd_manager.so.1 -Wl,-z,relro,-z,now \
-	-o build/libs/librustd_manager.so.1
-ln -sfn librustd_service.so.1 build/libs/librustd_service.so
-ln -sfn librustd_journal.so.1 build/libs/librustd_journal.so
-ln -sfn librustd_device.so.1 build/libs/librustd_device.so
-ln -sfn librustd_login.so.1 build/libs/librustd_login.so
-ln -sfn librustd_manager.so.1 build/libs/librustd_manager.so
-mkdir -p build/libs
-cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
-	libs/compat/udev.c \
-	-Wl,--version-script=libs/maps/libudev.map \
-	-Wl,-soname,libudev.so.1 -Wl,-z,relro,-z,now \
-	-Wl,-rpath,'$ORIGIN' -Lbuild/libs -l:librustd_device.so.1 \
-	-o build/libs/libudev.so.1
-mkdir -p build/libs
-cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 -fPIC -Iinclude -iquote ffi -shared \
-	libs/compat/systemd.c libs/compat/sd_bus_stubs.c \
-	-Wl,--version-script=libs/maps/libsystemd.map \
-	-Wl,-soname,libsystemd.so.0 -Wl,-z,relro,-z,now \
-	-Wl,-rpath,'$ORIGIN' -Lbuild/libs \
-	-l:librustd_service.so.1 -l:librustd_journal.so.1 -l:librustd_login.so.1 -l:librustd_device.so.1 \
-	-o build/libs/libsystemd.so.0
-ln -sfn libudev.so.1 build/libs/libudev.so
-ln -sfn libsystemd.so.0 build/libs/libsystemd.so
-cc -O2 -g -std=c17 -Wall -Wextra -Werror -fstack-protector-strong -U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 libs/tests/test_compat_abi.c \
-	-Wl,-rpath,/home/runner/work/rustd/rustd/build/libs -Lbuild/libs \
-	-ludev -lsystemd -o build/test_compat_abi
-/usr/bin/ld: build/libs/libsystemd.so: undefined reference to `rustd_journal_add_disjunction'
-/usr/bin/ld: build/libs/libsystemd.so: undefined reference to `rustd_journal_flush_matches'
-/usr/bin/ld: build/libs/libsystemd.so: undefined reference to `rustd_journal_add_match'
-collect2: error: ld returned 1 exit status
-make: *** [Makefile:139: check-compat] Error 1
+Traceback (most recent call last):
+  File "<stdin>", line 11, in <module>
+  File "<stdin>", line 4, in raw_run
+  File "/usr/lib/python3.12/pathlib.py", line 1029, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/pathlib.py", line 1015, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '.github/workflows/final-abi-closure.yml'
