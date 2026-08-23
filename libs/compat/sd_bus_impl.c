@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <time.h>
 #include <unistd.h>
 
 typedef struct sd_event_source sd_event_source;
@@ -21,6 +22,17 @@ extern int sd_event_add_io(sd_event *event, sd_event_source **ret, int fd,
                            uint32_t events, void *callback, void *userdata)
     __attribute__((weak));
 extern int sd_event_source_set_priority(sd_event_source *source, int64_t priority)
+    __attribute__((weak));
+extern int sd_event_add_time(sd_event *event, sd_event_source **ret, int clock,
+                             uint64_t usec, uint64_t accuracy, void *callback,
+                             void *userdata) __attribute__((weak));
+extern int sd_event_source_set_enabled(sd_event_source *source, int mode)
+    __attribute__((weak));
+extern int sd_event_source_set_io_events(sd_event_source *source, uint32_t events)
+    __attribute__((weak));
+extern int sd_event_source_set_prepare(sd_event_source *source, void *callback)
+    __attribute__((weak));
+extern int sd_event_source_set_time(sd_event_source *source, uint64_t usec)
     __attribute__((weak));
 extern sd_event_source *sd_event_source_unref(sd_event_source *source)
     __attribute__((weak));
@@ -52,6 +64,7 @@ struct sd_bus_message {
     DBusMessageIter append_stack[32];
     unsigned append_depth;
     bool append_initialized;
+    bool sealed;
     DBusMessageIter read_stack[32];
     unsigned read_depth;
     bool read_initialized;
@@ -59,6 +72,7 @@ struct sd_bus_message {
     int unix_fds[64];
     unsigned n_unix_fds;
     char *string_space;
+    char *peek_contents;
 };
 
 struct sd_bus_slot {
@@ -75,6 +89,7 @@ struct sd_bus_slot {
     char *match;
     const sd_bus_vtable *vtable;
     DBusPendingCall *pending;
+    uint64_t deadline_usec;
     struct sd_bus_slot *next;
 };
 
@@ -99,11 +114,16 @@ struct sd_bus {
     bool owns_input_fd;
     bool owns_output_fd;
     bool started;
+    bool bus_client;
+    bool server;
+    bool trusted;
+    sd_id128_t server_id;
     uint32_t next_serial;
     uint64_t method_call_timeout;
     char *address;
     sd_event *event;
     sd_event_source *event_source;
+    sd_event_source *event_timer_source;
     sd_bus_message *current_message;
     struct sd_bus_slot *slots;
 };
@@ -112,6 +132,7 @@ static DBusHandlerResult rustd_dbus_filter(DBusConnection *connection,
                                             DBusMessage *raw, void *userdata);
 int sd_bus_message_new_signal(sd_bus *bus, sd_bus_message **ret, const char *path,
                               const char *interface, const char *member);
+static bool rustd_object_path_below(const char *manager, const char *path);
 
 struct rustd_bus_error_map {
     const char *name;
@@ -201,6 +222,14 @@ static const char *rustd_errno_to_error_name(int error) {
 
 static bool rustd_bus_error_dirty(const sd_bus_error *e) {
     return e && (e->name || e->message || e->_need_free != 0);
+}
+
+static uint64_t rustd_bus_monotonic_usec(void) {
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) < 0)
+        return 0U;
+    return (uint64_t)now.tv_sec * UINT64_C(1000000) +
+           (uint64_t)now.tv_nsec / UINT64_C(1000);
 }
 
 int sd_bus_error_is_set(const sd_bus_error *e) {
@@ -317,7 +346,10 @@ static int rustd_dbus_error_result(const DBusError *error) {
 
 static int rustd_dispatch_message(sd_bus *bus, sd_bus_message *m);
 static int rustd_raw_authenticate(sd_bus *bus);
+static int rustd_raw_authenticate_server(sd_bus *bus);
 static int rustd_raw_receive_message(int fd, int timeout, DBusMessage **ret);
+static int rustd_raw_send_message(int fd, const void *data, size_t length,
+                                  const int *fds, unsigned n_fds, int timeout);
 
 static sd_bus_message *rustd_message_wrap(sd_bus *bus, DBusMessage *message, bool take_ref) {
     sd_bus_message *wrapped;
@@ -357,6 +389,7 @@ static int rustd_commit_string_space(sd_bus_message *m) {
 }
 
 static DBusMessageIter *rustd_read_iter(sd_bus_message *m) {
+    (void)rustd_commit_string_space(m);
     if (!m->read_initialized) {
         if (!dbus_message_iter_init(m->message, &m->read_stack[0]))
             memset(&m->read_stack[0], 0, sizeof(m->read_stack[0]));
@@ -573,6 +606,8 @@ static int rustd_message_appendv(sd_bus_message *m, const char *types, va_list a
     int r;
     if (!m || !types || !dbus_signature_validate(types, NULL))
         return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
     r = rustd_commit_string_space(m);
     if (r < 0)
         return r;
@@ -604,6 +639,8 @@ int sd_bus_message_append_basic(sd_bus_message *m, char type, const void *value)
     int dbus_type = type;
     if (!m || !value || !strchr("ybnqiuxtdhsog", type))
         return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
     if (type == SD_BUS_TYPE_STRING)
         dbus_type = DBUS_TYPE_STRING;
     else if (type == SD_BUS_TYPE_OBJECT_PATH)
@@ -621,6 +658,8 @@ int sd_bus_message_append_string_space(sd_bus_message *m, size_t size, char **re
     int r;
     if (!m || !ret || size == SIZE_MAX)
         return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
     r = rustd_commit_string_space(m);
     if (r < 0)
         return r;
@@ -657,6 +696,8 @@ int sd_bus_message_append_array(sd_bus_message *m, char type, const void *ptr, s
     char signature[2] = {type, '\0'};
     if (!m || (!ptr && size != 0U) || !dbus_type_is_fixed(type))
         return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
     element_size = rustd_dbus_fixed_size(type);
     if (element_size <= 0 || size % (size_t)element_size != 0U ||
         size / (size_t)element_size > (size_t)INT_MAX)
@@ -849,8 +890,37 @@ int sd_bus_message_peek_type(sd_bus_message *m, char *type, const char **content
     if (type)
         *type = actual == DBUS_TYPE_STRUCT ? SD_BUS_TYPE_STRUCT :
                 actual == DBUS_TYPE_DICT_ENTRY ? SD_BUS_TYPE_DICT_ENTRY : (char)actual;
-    if (contents)
-        *contents = NULL;
+    if (contents) {
+        char *signature = NULL;
+        const char *inner = NULL;
+        size_t length = 0U;
+        free(m->peek_contents);
+        m->peek_contents = NULL;
+        if (actual == DBUS_TYPE_VARIANT) {
+            DBusMessageIter child;
+            dbus_message_iter_recurse(iter, &child);
+            signature = dbus_message_iter_get_signature(&child);
+            inner = signature;
+            length = signature ? strlen(signature) : 0U;
+        } else if (actual == DBUS_TYPE_ARRAY || actual == DBUS_TYPE_STRUCT ||
+                   actual == DBUS_TYPE_DICT_ENTRY) {
+            signature = dbus_message_iter_get_signature(iter);
+            if (signature) {
+                inner = signature + 1U;
+                length = strlen(signature) -
+                         (actual == DBUS_TYPE_ARRAY ? 1U : 2U);
+            }
+        }
+        if (inner) {
+            m->peek_contents = strndup(inner, length);
+            if (!m->peek_contents) {
+                dbus_free(signature);
+                return -ENOMEM;
+            }
+        }
+        dbus_free(signature);
+        *contents = m->peek_contents;
+    }
     return 1;
 }
 
@@ -922,6 +992,8 @@ int sd_bus_message_copy(sd_bus_message *destination, sd_bus_message *source, int
     int r;
     if (!destination || !source || (all != 0 && all != 1))
         return -EINVAL;
+    if (destination->sealed)
+        return -EPERM;
     r = rustd_commit_string_space(destination);
     if (r < 0)
         return r;
@@ -942,6 +1014,8 @@ int sd_bus_message_open_container(sd_bus_message *m, char type, const char *cont
     int dbus_type = type;
     if (!m || m->append_depth + 1U >= 32U)
         return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
     if (type == SD_BUS_TYPE_STRUCT)
         dbus_type = DBUS_TYPE_STRUCT;
     else if (type == SD_BUS_TYPE_DICT_ENTRY)
@@ -964,6 +1038,8 @@ int sd_bus_message_close_container(sd_bus_message *m) {
     DBusMessageIter *parent;
     if (!m || !m->append_initialized || m->append_depth == 0U)
         return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
     child = m->append_stack[m->append_depth];
     parent = &m->append_stack[m->append_depth - 1U];
     if (!dbus_message_iter_close_container(parent, &child))
@@ -992,12 +1068,26 @@ int sd_bus_message_enter_container(sd_bus_message *m, char type, const char *con
         return -ENXIO;
     dbus_message_iter_recurse(parent, &child);
     if (contents && *contents) {
-        actual_signature = dbus_message_iter_get_signature(&child);
+        actual_signature = dbus_message_iter_get_signature(
+            actual == DBUS_TYPE_VARIANT ? &child : parent);
         if (!actual_signature)
             return -ENOMEM;
-        if (strcmp(actual_signature, contents) != 0) {
-            dbus_free(actual_signature);
-            return -ENXIO;
+        {
+            const char *inner = actual_signature;
+            size_t inner_length = strlen(actual_signature);
+            size_t contents_length = strlen(contents);
+            if (actual == DBUS_TYPE_ARRAY) {
+                inner++;
+                inner_length--;
+            } else if (actual == DBUS_TYPE_STRUCT || actual == DBUS_TYPE_DICT_ENTRY) {
+                inner++;
+                inner_length -= 2U;
+            }
+            if (inner_length != contents_length ||
+                strncmp(inner, contents, contents_length) != 0) {
+                dbus_free(actual_signature);
+                return -ENXIO;
+            }
         }
         dbus_free(actual_signature);
     }
@@ -1120,6 +1210,10 @@ void sd_bus_close(sd_bus *bus) {
         bus->event_source = sd_event_source_unref(bus->event_source);
     else
         bus->event_source = NULL;
+    if (bus->event_timer_source && sd_event_source_unref)
+        bus->event_timer_source = sd_event_source_unref(bus->event_timer_source);
+    else
+        bus->event_timer_source = NULL;
     bus->event = NULL;
     if (bus->connection) {
         dbus_connection_close(bus->connection);
@@ -1304,9 +1398,16 @@ int sd_bus_flush(sd_bus *bus) {
 }
 
 int sd_bus_get_timeout(sd_bus *bus, uint64_t *timeout_usec) {
+    sd_bus_slot *slot;
+    uint64_t nearest = UINT64_MAX;
     if (!bus || !timeout_usec)
         return -EINVAL;
-    *timeout_usec = UINT64_MAX;
+    for (slot = bus->slots; slot; slot = slot->next)
+        if (slot->kind == RUSTD_SLOT_ASYNC && slot->pending &&
+            !dbus_pending_call_get_completed(slot->pending) &&
+            slot->deadline_usec < nearest)
+            nearest = slot->deadline_usec;
+    *timeout_usec = nearest;
     return 0;
 }
 
@@ -1337,16 +1438,25 @@ int sd_bus_set_address(sd_bus *bus, const char *address) {
 }
 
 int sd_bus_set_bus_client(sd_bus *bus, int b) {
-    return !bus || (b != 0 && b != 1) || bus->started ? -EINVAL : 0;
+    if (!bus || (b != 0 && b != 1) || bus->started)
+        return -EINVAL;
+    bus->bus_client = b != 0;
+    return 0;
 }
 
 int sd_bus_set_server(sd_bus *bus, int b, sd_id128_t server_id) {
-    (void)server_id;
-    return !bus || (b != 0 && b != 1) || bus->started ? -EINVAL : 0;
+    if (!bus || (b != 0 && b != 1) || bus->started)
+        return -EINVAL;
+    bus->server = b != 0;
+    bus->server_id = server_id;
+    return 0;
 }
 
 int sd_bus_set_trusted(sd_bus *bus, int b) {
-    return !bus || (b != 0 && b != 1) || bus->started ? -EINVAL : 0;
+    if (!bus || (b != 0 && b != 1) || bus->started)
+        return -EINVAL;
+    bus->trusted = b != 0;
+    return 0;
 }
 
 int sd_bus_set_fd(sd_bus *bus, int input_fd, int output_fd) {
@@ -1362,15 +1472,40 @@ int sd_bus_set_fd(sd_bus *bus, int input_fd, int output_fd) {
 }
 
 int sd_bus_start(sd_bus *bus) {
+    DBusError error = DBUS_ERROR_INIT;
     int r;
     if (!bus)
         return -EINVAL;
     if (bus->started)
         return 0;
-    if (!bus->connection && bus->input_fd < 0)
+    if (!bus->connection && bus->input_fd < 0 && !bus->address)
         return -ENOTCONN;
+    if (!bus->connection && bus->address) {
+        bus->connection = dbus_connection_open_private(bus->address, &error);
+        if (!bus->connection) {
+            r = rustd_dbus_error_result(&error);
+            dbus_error_free(&error);
+            return r;
+        }
+        dbus_connection_set_exit_on_disconnect(bus->connection, FALSE);
+        if (bus->bus_client && !dbus_bus_register(bus->connection, &error)) {
+            r = rustd_dbus_error_result(&error);
+            dbus_error_free(&error);
+            dbus_connection_close(bus->connection);
+            dbus_connection_unref(bus->connection);
+            bus->connection = NULL;
+            return r;
+        }
+        if (!dbus_connection_add_filter(bus->connection, rustd_dbus_filter, bus, NULL)) {
+            dbus_connection_close(bus->connection);
+            dbus_connection_unref(bus->connection);
+            bus->connection = NULL;
+            return -ENOMEM;
+        }
+    }
     if (!bus->connection) {
-        r = rustd_raw_authenticate(bus);
+        r = bus->server ? rustd_raw_authenticate_server(bus)
+                        : rustd_raw_authenticate(bus);
         if (r < 0)
             return r;
     }
@@ -1393,7 +1528,9 @@ int sd_bus_get_fd(sd_bus *bus) {
 int sd_bus_get_events(sd_bus *bus) {
     if (!bus || (!bus->connection && bus->input_fd < 0))
         return -ENOTCONN;
-    return POLLIN | POLLOUT;
+    return POLLIN |
+           (bus->connection && dbus_connection_has_messages_to_send(bus->connection)
+                ? POLLOUT : 0);
 }
 
 int sd_bus_get_n_queued_read(sd_bus *bus, uint64_t *ret) {
@@ -1454,12 +1591,70 @@ static int rustd_bus_event_io(sd_event_source *source, int fd, uint32_t revents,
     return r < 0 ? r : 1;
 }
 
+static int rustd_bus_update_event_sources(sd_bus *bus);
+
+static int rustd_bus_event_timer(sd_event_source *source, uint64_t usec,
+                                 void *userdata) {
+    sd_bus *bus = userdata;
+    int r;
+    (void)source;
+    (void)usec;
+    r = sd_bus_process(bus, NULL);
+    if (r < 0)
+        return r;
+    r = rustd_bus_update_event_sources(bus);
+    return r < 0 ? r : 1;
+}
+
+static int rustd_bus_event_prepare(sd_event_source *source, void *userdata) {
+    (void)source;
+    return rustd_bus_update_event_sources(userdata);
+}
+
+static int rustd_bus_update_event_sources(sd_bus *bus) {
+    uint64_t timeout;
+    int events;
+    int r;
+    if (!bus || !bus->event)
+        return 0;
+    events = sd_bus_get_events(bus);
+    if (events < 0)
+        return events;
+    if (bus->event_source && sd_event_source_set_io_events) {
+        r = sd_event_source_set_io_events(bus->event_source, (uint32_t)events);
+        if (r < 0)
+            return r;
+    }
+    r = sd_bus_get_timeout(bus, &timeout);
+    if (r < 0)
+        return r;
+    if (timeout == UINT64_MAX) {
+        if (bus->event_timer_source && sd_event_source_set_enabled)
+            return sd_event_source_set_enabled(bus->event_timer_source, 0);
+        return 0;
+    }
+    if (!bus->event_timer_source) {
+        if (!sd_event_add_time)
+            return -EOPNOTSUPP;
+        return sd_event_add_time(bus->event, &bus->event_timer_source,
+                                 CLOCK_MONOTONIC, timeout, 0U,
+                                 rustd_bus_event_timer, bus);
+    }
+    if (!sd_event_source_set_time || !sd_event_source_set_enabled)
+        return -EOPNOTSUPP;
+    r = sd_event_source_set_time(bus->event_timer_source, timeout);
+    if (r < 0)
+        return r;
+    return sd_event_source_set_enabled(bus->event_timer_source, -1);
+}
+
 int sd_bus_attach_event(sd_bus *bus, sd_event *event, int priority) {
     int fd;
     int r;
     if (!bus || !event)
         return -EINVAL;
-    if (!sd_event_add_io || !sd_event_source_set_priority || !sd_event_source_unref)
+    if (!sd_event_add_io || !sd_event_source_set_priority || !sd_event_source_unref ||
+        !sd_event_source_set_prepare || !sd_event_source_set_io_events)
         return -EOPNOTSUPP;
     if (bus->event_source)
         return -EBUSY;
@@ -1476,7 +1671,13 @@ int sd_bus_attach_event(sd_bus *bus, sd_event *event, int priority) {
         return r;
     }
     bus->event = event;
-    return 0;
+    r = sd_event_source_set_prepare(bus->event_source, rustd_bus_event_prepare);
+    if (r < 0) {
+        bus->event_source = sd_event_source_unref(bus->event_source);
+        bus->event = NULL;
+        return r;
+    }
+    return rustd_bus_update_event_sources(bus);
 }
 
 int sd_bus_get_unique_name(sd_bus *bus, const char **unique) {
@@ -1533,12 +1734,36 @@ int sd_bus_send(sd_bus *bus, sd_bus_message *m, uint64_t *cookie) {
         return -ENOMEM;
     if (!bus)
         bus = m->bus;
-    if (!bus || !bus->connection)
+    if (!bus)
         return -ENOTCONN;
+    if (!bus->connection) {
+        char *wire = NULL;
+        int wire_length = 0;
+        int r;
+        if (bus->output_fd < 0 || !bus->started)
+            return -ENOTCONN;
+        serial = dbus_message_get_serial(m->message);
+        if (serial == 0U) {
+            serial = bus->next_serial++;
+            dbus_message_set_serial(m->message, serial);
+        }
+        if (!dbus_message_marshal(m->message, &wire, &wire_length))
+            return -ENOMEM;
+        r = rustd_raw_send_message(bus->output_fd, wire, (size_t)wire_length,
+                                   m->unix_fds, m->n_unix_fds, 25000);
+        dbus_free(wire);
+        if (r < 0)
+            return r;
+        if (cookie)
+            *cookie = serial;
+        m->sealed = true;
+        return 1;
+    }
     if (!dbus_connection_send(bus->connection, m->message, &serial))
         return -ENOMEM;
     if (cookie)
         *cookie = serial;
+    m->sealed = true;
     return 1;
 }
 
@@ -1581,7 +1806,8 @@ int sd_bus_emit_properties_changed_strv(sd_bus *bus, const char *path,
     return r;
 }
 
-int sd_bus_emit_interfaces_added_strv(sd_bus *bus, const char *path, char **interfaces) {
+static int rustd_emit_interfaces_added_at(sd_bus *bus, const char *manager_path,
+                                          const char *path, char **interfaces) {
     sd_bus_message *message = NULL;
     DBusMessageIter *root;
     DBusMessageIter entries;
@@ -1590,7 +1816,7 @@ int sd_bus_emit_interfaces_added_strv(sd_bus *bus, const char *path, char **inte
     int r;
     if (!bus || !path)
         return -EINVAL;
-    r = sd_bus_message_new_signal(bus, &message, path,
+    r = sd_bus_message_new_signal(bus, &message, manager_path,
                                   "org.freedesktop.DBus.ObjectManager", "InterfacesAdded");
     if (r < 0)
         return r;
@@ -1620,14 +1846,15 @@ int sd_bus_emit_interfaces_added_strv(sd_bus *bus, const char *path, char **inte
     return r;
 }
 
-int sd_bus_emit_interfaces_removed_strv(sd_bus *bus, const char *path, char **interfaces) {
+static int rustd_emit_interfaces_removed_at(sd_bus *bus, const char *manager_path,
+                                            const char *path, char **interfaces) {
     sd_bus_message *message = NULL;
     DBusMessageIter *root;
     const char *path_value = path;
     int r;
     if (!bus || !path)
         return -EINVAL;
-    r = sd_bus_message_new_signal(bus, &message, path,
+    r = sd_bus_message_new_signal(bus, &message, manager_path,
                                   "org.freedesktop.DBus.ObjectManager", "InterfacesRemoved");
     if (r < 0)
         return r;
@@ -1640,6 +1867,42 @@ int sd_bus_emit_interfaces_removed_strv(sd_bus *bus, const char *path, char **in
         r = sd_bus_send(bus, message, NULL);
     sd_bus_message_unref(message);
     return r;
+}
+
+int sd_bus_emit_interfaces_added_strv(sd_bus *bus, const char *path, char **interfaces) {
+    sd_bus_slot *manager;
+    int emitted = 0;
+    if (!bus || !path)
+        return -EINVAL;
+    for (manager = bus->slots; manager; manager = manager->next) {
+        int r;
+        if (manager->kind != RUSTD_SLOT_MANAGER ||
+            !rustd_object_path_below(manager->path, path))
+            continue;
+        r = rustd_emit_interfaces_added_at(bus, manager->path, path, interfaces);
+        if (r < 0)
+            return r;
+        emitted++;
+    }
+    return emitted > 0 ? emitted : -ESRCH;
+}
+
+int sd_bus_emit_interfaces_removed_strv(sd_bus *bus, const char *path, char **interfaces) {
+    sd_bus_slot *manager;
+    int emitted = 0;
+    if (!bus || !path)
+        return -EINVAL;
+    for (manager = bus->slots; manager; manager = manager->next) {
+        int r;
+        if (manager->kind != RUSTD_SLOT_MANAGER ||
+            !rustd_object_path_below(manager->path, path))
+            continue;
+        r = rustd_emit_interfaces_removed_at(bus, manager->path, path, interfaces);
+        if (r < 0)
+            return r;
+        emitted++;
+    }
+    return emitted > 0 ? emitted : -ESRCH;
 }
 
 static int rustd_bus_emit_object(sd_bus *bus, const char *path, bool added) {
@@ -1769,6 +2032,122 @@ static int rustd_dispatch_object(sd_bus *bus, sd_bus_slot *slot, sd_bus_message 
     return 0;
 }
 
+static int rustd_append_object_properties(sd_bus *bus, sd_bus_slot *slot,
+                                          sd_bus_message *reply) {
+    const sd_bus_vtable *v;
+    int r;
+    r = sd_bus_message_open_container(reply, SD_BUS_TYPE_ARRAY, "{sv}");
+    if (r < 0)
+        return r;
+    for (v = slot->vtable; v && v->type != _SD_BUS_VTABLE_END; ++v) {
+        sd_bus_error error = SD_BUS_ERROR_NULL;
+        void *userdata;
+        if ((v->type != _SD_BUS_VTABLE_PROPERTY &&
+             v->type != _SD_BUS_VTABLE_WRITABLE_PROPERTY) ||
+            !v->x.property.member || !v->x.property.signature || !v->x.property.get)
+            continue;
+        r = sd_bus_message_open_container(reply, SD_BUS_TYPE_DICT_ENTRY, "sv");
+        if (r < 0)
+            return r;
+        r = sd_bus_message_append(reply, "s", v->x.property.member);
+        if (r < 0)
+            return r;
+        r = sd_bus_message_open_container(reply, SD_BUS_TYPE_VARIANT,
+                                          v->x.property.signature);
+        if (r < 0)
+            return r;
+        userdata = slot->userdata;
+        if (userdata && !(v->flags & SD_BUS_VTABLE_ABSOLUTE_OFFSET))
+            userdata = (uint8_t *)userdata + v->x.property.offset;
+        else if (!userdata || (v->flags & SD_BUS_VTABLE_ABSOLUTE_OFFSET))
+            userdata = (void *)(uintptr_t)v->x.property.offset;
+        r = v->x.property.get(bus, slot->path, slot->interface,
+                              v->x.property.member, reply, userdata, &error);
+        sd_bus_error_free(&error);
+        if (r < 0)
+            return r;
+        r = sd_bus_message_close_container(reply);
+        if (r < 0)
+            return r;
+        r = sd_bus_message_close_container(reply);
+        if (r < 0)
+            return r;
+    }
+    return sd_bus_message_close_container(reply);
+}
+
+static bool rustd_object_path_below(const char *manager, const char *path) {
+    size_t length;
+    if (!manager || !path)
+        return false;
+    length = strlen(manager);
+    if (strncmp(manager, path, length) != 0)
+        return false;
+    return length == 1U || path[length] == '\0' || path[length] == '/';
+}
+
+static int rustd_dispatch_object_manager(sd_bus *bus, sd_bus_slot *manager,
+                                         sd_bus_message *call) {
+    sd_bus_message *reply = NULL;
+    sd_bus_slot *object;
+    int r;
+    if (!manager->path ||
+        !dbus_message_has_path(call->message, manager->path) ||
+        !dbus_message_has_interface(call->message,
+                                    "org.freedesktop.DBus.ObjectManager") ||
+        !dbus_message_has_member(call->message, "GetManagedObjects"))
+        return 0;
+    r = sd_bus_message_new_method_return(call, &reply);
+    if (r < 0)
+        return r;
+    r = sd_bus_message_open_container(reply, SD_BUS_TYPE_ARRAY, "{oa{sa{sv}}}");
+    for (object = bus->slots; r >= 0 && object; object = object->next) {
+        sd_bus_slot *earlier;
+        sd_bus_slot *interface_slot;
+        bool duplicate = false;
+        if (object->kind != RUSTD_SLOT_OBJECT || !object->path ||
+            !rustd_object_path_below(manager->path, object->path))
+            continue;
+        for (earlier = bus->slots; earlier && earlier != object; earlier = earlier->next)
+            if (earlier->kind == RUSTD_SLOT_OBJECT && earlier->path &&
+                strcmp(earlier->path, object->path) == 0) {
+                duplicate = true;
+                break;
+            }
+        if (duplicate)
+            continue;
+        r = sd_bus_message_open_container(reply, SD_BUS_TYPE_DICT_ENTRY, "oa{sa{sv}}");
+        if (r >= 0)
+            r = sd_bus_message_append(reply, "o", object->path);
+        if (r >= 0)
+            r = sd_bus_message_open_container(reply, SD_BUS_TYPE_ARRAY, "{sa{sv}}");
+        for (interface_slot = bus->slots; r >= 0 && interface_slot;
+             interface_slot = interface_slot->next) {
+            if (interface_slot->kind != RUSTD_SLOT_OBJECT ||
+                !interface_slot->path || !interface_slot->interface ||
+                strcmp(interface_slot->path, object->path) != 0)
+                continue;
+            r = sd_bus_message_open_container(reply, SD_BUS_TYPE_DICT_ENTRY, "sa{sv}");
+            if (r >= 0)
+                r = sd_bus_message_append(reply, "s", interface_slot->interface);
+            if (r >= 0)
+                r = rustd_append_object_properties(bus, interface_slot, reply);
+            if (r >= 0)
+                r = sd_bus_message_close_container(reply);
+        }
+        if (r >= 0)
+            r = sd_bus_message_close_container(reply);
+        if (r >= 0)
+            r = sd_bus_message_close_container(reply);
+    }
+    if (r >= 0)
+        r = sd_bus_message_close_container(reply);
+    if (r >= 0)
+        r = sd_bus_send(bus, reply, NULL);
+    sd_bus_message_unref(reply);
+    return r < 0 ? r : 1;
+}
+
 static int rustd_dispatch_message(sd_bus *bus, sd_bus_message *m) {
     sd_bus_slot *slot;
     sd_bus_message *previous;
@@ -1785,6 +2164,9 @@ static int rustd_dispatch_message(sd_bus *bus, sd_bus_message *m) {
             r = slot->callback(m, slot->userdata, NULL);
         else if (slot->kind == RUSTD_SLOT_OBJECT && dbus_message_get_type(m->message) == DBUS_MESSAGE_TYPE_METHOD_CALL)
             r = rustd_dispatch_object(bus, slot, m);
+        else if (slot->kind == RUSTD_SLOT_MANAGER &&
+                 dbus_message_get_type(m->message) == DBUS_MESSAGE_TYPE_METHOD_CALL)
+            r = rustd_dispatch_object_manager(bus, slot, m);
         if (r < 0) {
             bus->current_message = previous;
             return r;
@@ -2122,6 +2504,7 @@ sd_bus_message *sd_bus_message_unref(sd_bus_message *m) {
     for (unsigned i = 0; i < m->n_unix_fds; ++i)
         close(m->unix_fds[i]);
     free(m->string_space);
+    free(m->peek_contents);
     free(m);
     return NULL;
 }
@@ -2169,6 +2552,8 @@ int sd_bus_message_get_expect_reply(sd_bus_message *m) {
 int sd_bus_message_set_expect_reply(sd_bus_message *m, int b) {
     if (!m || (b != 0 && b != 1))
         return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
     dbus_message_set_no_reply(m->message, !b);
     return 0;
 }
@@ -2176,13 +2561,19 @@ int sd_bus_message_set_expect_reply(sd_bus_message *m, int b) {
 int sd_bus_message_set_destination(sd_bus_message *m, const char *destination) {
     if (!m || !destination)
         return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
     return dbus_message_set_destination(m->message, destination) ? 0 : -ENOMEM;
 }
 
 int sd_bus_message_is_empty(sd_bus_message *m) {
     DBusMessageIter iter;
+    int r;
     if (!m)
         return -EINVAL;
+    r = rustd_commit_string_space(m);
+    if (r < 0)
+        return r;
     return !dbus_message_iter_init(m->message, &iter);
 }
 
@@ -2205,6 +2596,7 @@ int sd_bus_message_seal(sd_bus_message *m, uint64_t cookie, uint64_t timeout_use
         dbus_message_set_serial(m->message, (dbus_uint32_t)cookie);
     if (dbus_message_get_serial(m->message) == 0 && m->bus)
         dbus_message_set_serial(m->message, m->bus->next_serial++);
+    m->sealed = true;
     return 0;
 }
 
@@ -2565,6 +2957,73 @@ static int rustd_raw_authenticate(sd_bus *bus) {
     return -ENOBUFS;
 }
 
+static int rustd_raw_read_auth_line(int fd, char *line, size_t capacity) {
+    size_t used = 0U;
+    if (!line || capacity < 3U)
+        return -EINVAL;
+    while (used + 1U < capacity) {
+        unsigned char byte;
+        int r = rustd_raw_read_all(fd, &byte, 1U, 25000);
+        if (r < 0)
+            return r;
+        if (used == 0U && byte == 0U)
+            continue;
+        line[used++] = (char)byte;
+        if (used >= 2U && line[used - 2U] == '\r' && line[used - 1U] == '\n') {
+            line[used - 2U] = '\0';
+            return 0;
+        }
+    }
+    return -ENOBUFS;
+}
+
+static int rustd_raw_authenticate_server(sd_bus *bus) {
+    char line[4096];
+    char id[33];
+    char response[64];
+    struct ucred peer;
+    socklen_t peer_size = sizeof(peer);
+    size_t i;
+    int r;
+    if (!bus || bus->input_fd < 0 || bus->output_fd < 0)
+        return -ENOTCONN;
+    if (!bus->trusted &&
+        getsockopt(bus->input_fd, SOL_SOCKET, SO_PEERCRED, &peer, &peer_size) < 0)
+        return -errno;
+    r = rustd_raw_read_auth_line(bus->input_fd, line, sizeof(line));
+    if (r < 0)
+        return r;
+    if (strncmp(line, "AUTH EXTERNAL", strlen("AUTH EXTERNAL")) != 0)
+        return -EACCES;
+    r = rustd_raw_write_all(bus->output_fd, "DATA\r\n", 6U, 25000);
+    if (r < 0)
+        return r;
+    r = rustd_raw_read_auth_line(bus->input_fd, line, sizeof(line));
+    if (r < 0)
+        return r;
+    if (strncmp(line, "DATA", 4U) != 0)
+        return -EACCES;
+    for (i = 0U; i < sizeof(bus->server_id.bytes); ++i)
+        snprintf(id + i * 2U, 3U, "%02x", bus->server_id.bytes[i]);
+    id[32] = '\0';
+    snprintf(response, sizeof(response), "OK %s\r\n", id);
+    r = rustd_raw_write_all(bus->output_fd, response, strlen(response), 25000);
+    if (r < 0)
+        return r;
+    r = rustd_raw_read_auth_line(bus->input_fd, line, sizeof(line));
+    if (r < 0)
+        return r;
+    if (strcmp(line, "NEGOTIATE_UNIX_FD") == 0) {
+        r = rustd_raw_write_all(bus->output_fd, "AGREE_UNIX_FD\r\n", 15U, 25000);
+        if (r < 0)
+            return r;
+        r = rustd_raw_read_auth_line(bus->input_fd, line, sizeof(line));
+        if (r < 0)
+            return r;
+    }
+    return strcmp(line, "BEGIN") == 0 ? 0 : -EACCES;
+}
+
 static int rustd_raw_receive_message(int fd, int timeout, DBusMessage **ret) {
     unsigned char header[16];
     unsigned char *wire = NULL;
@@ -2762,13 +3221,20 @@ int sd_bus_call_async(sd_bus *bus, sd_bus_slot **ret_slot, sd_bus_message *m,
     slot->callback = callback;
     slot->userdata = userdata;
     slot->pending = pending;
+    if (usec != UINT64_MAX) {
+        uint64_t effective = usec == 0U ? bus->method_call_timeout : usec;
+        uint64_t now = rustd_bus_monotonic_usec();
+        slot->deadline_usec = UINT64_MAX - now < effective
+            ? UINT64_MAX : now + effective;
+    } else
+        slot->deadline_usec = UINT64_MAX;
     if (!dbus_pending_call_set_notify(pending, rustd_async_notify, slot, NULL)) {
         sd_bus_slot_unref(slot);
         return -ENOMEM;
     }
     if (ret_slot)
         *ret_slot = slot;
-    return 0;
+    return rustd_bus_update_event_sources(bus);
 }
 
 int sd_bus_call_method(sd_bus *bus, const char *destination, const char *path,

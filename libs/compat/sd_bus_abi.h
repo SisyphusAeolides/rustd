@@ -146,6 +146,10 @@ int sd_bus_wait(sd_bus *bus, uint64_t timeout_usec);
 int sd_bus_get_unique_name(sd_bus *bus, const char **unique);
 sd_bus_message *sd_bus_get_current_message(sd_bus *bus);
 int sd_bus_set_fd(sd_bus *bus, int input_fd, int output_fd);
+int sd_bus_set_address(sd_bus *bus, const char *address);
+int sd_bus_set_bus_client(sd_bus *bus, int b);
+int sd_bus_set_server(sd_bus *bus, int b, sd_id128_t server_id);
+int sd_bus_set_trusted(sd_bus *bus, int b);
 int sd_bus_attach_event(sd_bus *bus, sd_event *event, int priority);
 int sd_bus_call(sd_bus *bus, sd_bus_message *message, uint64_t usec,
                 sd_bus_error *error, sd_bus_message **reply);
