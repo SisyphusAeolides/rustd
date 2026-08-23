@@ -115,7 +115,7 @@ done
 install -m0644 dist/fedora/90-rustd-dracut.conf \
     %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
 
-%pretrans -p /bin/bash
+%pretrans -p /usr/bin/bash
 set -eu
 fail() {
     echo "rustd-fedora-compat: $*" >&2

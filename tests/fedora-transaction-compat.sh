@@ -60,6 +60,9 @@ export RUSTD_FEDORA_USER_UNIT_DEST="$WORK/native-user"
 export RUSTD_FEDORA_GLOBAL_USER_DEST="$WORK/global-user"
 export RUSTD_FEDORA_MARK_ROOT="$WORK/markers"
 export RUSTD_FEDORA_MANAGER_RUNTIME="$WORK/manager"
+export RUSTD_FEDORA_PID1_COMM_PATH="$WORK/pid1.comm"
+export RUSTD_FEDORA_CONTROL_SOCKET="$WORK/ctl.sock"
+printf '%s\n' rustd > "$RUSTD_FEDORA_PID1_COMM_PATH"
 
 # Match Fedora's macro-generated call shapes, including options after verbs.
 "$WORK/bin/systemctl" --no-reload preset demo.service
@@ -73,6 +76,21 @@ grep -Fq 'enable demo.service' "$LOG"
 
 "$WORK/bin/systemctl" disable --now --no-warn demo.service
 grep -Eq -- '--now .*disable demo\.service|--now disable demo\.service' "$LOG"
+
+# During the exclusive RPM transaction, the compatibility frontend is already
+# installed while the old systemd PID 1 is still resident. Package removal
+# helpers must query and remove the foreign enablement state without contacting
+# RustD's not-yet-running control socket.
+mkdir -p "$WORK/system/multi-user.target.wants"
+ln -s ../demo.service "$WORK/system/multi-user.target.wants/demo.service"
+printf '%s\n' systemd > "$RUSTD_FEDORA_PID1_COMM_PATH"
+before=$(wc -l < "$LOG")
+"$WORK/bin/systemctl" --quiet is-enabled demo.service
+[[ $(wc -l < "$LOG") -eq $before ]]
+"$WORK/bin/systemctl" disable --now --quiet demo.service
+[[ ! -e "$WORK/system/multi-user.target.wants/demo.service" ]]
+tail -n1 "$LOG" | grep -Fq -- '--quiet disable demo.service'
+printf '%s\n' rustd > "$RUSTD_FEDORA_PID1_COMM_PATH"
 
 # Fedora update-helper install and restart transaction.
 "$WORK/bin/systemd-update-helper" install-system-units demo.service

@@ -125,7 +125,7 @@ assert "pam_rustd.so" not in main_files
 assert "%{_sbindir}/rustd-fedora-cutover" in cutover_files
 assert "%{_libdir}/security/pam_rustd.so" in cutover_files
 
-assert "%pretrans -p /bin/bash" in compat
+assert "%pretrans -p /usr/bin/bash" in compat
 assert "authselect check" in compat
 assert "pam_systemd(_home|_loadkey)?" in compat
 assert "%{_sbindir}/init" in compat_files

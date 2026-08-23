@@ -8,6 +8,8 @@ SYSTEM_DEST=${RUSTD_FEDORA_SYSTEM_UNIT_DEST:-/run/rustd/system}
 USER_DEST=${RUSTD_FEDORA_USER_UNIT_DEST:-/usr/lib/rustd/user}
 GLOBAL_USER_DEST=${RUSTD_FEDORA_GLOBAL_USER_DEST:-/etc/rustd/user}
 MARK_ROOT=${RUSTD_FEDORA_MARK_ROOT:-/run/rustd/fedora-update}
+PID1_COMM=${RUSTD_FEDORA_PID1_COMM_PATH:-/proc/1/comm}
+CONTROL_SOCKET=${RUSTD_FEDORA_CONTROL_SOCKET:-/run/rustd/ctl.sock}
 
 IFS=: read -r -a SYSTEM_DIRS <<< "${RUSTD_FEDORA_SYSTEM_UNIT_DIRS:-/etc/systemd/system:/run/systemd/system:/usr/local/lib/systemd/system:/usr/lib/systemd/system}"
 IFS=: read -r -a USER_DIRS <<< "${RUSTD_FEDORA_USER_UNIT_DIRS:-/etc/systemd/user:/run/systemd/user:/usr/local/lib/systemd/user:/usr/lib/systemd/user}"
@@ -130,6 +132,67 @@ run_rustctl() {
     mapfile -d '' -t cmd < <(rustctl_base)
     [[ $quiet -eq 1 ]] && cmd+=(--quiet)
     "${cmd[@]}" "$@"
+}
+
+legacy_manager_transition() {
+    [[ $scope == system && $global -eq 0 && ! -S $CONTROL_SOCKET ]] || return 1
+    [[ -r $PID1_COMM ]] || return 1
+    [[ $(<"$PID1_COMM") == systemd ]]
+}
+
+foreign_disable() {
+    local unit dir link
+    local -a dirs
+    foreign_dirs dirs
+    for unit in "$@"; do
+        [[ $unit != */* && $unit != . && $unit != .. ]] || {
+            echo "systemctl(RustD): invalid unit name '$unit'" >&2
+            return 64
+        }
+        for dir in "${dirs[@]}"; do
+            [[ -d $dir ]] || continue
+            for link in "$dir"/*.wants/"$unit" "$dir"/*.requires/"$unit"; do
+                [[ -e $link || -L $link ]] || continue
+                rm -f -- "$link"
+            done
+        done
+    done
+}
+
+foreign_is_enabled() {
+    local code=0 unit dir link state
+    local -a dirs
+    foreign_dirs dirs
+    for unit in "$@"; do
+        [[ $unit != */* && $unit != . && $unit != .. ]] || {
+            echo "systemctl(RustD): invalid unit name '$unit'" >&2
+            return 64
+        }
+        state=disabled
+        for dir in "${dirs[@]}"; do
+            link=$dir/$unit
+            if [[ -L $link ]]; then
+                if [[ $(readlink "$link") == /dev/null ]]; then
+                    state=masked
+                else
+                    state=alias
+                fi
+                break
+            fi
+            for link in "$dir"/*.wants/"$unit" "$dir"/*.requires/"$unit"; do
+                if [[ -e $link || -L $link ]]; then
+                    state=enabled
+                    break 2
+                fi
+            done
+        done
+        [[ $quiet -eq 1 ]] || printf '%s\n' "$state"
+        case $state in
+            enabled|alias) ;;
+            *) code=1 ;;
+        esac
+    done
+    return "$code"
 }
 
 global_enable() {
@@ -269,7 +332,11 @@ case $command in
             [[ $command == enable ]] && global_enable 1 "$@" || global_enable 0 "$@"
         else
             args=()
-            [[ $now -eq 1 ]] && args+=(--now)
+            if [[ $command == disable ]] && legacy_manager_transition; then
+                foreign_disable "$@"
+            elif [[ $now -eq 1 ]]; then
+                args+=(--now)
+            fi
             run_rustctl "${args[@]}" "$command" "$@"
         fi
         ;;
@@ -318,7 +385,14 @@ case $command in
             esac
         done
         ;;
-    is-active|is-enabled|is-failed|status)
+    is-enabled)
+        if legacy_manager_transition; then
+            foreign_is_enabled "$@"
+        else
+            run_rustctl "$command" "$@"
+        fi
+        ;;
+    is-active|is-failed|status)
         run_rustctl "$command" "$@"
         ;;
     list-units)
