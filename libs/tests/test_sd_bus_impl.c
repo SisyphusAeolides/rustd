@@ -181,9 +181,18 @@ static void test_async_session_bus(void) {
     sd_bus_unref(bus);
 }
 
+static void test_default_user_lifecycle(void) {
+    sd_bus *bus = NULL;
+    assert(sd_bus_default_user(&bus) == 0);
+    assert(bus != NULL);
+    assert(sd_bus_wait(bus, 0) >= 0);
+    assert(sd_bus_flush_close_unref(bus) == NULL);
+}
+
 int main(void) {
     test_local_message_codec();
     test_real_session_bus();
     test_async_session_bus();
+    test_default_user_lifecycle();
     return 0;
 }

@@ -132,6 +132,7 @@ jobs:
           # the migration and exercises the compatibility RPM's pretrans guard.
           dnf -y "${common[@]}" install \
             rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
+            --setopt=protected_packages= \
             --allowerasing
           mapfile -t residual < <(
             rpm --root "$root" -qa --qf '%{NAME}\n' \

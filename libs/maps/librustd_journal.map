@@ -1,19 +1,6 @@
 RUSTD_JOURNAL_1.0 {
   global:
-    rustd_journal_abi_version;
-    rustd_journal_sendv;
-    rustd_journal_print;
-    rustd_journal_open;
-    rustd_journal_unref;
-    rustd_journal_seek_tail;
-    rustd_journal_next;
-    rustd_journal_previous;
-    rustd_journal_previous_skip;
-    rustd_journal_get_data;
-    rustd_journal_get_realtime_usec;
-    rustd_journal_add_match;
-    rustd_journal_add_disjunction;
-    rustd_journal_flush_matches;
+    rustd_journal_*;
   local:
     *;
 };

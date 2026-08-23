@@ -25,6 +25,7 @@ int rustd_session_get_type(const char *session, char **type);
 int rustd_session_get_class(const char *session, char **class);
 int rustd_session_get_display(const char *session, char **display);
 int rustd_session_get_tty(const char *session, char **tty);
+int rustd_session_get_service(const char *session, char **service);
 int rustd_session_get_username(const char *session, char **user);
 int rustd_session_get_leader(const char *session, pid_t *leader);
 int rustd_session_get_remote_host(const char *session, char **host);

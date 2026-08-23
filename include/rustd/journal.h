@@ -33,15 +33,45 @@ typedef struct rustd_journal rustd_journal;
 int rustd_journal_open(rustd_journal **ret, const char *directory);
 void rustd_journal_unref(rustd_journal *journal);
 int rustd_journal_seek_tail(rustd_journal *journal);
+int rustd_journal_seek_head(rustd_journal *journal);
+int rustd_journal_seek_realtime_usec(rustd_journal *journal, uint64_t usec);
+int rustd_journal_seek_monotonic_usec(rustd_journal *journal, uint64_t usec);
+int rustd_journal_seek_cursor(rustd_journal *journal, const char *cursor);
 int rustd_journal_next(rustd_journal *journal);
+int rustd_journal_next_skip(rustd_journal *journal, uint64_t skip);
 int rustd_journal_previous(rustd_journal *journal);
 int rustd_journal_previous_skip(rustd_journal *journal, uint64_t skip);
 int rustd_journal_get_data(rustd_journal *journal, const char *field,
                            const void **data, size_t *length);
 int rustd_journal_get_realtime_usec(rustd_journal *journal, uint64_t *usec);
+int rustd_journal_get_monotonic_usec(rustd_journal *journal, uint64_t *usec,
+                                     uint8_t boot_id[16]);
+int rustd_journal_get_cursor(rustd_journal *journal, char **cursor);
+int rustd_journal_test_cursor(rustd_journal *journal, const char *cursor);
+int rustd_journal_get_cutoff_realtime_usec(rustd_journal *journal,
+                                            uint64_t *from, uint64_t *to);
+int rustd_journal_get_usage(rustd_journal *journal, uint64_t *bytes);
 int rustd_journal_add_match(rustd_journal *journal, const void *data, size_t size);
 int rustd_journal_add_disjunction(rustd_journal *journal);
+int rustd_journal_add_conjunction(rustd_journal *journal);
 void rustd_journal_flush_matches(rustd_journal *journal);
+int rustd_journal_enumerate_data(rustd_journal *journal, const void **data, size_t *length);
+void rustd_journal_restart_data(rustd_journal *journal);
+int rustd_journal_enumerate_fields(rustd_journal *journal, const char **field);
+void rustd_journal_restart_fields(rustd_journal *journal);
+int rustd_journal_query_unique(rustd_journal *journal, const char *field);
+int rustd_journal_enumerate_unique(rustd_journal *journal,
+                                   const void **data, size_t *length);
+void rustd_journal_restart_unique(rustd_journal *journal);
+size_t rustd_journal_get_data_threshold(rustd_journal *journal);
+int rustd_journal_set_data_threshold(rustd_journal *journal, size_t threshold);
+int rustd_journal_has_runtime_files(rustd_journal *journal);
+int rustd_journal_has_persistent_files(rustd_journal *journal);
+int rustd_journal_get_fd(rustd_journal *journal);
+int rustd_journal_get_events(rustd_journal *journal);
+int rustd_journal_get_timeout(rustd_journal *journal, uint64_t *timeout);
+int rustd_journal_process(rustd_journal *journal);
+int rustd_journal_wait(rustd_journal *journal, uint64_t timeout_usec);
 
 #ifdef __cplusplus
 }

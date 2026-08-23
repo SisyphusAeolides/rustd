@@ -183,6 +183,10 @@ check-compat: compat
 	$(CC) $(CFLAGS) -Iinclude libs/tests/test_journal_send_impl.c \
 		libs/compat/journal_send_impl.c -o build/test_journal_send_impl
 	./build/test_journal_send_impl
+	$(CC) $(CFLAGS) -Iinclude libs/tests/test_journal_filters.c \
+		-Wl,-rpath,$(abspath $(LIBS_DIR)) -L$(LIBS_DIR) -lrustd_journal \
+		-o build/test_journal_filters
+	./build/test_journal_filters
 
 check-compat-closure: compat
 	@test -n "$(REPORT)" || (echo "REPORT=<systemd closure audit JSON> is required" >&2; exit 64)

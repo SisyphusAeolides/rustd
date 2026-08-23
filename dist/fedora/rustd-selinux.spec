@@ -58,8 +58,7 @@ install -D -m0644 selinux-build/%{modulename}.pp.bz2 \
 %selinux_relabel_pre -s %{selinuxtype}
 
 %post
-%selinux_modules_install -s %{selinuxtype} \
-    %{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp.bz2
+%selinux_modules_install -s %{selinuxtype} %{_datadir}/selinux/packages/%{selinuxtype}/%{modulename}.pp.bz2
 %selinux_relabel_post -s %{selinuxtype}
 
 %postun

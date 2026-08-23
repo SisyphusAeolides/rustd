@@ -166,10 +166,10 @@ elif grep -Eq '^hosts:.*\brustd_dns\b' /etc/nsswitch.conf; then
 else
     fail 'hosts NSS line does not include rustd_dns'
 fi
-if grep -Eq '^(passwd|group|shadow):.*\bsystemd\b' /etc/nsswitch.conf; then
-    fail 'account NSS still references libnss_systemd'
+if grep -Eq '^[[:alpha:]_][[:alnum:]_-]*:.*\bsystemd\b' /etc/nsswitch.conf; then
+    fail 'NSS configuration still references libnss_systemd'
 else
-    pass 'account NSS does not require libnss_systemd'
+    pass 'NSS configuration does not require libnss_systemd'
 fi
 
 # PAM cannot keep loading modules owned by the removed systemd-pam RPM.

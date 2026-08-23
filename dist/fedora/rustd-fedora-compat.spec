@@ -13,6 +13,7 @@ URL:            https://github.com/SisyphusAeolides/rustd
 Source0:        rustd-%{version}.tar.gz
 
 BuildRequires:  bash
+BuildRequires:  gcc
 Requires:       rustd%{?_isa} = %{version}-%{release}
 Requires:       rustd-cutover-tools%{?_isa} = %{version}-%{release}
 Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}
@@ -38,17 +39,27 @@ staged RustD PAM/NSS migration is active and valid.
 # Shell frontends are architecture-independent source, but this RPM is kept on
 # the native architecture because it has exact-version RustD dependencies.
 for file in dist/fedora/compat/*; do
-    bash -n "$file"
+    [[ $file == *.c ]] || bash -n "$file"
 done
+%{__cc} %{build_cflags} %{build_ldflags} \
+    dist/fedora/compat/rustd-shutdown.c -o rustd-shutdown
 
 %check
 bash tests/fedora-transaction-compat.sh
 grep -Fq 'omit_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
 grep -Fq 'force_add_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
+grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd[[:space:]].*[[:space:]]memstrack[[:space:]]' \
+    dist/fedora/90-rustd-dracut.conf
+for name in halt poweroff reboot shutdown telinit runlevel; do
+    ln -s rustd-shutdown "rustd-shutdown-test-$name"
+    test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./rustd-shutdown-test-$name ${name/telinit/6} 2>/dev/null || true)" != ""
+    rm -f "rustd-shutdown-test-$name"
+done
 
 %install
 install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_sbindir} \
+           %{buildroot}%{_prefix}/lib/rustd \
            %{buildroot}%{_prefix}/lib/systemd \
            %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d
 install -m0755 dist/fedora/compat/systemctl %{buildroot}%{_bindir}/systemctl
@@ -60,6 +71,10 @@ install -m0755 dist/fedora/compat/systemd-sysctl %{buildroot}%{_prefix}/lib/syst
 install -m0755 dist/fedora/compat/systemd-binfmt %{buildroot}%{_prefix}/lib/systemd/systemd-binfmt
 ln -s ../rustd/rustd-udevd %{buildroot}%{_prefix}/lib/systemd/systemd-udevd
 ln -s ../lib/rustd/rustd %{buildroot}%{_sbindir}/init
+install -m0755 rustd-shutdown %{buildroot}%{_prefix}/lib/rustd/rustd-shutdown
+for name in halt poweroff reboot shutdown telinit runlevel; do
+    ln -s ../lib/rustd/rustd-shutdown %{buildroot}%{_sbindir}/$name
+done
 install -m0644 dist/fedora/90-rustd-dracut.conf \
     %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
 
@@ -79,7 +94,7 @@ authselect check >/dev/null \
     || fail 'libnss_rustd_dns.so.2 is not staged'
 grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
     || fail 'hosts NSS is not migrated to rustd_dns'
-! grep -Eq '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
+! grep -Eq '^[[:alpha:]_][[:alnum:]_-]*:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
     || fail 'NSS still references a systemd-owned backend'
 grep -R -Fq 'pam_rustd.so' /etc/pam.d \
     || fail 'PAM is not migrated to pam_rustd.so'
@@ -89,6 +104,13 @@ grep -R -Fq 'pam_rustd.so' /etc/pam.d \
 %files
 %license LICENSE*
 %{_sbindir}/init
+%{_sbindir}/halt
+%{_sbindir}/poweroff
+%{_sbindir}/reboot
+%{_sbindir}/runlevel
+%{_sbindir}/shutdown
+%{_sbindir}/telinit
+%{_prefix}/lib/rustd/rustd-shutdown
 %{_bindir}/systemctl
 %{_bindir}/systemd-tmpfiles
 %{_bindir}/systemd-sysusers

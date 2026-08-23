@@ -9,6 +9,8 @@ on:
       - scripts/build-fedora-rpms.sh
       - scripts/fedora-cutover-gate.sh
       - scripts/fedora-vm-guest-cutover.sh
+      - scripts/audit-systemd-elf-consumers.py
+      - scripts/check-compat-closure.py
       - src/bin/rustd-udevd.rs
       - dist/fedora/**
       - .github/workflows/fedora-full-vm-certification.yml
@@ -211,6 +213,8 @@ jobs:
           "${ssh_cmd[@]}" 'set -e; cat /etc/fedora-release; test "$(cat /proc/1/comm)" = systemd; test "$(getenforce)" = Enforcing; dnf --version | head -n1; df -h /'
           "${ssh_cmd[@]}" 'sudo mkdir -p /var/tmp/rustd-rpms && sudo chown rustdci:rustdci /var/tmp/rustd-rpms'
           tar -C target/fedora-rpms -cf - . | "${ssh_cmd[@]}" 'tar -C /var/tmp/rustd-rpms -xf -'
+          tar -cf - scripts/audit-systemd-elf-consumers.py scripts/check-compat-closure.py \
+            | "${ssh_cmd[@]}" 'sudo tar -C /var/tmp -xf -'
           cat scripts/fedora-vm-guest-cutover.sh | "${ssh_cmd[@]}" 'sudo bash -s'
           "${ssh_cmd[@]}" 'cat /var/tmp/rustd-initrd-modules.txt' > "$RUNNER_TEMP/rustd-initrd-modules.txt"
           "${ssh_cmd[@]}" 'grep -E "systemd-udevd|usr/lib/rustd/rustd-udevd" /var/tmp/rustd-lsinitrd.txt || true' > "$RUNNER_TEMP/rustd-initrd-udev.txt"
@@ -280,7 +284,7 @@ jobs:
             done
             [[ $ready == 1 ]] || { tail -n 300 "$serial" >&2 || true; kill "$qemu_pid" || true; exit 1; }
 
-            "${ssh_cmd[@]}" 'set -euo pipefail; test "$(readlink -f /proc/1/exe)" = /usr/lib/rustd/rustd; test "$(getenforce)" = Enforcing; sudo dnf -q check; authselect check >/dev/null; if rpm -qa --qf "%{NAME}\n" | grep -Eq "^systemd($|-)"; then exit 1; fi; ! grep -Eq "^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)" /etc/nsswitch.conf; ! grep -R -E -q "pam_systemd(_home|_loadkey)?\\.so" /etc/pam.d; rustctl --quiet is-active dbus.service; rustctl --quiet is-active NetworkManager.service; rustctl --quiet is-active sshd.service; rustctl --quiet is-active rustd-resolved.service; getent hosts localhost >/dev/null; getent ahosts fedoraproject.org >/dev/null; rustd-resolvectl status >/dev/null; sudo dnf -q makecache'
+            "${ssh_cmd[@]}" 'set -euo pipefail; test "$(readlink -f /proc/1/exe)" = /usr/lib/rustd/rustd; test "$(getenforce)" = Enforcing; sudo dnf -q check; authselect check >/dev/null; if rpm -qa --qf "%{NAME}\n" | grep -Eq "^systemd($|-)"; then exit 1; fi; ! grep -Eq "^[[:alpha:]_][[:alnum:]_-]*:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)" /etc/nsswitch.conf; ! grep -R -E -q "pam_systemd(_home|_loadkey)?\\.so" /etc/pam.d; rustctl --quiet is-active dbus.service; rustctl --quiet is-active NetworkManager.service; rustctl --quiet is-active sshd.service; rustctl --quiet is-active rustd-resolved.service; getent hosts localhost >/dev/null; getent ahosts fedoraproject.org >/dev/null; rustd-resolvectl status >/dev/null; sudo dnf -q makecache'
 
             if [[ $attempt -eq 1 ]]; then
               "${ssh_cmd[@]}" 'set -euo pipefail; test "$(rpm -qf --qf "%{NAME}\n" /usr/bin/systemctl)" = rustd-fedora-compat; test "$(readlink -f /usr/lib/systemd/systemd-udevd)" = /usr/lib/rustd/rustd-udevd; systemctl is-active sshd.service >/dev/null; udevadm settle --timeout=30; rustctl list-units >/dev/null; ! ps -eo exe= | grep -E "^/usr/lib/systemd/(systemd|systemd-journald|systemd-resolved)$"'

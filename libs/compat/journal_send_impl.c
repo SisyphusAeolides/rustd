@@ -211,6 +211,33 @@ int sd_journal_send_with_location(const char *file, const char *line, const char
     return r;
 }
 
+int sd_journal_sendv_with_location(const char *file, const char *line, const char *func,
+                                   const struct iovec *input, int n) {
+    struct iovec *fields;
+    char *func_field;
+    int result;
+    if (!file || !line || !func || !input || n <= 0)
+        return -EINVAL;
+    if ((size_t)n > (SIZE_MAX / sizeof(*fields)) - 3U)
+        return -EOVERFLOW;
+    fields = calloc((size_t)n + 3U, sizeof(*fields));
+    if (!fields)
+        return -ENOMEM;
+    memcpy(fields, input, (size_t)n * sizeof(*fields));
+    func_field = code_func_field(func);
+    if (!func_field) {
+        free(fields);
+        return -ENOMEM;
+    }
+    fields[n] = (struct iovec){(void *)file, strlen(file)};
+    fields[n + 1] = (struct iovec){(void *)line, strlen(line)};
+    fields[n + 2] = (struct iovec){func_field, strlen(func_field)};
+    result = rustd_journal_sendv(fields, n + 3);
+    free(func_field);
+    free(fields);
+    return result;
+}
+
 int sd_journal_printv_with_location(int priority, const char *file, const char *line,
                                     const char *func, const char *format, va_list ap) {
     struct iovec iov[5];
@@ -267,4 +294,18 @@ int sd_journal_print_with_location(int priority, const char *file, const char *l
     r = sd_journal_printv_with_location(priority, file, line, func, format, ap);
     va_end(ap);
     return r;
+}
+
+int sd_journal_printv(int priority, const char *format, va_list ap) {
+    return sd_journal_printv_with_location(
+        priority, "CODE_FILE=unknown", "CODE_LINE=0", "unknown", format, ap);
+}
+
+int sd_journal_print(int priority, const char *format, ...) {
+    va_list ap;
+    int result;
+    va_start(ap, format);
+    result = sd_journal_printv(priority, format, ap);
+    va_end(ap);
+    return result;
 }

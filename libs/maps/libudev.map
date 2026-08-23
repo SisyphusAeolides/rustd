@@ -9,6 +9,7 @@ LIBUDEV_183 {
     udev_device_get_devtype;
     udev_device_get_driver;
     udev_device_get_is_initialized;
+    udev_device_get_udev;
     udev_device_get_parent;
     udev_device_get_parent_with_subsystem_devtype;
     udev_device_get_properties_list_entry;
@@ -24,6 +25,7 @@ LIBUDEV_183 {
     udev_device_get_usec_since_initialized;
     udev_device_has_tag;
     udev_device_new_from_devnum;
+    udev_device_new_from_environment;
     udev_device_new_from_subsystem_sysname;
     udev_device_new_from_syspath;
     udev_device_ref;
@@ -54,6 +56,7 @@ LIBUDEV_183 {
     udev_monitor_get_udev;
     udev_monitor_new_from_netlink;
     udev_monitor_receive_device;
+    udev_monitor_ref;
     udev_monitor_set_receive_buffer_size;
     udev_monitor_unref;
     udev_new;

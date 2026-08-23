@@ -1,18 +1,30 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-2.1-or-later
-# Destructive Fedora guest transaction used by the full-VM certification job.
+# Destructive Fedora/RHEL-family guest transaction used by full-VM certification.
 set -Eeuo pipefail
 
 RPM_REPO=${RUSTD_RPM_REPO:-/var/tmp/rustd-rpms}
 [[ ${EUID:-$(id -u)} -eq 0 ]] || { echo 'guest cutover must run as root' >&2; exit 1; }
 [[ -d $RPM_REPO ]] || { echo "RPM repository missing: $RPM_REPO" >&2; exit 1; }
 
-cat /etc/fedora-release
+. /etc/os-release
+case ${ID:-} in
+    fedora|rocky) ;;
+    *) echo "unsupported guest distribution: ${ID:-unknown}" >&2; exit 1 ;;
+esac
+printf '%s\n' "${PRETTY_NAME:-${ID} ${VERSION_ID:-}}"
 test "$(cat /proc/1/comm)" = systemd
 test "$(getenforce)" = Enforcing
 
+# Align every installed consumer with the repository's current systemd EVR
+# before building the exact-EVR replacement RPMs. Mixing an older cloud image
+# with newer compatibility Provides can otherwise make DNF erase consumers
+# whose dependencies are locked to the older systemd build.
+dnf -y upgrade --refresh
 dnf -y install createrepo_c dracut authselect
 createrepo_c "$RPM_REPO"
+/var/tmp/scripts/audit-systemd-elf-consumers.py \
+    --output /var/tmp/rustd-precutover-elf-audit.json
 rpm -qa --qf '%{NAME}-%{EVR}.%{ARCH}\n' | sort > /var/tmp/packages-before.txt
 rpm -q --whatrequires systemd 2>/dev/null | sort -u > /var/tmp/systemd-consumers-before.txt || true
 
@@ -62,7 +74,7 @@ test "$(rpm -qf --qf '%{NAME}\n' /usr/lib64/libnss_rustd_dns.so.2)" = rustd-reso
 
 authselect check
 grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf
-! grep -Eq '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf
+! grep -Eq '^[[:alpha:]_][[:alnum:]_-]*:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf
 ! grep -R -E -q 'pam_systemd(_home|_loadkey)?\.so' /etc/pam.d
 grep -R -Fq 'pam_rustd.so' /etc/pam.d
 getent passwd root >/dev/null
@@ -76,6 +88,20 @@ dnf -y \
     --setopt=protected_packages= \
     install rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
     --allowerasing
+
+# An exclusive replacement may erase systemd packages, but never unrelated
+# packages. Fail the disposable certification guest if the solver pruned any
+# pre-cutover workload or boot component.
+rpm -qa --qf '%{NAME}-%{EVR}.%{ARCH}\n' | sort > /var/tmp/packages-after-exclusive.txt
+awk -F- '$1 != "systemd"' /var/tmp/packages-before.txt > /var/tmp/non-systemd-before.txt
+awk -F- '$1 != "systemd"' /var/tmp/packages-after-exclusive.txt > /var/tmp/non-systemd-after.txt
+comm -23 /var/tmp/non-systemd-before.txt /var/tmp/non-systemd-after.txt \
+    > /var/tmp/non-systemd-removed-during-exclusive.txt
+if [[ -s /var/tmp/non-systemd-removed-during-exclusive.txt ]]; then
+    echo 'exclusive transaction removed or replaced non-systemd packages:' >&2
+    cat /var/tmp/non-systemd-removed-during-exclusive.txt >&2
+    exit 1
+fi
 
 # The package-level compatibility capabilities are now supplied by RustD. Erase
 # any residual systemd subpackages explicitly instead of allowing weak-dep
@@ -101,14 +127,20 @@ test "$(rpm -qf --qf '%{NAME}\n' /usr/sbin/init)" = rustd-fedora-compat
 test "$(readlink -f /usr/sbin/init)" = /usr/lib/rustd/rustd
 test "$(rpm -qf --qf '%{NAME}\n' /usr/lib64/security/pam_rustd.so)" = rustd-cutover-tools
 test "$(rpm -qf --qf '%{NAME}\n' /usr/lib64/libnss_rustd_dns.so.2)" = rustd-resolved-nss
-test "$(rpm -qf --qf '%{NAME}\n' /usr/lib64/libsystemd.so.0)" = rustd-compat-libs
-test "$(rpm -qf --qf '%{NAME}\n' /usr/lib64/libudev.so.1)" = rustd-compat-libs
+compat_systemd=$(rpm -ql rustd-compat-libs | grep '/libsystemd\.so\.0$')
+compat_udev=$(rpm -ql rustd-compat-libs | grep '/libudev\.so\.1$')
+test "$(rpm -qf --qf '%{NAME}\n' "$compat_systemd")" = rustd-compat-libs
+test "$(rpm -qf --qf '%{NAME}\n' "$compat_udev")" = rustd-compat-libs
+/var/tmp/scripts/check-compat-closure.py \
+    --report /var/tmp/rustd-precutover-elf-audit.json \
+    --libsystemd "$compat_systemd" \
+    --libudev "$compat_udev"
 test "$(rpm -qf --qf '%{NAME}\n' /usr/lib/systemd/systemd-udevd)" = rustd-fedora-compat
 test "$(readlink -f /usr/lib/systemd/systemd-udevd)" = /usr/lib/rustd/rustd-udevd
 
 authselect check
 grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf
-! grep -Eq '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf
+! grep -Eq '^[[:alpha:]_][[:alnum:]_-]*:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf
 ! grep -R -E -q 'pam_systemd(_home|_loadkey)?\.so' /etc/pam.d
 [[ -e /usr/lib64/security/pam_rustd.so ]]
 [[ -e /usr/lib64/libnss_rustd_dns.so.2 ]]

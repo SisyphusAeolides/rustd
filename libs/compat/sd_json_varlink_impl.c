@@ -213,7 +213,7 @@ static int varlink_read_json(sd_varlink *v, struct json_object **ret) {
         return -EINVAL;
     *ret = NULL;
     for (;;) {
-        nul = memchr(v->input, '\0', v->input_length);
+        nul = v->input_length > 0U ? memchr(v->input, '\0', v->input_length) : NULL;
         if (nul) {
             size_t frame_length = (size_t)(nul - v->input);
             size_t consumed = frame_length + 1U;

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <limits.h>
 #include <stdarg.h>
@@ -9,6 +10,8 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/inotify.h>
+#include <poll.h>
 #include <sys/un.h>
 #include <unistd.h>
 
@@ -168,7 +171,46 @@ struct rustd_journal {
     size_t entry_length;
     struct rustd_journal_match *matches;
     unsigned match_term;
+    int conjunction_all_terms;
+    size_t data_threshold;
+    size_t data_offset;
+    char **field_names;
+    size_t field_count;
+    size_t field_index;
+    char *unique_field;
+    char **unique_values;
+    size_t unique_count;
+    size_t unique_index;
+    int notify_fd;
+    int notify_watch;
 };
+
+static void free_string_array(char **values, size_t count) {
+    size_t index;
+    for (index = 0U; index < count; index++)
+        free(values[index]);
+    free(values);
+}
+
+static void clear_enumerators(rustd_journal *journal) {
+    journal->data_offset = 0U;
+    free_string_array(journal->field_names, journal->field_count);
+    journal->field_names = NULL;
+    journal->field_count = 0U;
+    journal->field_index = 0U;
+    free(journal->unique_field);
+    journal->unique_field = NULL;
+    free_string_array(journal->unique_values, journal->unique_count);
+    journal->unique_values = NULL;
+    journal->unique_count = 0U;
+    journal->unique_index = 0U;
+}
+
+static void clear_entries(rustd_journal *journal) {
+    free_string_array(journal->paths, journal->path_count);
+    journal->paths = NULL;
+    journal->path_count = 0U;
+}
 
 static int append_journal_entry(char ***entries, size_t *count, const char *data, size_t length) {
     char **resized;
@@ -293,6 +335,9 @@ int rustd_journal_open(rustd_journal **ret, const char *directory) {
     journal = calloc(1, sizeof(*journal));
     if (!journal)
         return -ENOMEM;
+    journal->data_threshold = 64U * 1024U;
+    journal->notify_fd = -1;
+    journal->notify_watch = -1;
     if (directory) {
         journal->directory = strdup(directory);
         if (!journal->directory) {
@@ -307,6 +352,17 @@ int rustd_journal_open(rustd_journal **ret, const char *directory) {
     }
     if (result == -ENOENT)
         journal->path_index = SIZE_MAX;
+    journal->notify_fd = inotify_init1(IN_CLOEXEC | IN_NONBLOCK);
+    if (journal->notify_fd >= 0) {
+        journal->notify_watch = inotify_add_watch(
+            journal->notify_fd,
+            journal->directory ? journal->directory : JOURNAL_RUNTIME_DIR,
+            IN_CLOSE_WRITE | IN_CREATE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO);
+        if (journal->notify_watch < 0) {
+            close(journal->notify_fd);
+            journal->notify_fd = -1;
+        }
+    }
     *ret = journal;
     return 0;
 }
@@ -315,10 +371,11 @@ void rustd_journal_unref(rustd_journal *journal) {
     if (!journal)
         return;
     free(journal->directory);
-    for (size_t i = 0; i < journal->path_count; i++)
-        free(journal->paths[i]);
-    free(journal->paths);
+    clear_entries(journal);
     free(journal->entry);
+    clear_enumerators(journal);
+    if (journal->notify_fd >= 0)
+        close(journal->notify_fd);
     while (journal->matches) {
         struct rustd_journal_match *next = journal->matches->next;
         free(journal->matches->data);
@@ -332,6 +389,7 @@ static void clear_current_entry(rustd_journal *journal) {
     free(journal->entry);
     journal->entry = NULL;
     journal->entry_length = 0;
+    journal->data_offset = 0U;
 }
 
 
@@ -340,7 +398,8 @@ static void reset_journal_position(rustd_journal *journal) {
     clear_current_entry(journal);
 }
 
-int rustd_journal_add_match(rustd_journal *journal, const void *data, size_t size) {
+static int append_match(rustd_journal *journal, const void *data, size_t size,
+                        unsigned term) {
     const char *bytes = data;
     const char *equals;
     struct rustd_journal_match *match;
@@ -365,11 +424,40 @@ int rustd_journal_add_match(rustd_journal *journal, const void *data, size_t siz
     memcpy(match->data, bytes, size);
     match->length = size;
     match->field_length = (size_t)(equals - bytes);
-    match->term = journal->match_term;
+    match->term = term;
     tail = &journal->matches;
     while (*tail)
         tail = &(*tail)->next;
     *tail = match;
+    return 0;
+}
+
+int rustd_journal_add_match(rustd_journal *journal, const void *data, size_t size) {
+    unsigned term;
+    int result;
+    if (!journal)
+        return -EINVAL;
+    if (size == 0U && data)
+        size = strlen(data);
+    if (journal->conjunction_all_terms) {
+        for (term = 0U; term <= journal->match_term; term++) {
+            result = append_match(journal, data, size, term);
+            if (result < 0)
+                return result;
+        }
+    } else {
+        result = append_match(journal, data, size, journal->match_term);
+        if (result < 0)
+            return result;
+    }
+    reset_journal_position(journal);
+    return 0;
+}
+
+int rustd_journal_add_conjunction(rustd_journal *journal) {
+    if (!journal || !journal->matches)
+        return -EINVAL;
+    journal->conjunction_all_terms = 1;
     reset_journal_position(journal);
     return 0;
 }
@@ -389,6 +477,7 @@ int rustd_journal_add_disjunction(rustd_journal *journal) {
     if (journal->match_term == UINT_MAX)
         return -ERANGE;
     journal->match_term++;
+    journal->conjunction_all_terms = 0;
     reset_journal_position(journal);
     return 0;
 }
@@ -403,6 +492,7 @@ void rustd_journal_flush_matches(rustd_journal *journal) {
         journal->matches = next;
     }
     journal->match_term = 0U;
+    journal->conjunction_all_terms = 0;
     reset_journal_position(journal);
 }
 
@@ -580,8 +670,9 @@ int rustd_journal_get_data(rustd_journal *journal, const char *field,
         if (line_len > field_len + 1 &&
             strncmp(cursor, field, field_len) == 0 &&
             cursor[field_len] == '=') {
-            *data = cursor + field_len + 1;
-            *length = line_len - field_len - 1;
+            *data = cursor;
+            *length = line_len > journal->data_threshold
+                ? journal->data_threshold : line_len;
             return 0;
         }
         if (!line_end)
@@ -598,13 +689,26 @@ int rustd_journal_get_realtime_usec(rustd_journal *journal, uint64_t *usec) {
 
     if (!usec)
         return -EINVAL;
-    result = rustd_journal_get_data(journal, "REALTIME_USEC", &data, &length);
+    {
+        size_t threshold;
+        if (!journal)
+            return -EINVAL;
+        threshold = journal->data_threshold;
+        journal->data_threshold = SIZE_MAX;
+        result = rustd_journal_get_data(journal, "REALTIME_USEC", &data, &length);
+        journal->data_threshold = threshold;
+    }
     if (result < 0)
         return result;
     {
         char buffer[64];
         char *end = NULL;
         unsigned long long value;
+        const char *equals = memchr(data, '=', length);
+        if (!equals)
+            return -EINVAL;
+        length -= (size_t)(equals + 1 - (const char *)data);
+        data = equals + 1;
         if (length >= sizeof(buffer))
             return -EINVAL;
         memcpy(buffer, data, length);
@@ -615,4 +719,454 @@ int rustd_journal_get_realtime_usec(rustd_journal *journal, uint64_t *usec) {
         *usec = (uint64_t)value;
         return 0;
     }
+}
+
+int rustd_journal_seek_head(rustd_journal *journal) {
+    if (!journal)
+        return -EINVAL;
+    reset_journal_position(journal);
+    return 0;
+}
+
+int rustd_journal_next_skip(rustd_journal *journal, uint64_t skip) {
+    int moved = 0;
+    if (!journal || skip > (uint64_t)INT_MAX)
+        return -EINVAL;
+    while (skip-- > 0U) {
+        int result = rustd_journal_next(journal);
+        if (result <= 0)
+            return result < 0 ? result : moved;
+        moved++;
+    }
+    return moved;
+}
+
+int rustd_journal_get_cursor(rustd_journal *journal, char **cursor) {
+    uint64_t realtime = 0U;
+    if (!journal || !cursor || !journal->entry || journal->path_index >= journal->path_count)
+        return -EINVAL;
+    if (rustd_journal_get_realtime_usec(journal, &realtime) < 0)
+        realtime = 0U;
+    if (asprintf(cursor, "rustd:%zu:%llu", journal->path_index,
+                 (unsigned long long)realtime) < 0)
+        return -ENOMEM;
+    return 0;
+}
+
+int rustd_journal_seek_cursor(rustd_journal *journal, const char *cursor) {
+    unsigned long long index;
+    unsigned long long realtime;
+    char extra;
+    if (!journal || !cursor)
+        return -EINVAL;
+    if (sscanf(cursor, "rustd:%llu:%llu%c", &index, &realtime, &extra) != 2 ||
+        index >= journal->path_count)
+        return -EINVAL;
+    (void)realtime;
+    journal->path_index = index == 0U ? SIZE_MAX : (size_t)index - 1U;
+    clear_current_entry(journal);
+    return 0;
+}
+
+int rustd_journal_test_cursor(rustd_journal *journal, const char *cursor) {
+    char *current = NULL;
+    int result = rustd_journal_get_cursor(journal, &current);
+    if (result < 0)
+        return result;
+    result = strcmp(current, cursor) == 0;
+    free(current);
+    return result;
+}
+
+static int seek_realtime(rustd_journal *journal, uint64_t usec) {
+    size_t index;
+    if (!journal)
+        return -EINVAL;
+    for (index = 0U; index < journal->path_count; index++) {
+        uint64_t candidate;
+        int result = load_entry(journal, index);
+        if (result < 0)
+            return result;
+        if (rustd_journal_get_realtime_usec(journal, &candidate) == 0 && candidate >= usec) {
+            journal->path_index = index == 0U ? SIZE_MAX : index - 1U;
+            clear_current_entry(journal);
+            return 0;
+        }
+    }
+    return rustd_journal_seek_tail(journal);
+}
+
+int rustd_journal_seek_realtime_usec(rustd_journal *journal, uint64_t usec) {
+    return seek_realtime(journal, usec);
+}
+
+int rustd_journal_seek_monotonic_usec(rustd_journal *journal, uint64_t usec) {
+    size_t index;
+    if (!journal)
+        return -EINVAL;
+    for (index = 0U; index < journal->path_count; index++) {
+        uint64_t candidate;
+        char *saved_entry = journal->entry;
+        size_t saved_length = journal->entry_length;
+        journal->entry = strdup(journal->paths[index]);
+        if (!journal->entry) {
+            journal->entry = saved_entry;
+            return -ENOMEM;
+        }
+        journal->entry_length = strlen(journal->entry);
+        if (rustd_journal_get_monotonic_usec(journal, &candidate, NULL) == 0 &&
+            candidate >= usec) {
+            free(journal->entry);
+            journal->entry = saved_entry;
+            journal->entry_length = saved_length;
+            journal->path_index = index == 0U ? SIZE_MAX : index - 1U;
+            clear_current_entry(journal);
+            return 0;
+        }
+        free(journal->entry);
+        journal->entry = saved_entry;
+        journal->entry_length = saved_length;
+    }
+    return rustd_journal_seek_tail(journal);
+}
+
+int rustd_journal_get_cutoff_realtime_usec(rustd_journal *journal,
+                                            uint64_t *from, uint64_t *to) {
+    uint64_t minimum = UINT64_MAX;
+    uint64_t maximum = 0U;
+    size_t index;
+    int found = 0;
+    if (!journal || (!from && !to))
+        return -EINVAL;
+    for (index = 0U; index < journal->path_count; index++) {
+        uint64_t value;
+        char *entry = journal->entry;
+        size_t entry_length = journal->entry_length;
+        size_t path_index = journal->path_index;
+        journal->entry = strdup(journal->paths[index]);
+        if (!journal->entry) {
+            journal->entry = entry;
+            return -ENOMEM;
+        }
+        journal->entry_length = strlen(journal->entry);
+        if (rustd_journal_get_realtime_usec(journal, &value) == 0) {
+            if (value < minimum) minimum = value;
+            if (value > maximum) maximum = value;
+            found = 1;
+        }
+        free(journal->entry);
+        journal->entry = entry;
+        journal->entry_length = entry_length;
+        journal->path_index = path_index;
+    }
+    if (!found)
+        return 0;
+    if (from) *from = minimum;
+    if (to) *to = maximum;
+    return 1;
+}
+
+int rustd_journal_get_monotonic_usec(rustd_journal *journal, uint64_t *usec,
+                                     uint8_t boot_id[16]) {
+    const void *data;
+    size_t length;
+    char buffer[64];
+    char *end;
+    unsigned long long value;
+    int result;
+    if (!journal || !usec)
+        return -EINVAL;
+    {
+        size_t threshold;
+        if (!journal)
+            return -EINVAL;
+        threshold = journal->data_threshold;
+        journal->data_threshold = SIZE_MAX;
+        result = rustd_journal_get_data(journal, "MONOTONIC_USEC", &data, &length);
+        journal->data_threshold = threshold;
+    }
+    if (result < 0)
+        return result;
+    {
+        const char *equals = memchr(data, '=', length);
+        if (!equals)
+            return -EINVAL;
+        length -= (size_t)(equals + 1 - (const char *)data);
+        data = equals + 1;
+    }
+    if (length >= sizeof(buffer))
+        return -EINVAL;
+    memcpy(buffer, data, length);
+    buffer[length] = '\0';
+    errno = 0;
+    value = strtoull(buffer, &end, 10);
+    if (errno || !end || *end)
+        return -EINVAL;
+    *usec = value;
+    if (boot_id) {
+        const void *boot_data;
+        size_t boot_length;
+        size_t threshold = journal->data_threshold;
+        int boot_result;
+        journal->data_threshold = SIZE_MAX;
+        boot_result = rustd_journal_get_data(journal, "_BOOT_ID", &boot_data, &boot_length);
+        journal->data_threshold = threshold;
+        memset(boot_id, 0, 16U);
+        if (boot_result == 0) {
+            const char *equals = memchr(boot_data, '=', boot_length);
+            const char *text = equals ? equals + 1 : NULL;
+            size_t text_length = equals
+                ? boot_length - (size_t)(text - (const char *)boot_data) : 0U;
+            size_t digit = 0U;
+            size_t byte = 0U;
+            if (text_length != 32U)
+                return -EINVAL;
+            while (digit < text_length) {
+                int high = isdigit((unsigned char)text[digit]) ? text[digit] - '0'
+                    : isxdigit((unsigned char)text[digit])
+                        ? tolower((unsigned char)text[digit]) - 'a' + 10 : -1;
+                int low = isdigit((unsigned char)text[digit + 1U]) ? text[digit + 1U] - '0'
+                    : isxdigit((unsigned char)text[digit + 1U])
+                        ? tolower((unsigned char)text[digit + 1U]) - 'a' + 10 : -1;
+                if (high < 0 || low < 0)
+                    return -EINVAL;
+                boot_id[byte++] = (uint8_t)((high << 4) | low);
+                digit += 2U;
+            }
+        }
+    }
+    return 0;
+}
+
+int rustd_journal_enumerate_data(rustd_journal *journal, const void **data, size_t *length) {
+    size_t start;
+    size_t end;
+    if (!journal || !data || !length || !journal->entry)
+        return -EINVAL;
+    if (journal->data_offset >= journal->entry_length)
+        return 0;
+    start = journal->data_offset;
+    end = start;
+    while (end < journal->entry_length && journal->entry[end] != '\n')
+        end++;
+    journal->data_offset = end < journal->entry_length ? end + 1U : end;
+    *data = journal->entry + start;
+    *length = end - start;
+    if (*length > journal->data_threshold)
+        *length = journal->data_threshold;
+    return 1;
+}
+
+void rustd_journal_restart_data(rustd_journal *journal) {
+    if (journal)
+        journal->data_offset = 0U;
+}
+
+static int append_unique_string(char ***values, size_t *count,
+                                const char *data, size_t length) {
+    char **resized;
+    size_t index;
+    for (index = 0U; index < *count; index++)
+        if (strlen((*values)[index]) == length &&
+            memcmp((*values)[index], data, length) == 0)
+            return 0;
+    resized = realloc(*values, (*count + 1U) * sizeof(**values));
+    if (!resized)
+        return -ENOMEM;
+    *values = resized;
+    (*values)[*count] = strndup(data, length);
+    if (!(*values)[*count])
+        return -ENOMEM;
+    (*count)++;
+    return 0;
+}
+
+static int build_field_names(rustd_journal *journal) {
+    size_t entry_index;
+    if (journal->field_names)
+        return 0;
+    for (entry_index = 0U; entry_index < journal->path_count; entry_index++) {
+        const char *cursor = journal->paths[entry_index];
+        while (*cursor) {
+            const char *end = strchr(cursor, '\n');
+            const char *equals;
+            size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+            equals = memchr(cursor, '=', length);
+            if (equals) {
+                int result = append_unique_string(&journal->field_names,
+                    &journal->field_count, cursor, (size_t)(equals - cursor));
+                if (result < 0)
+                    return result;
+            }
+            if (!end)
+                break;
+            cursor = end + 1;
+        }
+    }
+    return 0;
+}
+
+int rustd_journal_enumerate_fields(rustd_journal *journal, const char **field) {
+    int result;
+    if (!journal || !field)
+        return -EINVAL;
+    result = build_field_names(journal);
+    if (result < 0)
+        return result;
+    if (journal->field_index >= journal->field_count)
+        return 0;
+    *field = journal->field_names[journal->field_index++];
+    return 1;
+}
+
+void rustd_journal_restart_fields(rustd_journal *journal) {
+    if (journal)
+        journal->field_index = 0U;
+}
+
+int rustd_journal_query_unique(rustd_journal *journal, const char *field) {
+    size_t entry_index;
+    size_t field_length;
+    if (!journal || !field || !*field || strchr(field, '='))
+        return -EINVAL;
+    free(journal->unique_field);
+    journal->unique_field = strdup(field);
+    free_string_array(journal->unique_values, journal->unique_count);
+    journal->unique_values = NULL;
+    journal->unique_count = 0U;
+    journal->unique_index = 0U;
+    if (!journal->unique_field)
+        return -ENOMEM;
+    field_length = strlen(field);
+    for (entry_index = 0U; entry_index < journal->path_count; entry_index++) {
+        const char *cursor = journal->paths[entry_index];
+        while (*cursor) {
+            const char *end = strchr(cursor, '\n');
+            size_t length = end ? (size_t)(end - cursor) : strlen(cursor);
+            if (length > field_length && cursor[field_length] == '=' &&
+                memcmp(cursor, field, field_length) == 0) {
+                int result = append_unique_string(&journal->unique_values,
+                    &journal->unique_count, cursor, length);
+                if (result < 0)
+                    return result;
+            }
+            if (!end)
+                break;
+            cursor = end + 1;
+        }
+    }
+    return 0;
+}
+
+int rustd_journal_enumerate_unique(rustd_journal *journal,
+                                   const void **data, size_t *length) {
+    const char *value;
+    if (!journal || !data || !length || !journal->unique_field)
+        return -EINVAL;
+    if (journal->unique_index >= journal->unique_count)
+        return 0;
+    value = journal->unique_values[journal->unique_index++];
+    *data = value;
+    *length = strlen(value);
+    return 1;
+}
+
+void rustd_journal_restart_unique(rustd_journal *journal) {
+    if (journal)
+        journal->unique_index = 0U;
+}
+
+size_t rustd_journal_get_data_threshold(rustd_journal *journal) {
+    return journal ? journal->data_threshold : 0U;
+}
+
+int rustd_journal_set_data_threshold(rustd_journal *journal, size_t threshold) {
+    if (!journal)
+        return -EINVAL;
+    journal->data_threshold = threshold == 0U ? SIZE_MAX : threshold;
+    return 0;
+}
+
+int rustd_journal_get_usage(rustd_journal *journal, uint64_t *bytes) {
+    char path[PATH_MAX];
+    struct stat st;
+    if (!journal || !bytes)
+        return -EINVAL;
+    snprintf(path, sizeof(path), "%s/entries.log",
+             journal->directory ? journal->directory : JOURNAL_RUNTIME_DIR);
+    if (stat(path, &st) < 0)
+        return -errno;
+    *bytes = (uint64_t)st.st_size;
+    return 0;
+}
+
+int rustd_journal_has_runtime_files(rustd_journal *journal) {
+    const char *directory;
+    if (!journal)
+        return -EINVAL;
+    directory = journal->directory ? journal->directory : JOURNAL_RUNTIME_DIR;
+    return journal->path_count > 0U && strncmp(directory, "/run/", 5U) == 0;
+}
+
+int rustd_journal_has_persistent_files(rustd_journal *journal) {
+    const char *directory;
+    if (!journal)
+        return -EINVAL;
+    directory = journal->directory ? journal->directory : JOURNAL_RUNTIME_DIR;
+    return journal->path_count > 0U && strncmp(directory, "/run/", 5U) != 0;
+}
+
+int rustd_journal_get_fd(rustd_journal *journal) {
+    return journal ? (journal->notify_fd >= 0 ? journal->notify_fd : -ENOTSUP) : -EINVAL;
+}
+
+int rustd_journal_get_events(rustd_journal *journal) {
+    return rustd_journal_get_fd(journal) < 0 ? -ENOTSUP : POLLIN;
+}
+
+int rustd_journal_get_timeout(rustd_journal *journal, uint64_t *timeout) {
+    if (!journal || !timeout)
+        return -EINVAL;
+    *timeout = UINT64_MAX;
+    return 0;
+}
+
+int rustd_journal_process(rustd_journal *journal) {
+    char events[4096];
+    ssize_t got;
+    size_t old_count;
+    size_t old_index;
+    if (!journal)
+        return -EINVAL;
+    if (journal->notify_fd < 0)
+        return 0;
+    got = read(journal->notify_fd, events, sizeof(events));
+    if (got < 0)
+        return errno == EAGAIN ? 0 : -errno;
+    old_count = journal->path_count;
+    old_index = journal->path_index;
+    clear_entries(journal);
+    if (collect_journal_files(journal) < 0)
+        journal->path_index = SIZE_MAX;
+    else if (old_index != SIZE_MAX)
+        journal->path_index = old_index < journal->path_count ? old_index : journal->path_count;
+    return journal->path_count > old_count ? 1 : 2;
+}
+
+int rustd_journal_wait(rustd_journal *journal, uint64_t timeout_usec) {
+    struct pollfd descriptor;
+    int timeout_ms;
+    int result;
+    if (!journal || journal->notify_fd < 0)
+        return -ENOTSUP;
+    descriptor.fd = journal->notify_fd;
+    descriptor.events = POLLIN;
+    descriptor.revents = 0;
+    timeout_ms = timeout_usec == UINT64_MAX ? -1 :
+        timeout_usec / 1000U > (uint64_t)INT_MAX ? INT_MAX :
+        (int)((timeout_usec + 999U) / 1000U);
+    do result = poll(&descriptor, 1, timeout_ms); while (result < 0 && errno == EINTR);
+    if (result <= 0)
+        return result < 0 ? -errno : 0;
+    return rustd_journal_process(journal);
 }

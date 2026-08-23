@@ -92,7 +92,13 @@ def main() -> int:
 
     provided = dynamic_symbols(args.libsystemd, undefined=False)
     provided.update(dynamic_symbols(args.libudev, undefined=False))
-    missing = sorted(required - provided)
+    provided_bases = {unversioned(symbol) for symbol in provided}
+    missing = sorted(
+        symbol
+        for symbol in required
+        if symbol not in provided
+        and not ("@" not in symbol and unversioned(symbol) in provided_bases)
+    )
 
     repository_root = Path(__file__).resolve().parents[1]
     unsupported_exports = unsupported_symbols(repository_root)

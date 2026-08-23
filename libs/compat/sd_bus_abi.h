@@ -108,13 +108,16 @@ extern const unsigned sd_bus_object_vtable_format;
 int sd_bus_new(sd_bus **ret);
 int sd_bus_open_system(sd_bus **ret);
 int sd_bus_open_user(sd_bus **ret);
+int sd_bus_default_user(sd_bus **ret);
 int sd_bus_start(sd_bus *bus);
 void sd_bus_close(sd_bus *bus);
+sd_bus *sd_bus_flush_close_unref(sd_bus *bus);
 sd_bus *sd_bus_ref(sd_bus *bus);
 sd_bus *sd_bus_unref(sd_bus *bus);
 int sd_bus_get_fd(sd_bus *bus);
 int sd_bus_get_events(sd_bus *bus);
 int sd_bus_process(sd_bus *bus, sd_bus_message **ret);
+int sd_bus_wait(sd_bus *bus, uint64_t timeout_usec);
 int sd_bus_get_unique_name(sd_bus *bus, const char **unique);
 int sd_bus_set_fd(sd_bus *bus, int input_fd, int output_fd);
 int sd_bus_attach_event(sd_bus *bus, sd_event *event, int priority);
@@ -132,6 +135,9 @@ int sd_bus_call_method_async(sd_bus *bus, sd_bus_slot **slot, const char *destin
 int sd_bus_get_property_trivial(sd_bus *bus, const char *destination, const char *path,
                                 const char *interface, const char *member,
                                 sd_bus_error *error, char type, void *ret);
+int sd_bus_get_property_string(sd_bus *bus, const char *destination, const char *path,
+                               const char *interface, const char *member,
+                               sd_bus_error *error, char **ret);
 int sd_bus_add_filter(sd_bus *bus, sd_bus_slot **slot, sd_bus_message_handler_t callback, void *userdata);
 int sd_bus_match_signal(sd_bus *bus, sd_bus_slot **slot, const char *sender,
                         const char *path, const char *interface, const char *member,

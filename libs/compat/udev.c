@@ -2,6 +2,7 @@
 /* libudev.so.1 compatibility shim over librustd_device.so.1 */
 #define _GNU_SOURCE
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/sysmacros.h>
@@ -16,6 +17,7 @@ struct udev {
 
 struct udev_device {
     unsigned refs;
+    struct udev *udev;
     rustd_device *dev;
     struct udev_device *cached_children;
     struct udev_device *next_cached;
@@ -27,6 +29,7 @@ struct udev_enumerate {
 };
 
 struct udev_monitor {
+    unsigned refs;
     struct udev *udev;
     rustd_device_monitor *monitor;
 };
@@ -85,12 +88,13 @@ struct udev_device *udev_device_unref(struct udev_device *device) {
         (void)udev_device_unref(child);
         child = next;
     }
+    udev_unref(device->udev);
     rustd_device_unref(device->dev);
     free(device);
     return NULL;
 }
 
-static struct udev_device *wrap_device(rustd_device *dev) {
+static struct udev_device *wrap_device(struct udev *udev, rustd_device *dev) {
     struct udev_device *out;
     if (!dev)
         return NULL;
@@ -100,6 +104,7 @@ static struct udev_device *wrap_device(rustd_device *dev) {
         return NULL;
     }
     out->refs = 1U;
+    out->udev = udev_ref(udev);
     out->dev = dev;
     return out;
 }
@@ -119,7 +124,7 @@ static struct udev_device *cache_borrowed_device(
             return cached;
         }
     }
-    cached = wrap_device(dev);
+    cached = wrap_device(owner->udev, dev);
     if (!cached)
         return NULL;
     cached->next_cached = owner->cached_children;
@@ -130,21 +135,44 @@ static struct udev_device *cache_borrowed_device(
 struct udev_device *udev_device_new_from_syspath(struct udev *udev, const char *syspath) {
     if (!udev || !syspath)
         return NULL;
-    return wrap_device(rustd_device_new_from_syspath(udev->ctx, syspath));
+    return wrap_device(udev, rustd_device_new_from_syspath(udev->ctx, syspath));
 }
 
 struct udev_device *udev_device_new_from_devnum(struct udev *udev, char type, dev_t devnum) {
     if (!udev)
         return NULL;
-    return wrap_device(rustd_device_new_from_devnum(udev->ctx, type, devnum));
+    return wrap_device(udev, rustd_device_new_from_devnum(udev->ctx, type, devnum));
 }
 
 struct udev_device *udev_device_new_from_subsystem_sysname(
     struct udev *udev, const char *subsystem, const char *sysname) {
     if (!udev)
         return NULL;
-    return wrap_device(
+    return wrap_device(udev,
         rustd_device_new_from_subsystem_sysname(udev->ctx, subsystem, sysname));
+}
+
+struct udev_device *udev_device_new_from_environment(struct udev *udev) {
+    const char *devpath;
+    char *syspath;
+    struct udev_device *device;
+
+    if (!udev)
+        return NULL;
+    devpath = getenv("DEVPATH");
+    if (!devpath || devpath[0] != '/') {
+        errno = ENODEV;
+        return NULL;
+    }
+    if (asprintf(&syspath, "/sys%s", devpath) < 0)
+        return NULL;
+    device = udev_device_new_from_syspath(udev, syspath);
+    free(syspath);
+    return device;
+}
+
+struct udev *udev_device_get_udev(struct udev_device *device) {
+    return device ? device->udev : NULL;
 }
 
 const char *udev_device_get_action(struct udev_device *device) {
@@ -359,6 +387,7 @@ struct udev_monitor *udev_monitor_new_from_netlink(struct udev *udev, const char
     monitor = calloc(1, sizeof(*monitor));
     if (!monitor)
         return NULL;
+    monitor->refs = 1U;
     monitor->udev = udev_ref(udev);
     monitor->monitor = rustd_device_monitor_new_from_netlink(udev->ctx, name ? name : "udev");
     if (!monitor->monitor) {
@@ -371,10 +400,17 @@ struct udev_monitor *udev_monitor_new_from_netlink(struct udev *udev, const char
 struct udev_monitor *udev_monitor_unref(struct udev_monitor *monitor) {
     if (!monitor)
         return NULL;
+    if (--monitor->refs > 0U)
+        return NULL;
     rustd_device_monitor_unref(monitor->monitor);
     udev_unref(monitor->udev);
     free(monitor);
     return NULL;
+}
+struct udev_monitor *udev_monitor_ref(struct udev_monitor *monitor) {
+    if (monitor)
+        monitor->refs++;
+    return monitor;
 }
 int udev_monitor_filter_add_match_subsystem_devtype(
     struct udev_monitor *monitor, const char *subsystem, const char *devtype) {
@@ -389,7 +425,8 @@ int udev_monitor_get_fd(struct udev_monitor *monitor) {
     return monitor ? rustd_device_monitor_get_fd(monitor->monitor) : -EINVAL;
 }
 struct udev_device *udev_monitor_receive_device(struct udev_monitor *monitor) {
-    return monitor ? wrap_device(rustd_device_monitor_receive_device(monitor->monitor)) : NULL;
+    return monitor ? wrap_device(monitor->udev,
+                                 rustd_device_monitor_receive_device(monitor->monitor)) : NULL;
 }
 int udev_monitor_set_receive_buffer_size(struct udev_monitor *monitor, int size) {
     (void)monitor;

@@ -22,13 +22,39 @@ raw="$(authselect current --raw)"
 read -r -a selection <<<"$raw"
 profile="${selection[0]}"
 features=("${selection[@]:1}")
+backup="rustd-cutover-$(date -u +%Y%m%dT%H%M%SZ)"
+pam_backup="/var/lib/rustd/cutover-backups/$backup/etc/pam.d"
 
 for feature in "${features[@]}"; do
     [[ $feature != with-systemd-homed ]] \
         || fail 'with-systemd-homed is enabled; RustD does not yet provide a homed replacement'
 done
 
+migrate_unmanaged_pam() {
+    python3 - "$pam_backup" <<'PY'
+from pathlib import Path
+import shutil
+import sys
+
+root = Path("/etc/pam.d")
+backup = Path(sys.argv[1])
+for path in sorted(root.iterdir()):
+    if path.is_symlink() or not path.is_file():
+        continue
+    text = path.read_text()
+    if "pam_systemd_loadkey.so" in text:
+        raise SystemExit(f"{path} uses pam_systemd_loadkey.so; no RustD replacement is certified")
+    migrated = text.replace("pam_systemd.so", "pam_rustd.so")
+    if migrated == text:
+        continue
+    backup.mkdir(parents=True, exist_ok=True, mode=0o700)
+    shutil.copy2(path, backup / path.name)
+    path.write_text(migrated)
+PY
+}
+
 if [[ $profile == custom/rustd ]]; then
+    migrate_unmanaged_pam
     grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
         || fail 'custom/rustd is active but rustd_dns is missing from hosts NSS configuration'
     ! grep -Eq '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
@@ -80,8 +106,16 @@ if not nss.exists() or nss.is_symlink():
 
 out = []
 hosts_changed = False
+
+
+def remove_backend(body: str, backend: str) -> str:
+    """Remove an NSS backend token and its immediately attached action."""
+    token = rf"(?<![A-Za-z0-9_-]){re.escape(backend)}(?![A-Za-z0-9_-])"
+    return re.sub(token + r"(?:\s+\[[^]]+\])?", "", body)
+
+
 for line in nss.read_text().splitlines(keepends=True):
-    match_db = re.match(r"^(hosts|passwd|group|shadow):\s", line)
+    match_db = re.match(r"^([A-Za-z_][A-Za-z0-9_-]*):\s", line)
     if not match_db:
         out.append(line)
         continue
@@ -90,17 +124,17 @@ for line in nss.read_text().splitlines(keepends=True):
     body = line[:-1] if newline else line
     # Remove NSS backends shipped by the removed implementation together with
     # an immediately-associated action clause.
+    body = remove_backend(body, "systemd")
     if database == "hosts":
-        body = re.sub(r"\s+(?:myhostname|resolve|systemd)(?:\s+\[[^]]+\])?", "", body)
-        body = re.sub(r"\s+rustd_dns(?:\s+\[[^]]+\])?", "", body)
+        body = remove_backend(body, "myhostname")
+        body = remove_backend(body, "resolve")
+        body = remove_backend(body, "rustd_dns")
         dns = re.search(r"\s+dns(?=\s|$)", body)
         if dns:
             body = body[:dns.start()] + " rustd_dns [!UNAVAIL=return]" + body[dns.start():]
         else:
             body += " rustd_dns [!UNAVAIL=return] dns"
         hosts_changed = True
-    else:
-        body = re.sub(r"\s+systemd(?:\s+\[[^]]+\])?", "", body)
     out.append(body + newline)
 
 if not hosts_changed:
@@ -118,24 +152,25 @@ trap 'rm -f /tmp/rustd-authselect-nss.$$ /tmp/rustd-authselect-pam.$$' EXIT
 
 grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
     || fail 'generated nsswitch.conf does not contain rustd_dns'
-! grep -E -q '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
+! grep -E -q '^[[:alpha:]_][[:alnum:]_-]*:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /tmp/rustd-authselect-nss.$$ \
     || fail 'generated nsswitch.conf still references a removed NSS backend'
 grep -Fq 'pam_rustd.so' /tmp/rustd-authselect-pam.$$ \
     || fail 'generated system-auth does not contain pam_rustd.so'
 ! grep -E -q 'pam_systemd(_home|_loadkey)?\.so' /tmp/rustd-authselect-pam.$$ \
     || fail 'generated system-auth still references a systemd PAM module'
 
-backup="rustd-cutover-$(date -u +%Y%m%dT%H%M%SZ)"
 authselect select custom/rustd "${features[@]}" --force --backup="$backup"
 authselect check >/dev/null || fail 'authselect rejected the activated RustD profile'
+migrate_unmanaged_pam
 
 grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
     || fail 'active nsswitch.conf does not contain rustd_dns'
-! grep -E -q '^(hosts|passwd|group|shadow):.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
+! grep -E -q '^[[:alpha:]_][[:alnum:]_-]*:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
     || fail 'active NSS configuration still references a removed backend'
 grep -R -Fq 'pam_rustd.so' /etc/pam.d \
     || fail 'active PAM configuration does not contain pam_rustd.so'
 ! grep -R -E -q 'pam_systemd(_home|_loadkey)?\.so' /etc/pam.d \
     || fail 'active PAM configuration still references a systemd PAM module'
 
-printf 'RustD authselect cutover complete; rollback backup: %s\n' "$backup"
+printf 'RustD authselect cutover complete; authselect backup: %s; PAM backup: %s\n' \
+    "$backup" "$pam_backup"
