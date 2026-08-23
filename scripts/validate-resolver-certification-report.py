@@ -32,6 +32,22 @@ REQUIRED_GATES = (
     "performance.resolver",
 )
 
+MINIMUMS: dict[str, tuple[str, int]] = {
+    "dns.link_flap": ("iterations", 50),
+    "dns.vpn_change": ("iterations", 20),
+    "dns.malformed": ("cases", 10_000),
+    "dns.upstream_blackhole": ("iterations", 20),
+    "dns.failover_churn": ("iterations", 100),
+    "dns.suspend_resume": ("iterations", 10),
+    "resolver.resource_soak": ("duration_seconds", 259_200),
+}
+
+RESOURCE_SOAK_BOUNDS = (
+    ("peak_rss_kib", "max_rss_kib"),
+    ("peak_fds", "max_fds"),
+    ("peak_threads", "max_threads"),
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -51,6 +67,15 @@ def fail(message: str) -> "None":
 
 def valid_sha(value: str) -> bool:
     return len(value) == 40 and all(ch in "0123456789abcdef" for ch in value)
+
+
+def require_integer(
+    record: dict[str, Any], gate: str, field: str, *, minimum: int
+) -> int:
+    value = record.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        fail(f"{gate}: {field} must be an integer of at least {minimum}")
+    return value
 
 
 def validate_secure_file(path: Path) -> None:
@@ -78,7 +103,7 @@ def validate_record(
         fail(f"{gate}: resolver_sha does not match {expected_sha}")
 
     timestamp = record.get("ts")
-    if not isinstance(timestamp, int):
+    if isinstance(timestamp, bool) or not isinstance(timestamp, int):
         fail(f"{gate}: ts must be an integer Unix timestamp")
     if timestamp > now + 300:
         fail(f"{gate}: resolver evidence timestamp is in the future")
@@ -89,13 +114,30 @@ def validate_record(
     if not isinstance(detail, str) or not detail.strip():
         fail(f"{gate}: non-empty detail is required")
 
-    return {
+    normalized = {
         "gate": f"resolved.{gate}",
         "status": "pass",
         "detail": detail.strip(),
         "ts": timestamp,
         "resolved_sha": expected_sha,
     }
+    minimum = MINIMUMS.get(gate)
+    if minimum is not None:
+        field, required = minimum
+        normalized[field] = require_integer(record, gate, field, minimum=required)
+    if gate == "resolver.resource_soak":
+        for peak_field, bound_field in RESOURCE_SOAK_BOUNDS:
+            peak = require_integer(record, gate, peak_field, minimum=0)
+            bound = require_integer(record, gate, bound_field, minimum=1)
+            if peak > bound:
+                fail(f"{gate}: {peak_field} {peak} exceeds {bound_field} {bound}")
+            normalized[peak_field] = peak
+            normalized[bound_field] = bound
+        normalized["samples"] = require_integer(record, gate, "samples", minimum=2)
+    source = record.get("source")
+    if isinstance(source, str) and source.strip():
+        normalized["source"] = source.strip()
+    return normalized
 
 
 def main() -> int:

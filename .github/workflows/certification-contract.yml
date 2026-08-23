@@ -29,7 +29,12 @@ jobs:
           bash -n scripts/installed-certification.sh
           bash -n scripts/performance-promotion.sh
           bash -n scripts/exclusive-cutover-gate.sh
-          python3 -m py_compile scripts/validate-certification-evidence.py scripts/validate-performance-evidence.py
+          python3 -m py_compile \
+            scripts/validate-certification-evidence.py \
+            scripts/validate-performance-evidence.py \
+            scripts/validate-resolver-certification-report.py \
+            scripts/check-resolver-certification-contract.py
+          python3 scripts/check-resolver-certification-contract.py
 
       - name: Check fail-closed promotion defaults
         shell: bash
