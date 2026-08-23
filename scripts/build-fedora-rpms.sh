@@ -108,8 +108,11 @@ compat_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
 [[ -n $compat_rpm ]]
 compat_provides=$(rpm -qp --provides "$compat_rpm")
 compat_requires=$(rpm -qp --requires "$compat_rpm")
+compat_files=$(rpm -qpl "$compat_rpm")
 grep -Fxq /bin/bash <<<"$compat_requires"
 ! grep -Fxq /usr/bin/bash <<<"$compat_requires"
+grep -Fxq /usr/sbin/init <<<"$compat_files"
+! grep -Fxq /usr/bin/init <<<"$compat_files"
 for capability in \
     "systemd = $systemd_evr" \
     "systemd-udev = $systemd_evr" \
@@ -132,8 +135,20 @@ cutover_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
     -name 'rustd-cutover-tools-*.rpm' ! -name '*-debug*' ! -name '*.src.rpm' | head -1)
 [[ -n $cutover_rpm ]]
 cutover_requires=$(rpm -qp --requires "$cutover_rpm")
+cutover_files=$(rpm -qpl "$cutover_rpm")
 grep -Fxq /bin/bash <<<"$cutover_requires"
 ! grep -Fxq /usr/bin/bash <<<"$cutover_requires"
+grep -Fxq /usr/sbin/rustd-fedora-cutover <<<"$cutover_files"
+! grep -Fxq /usr/bin/rustd-fedora-cutover <<<"$cutover_files"
+
+main_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
+    -name 'rustd-*.rpm' ! -name 'rustd-*-*tools*' ! -name 'rustd-compat-*' \
+    ! -name 'rustd-fedora-*' ! -name 'rustd-resolved-*' ! -name 'rustd-selinux-*' \
+    ! -name 'rustd-devel-*' ! -name 'rustd-debug*' ! -name '*.src.rpm' | head -1)
+[[ -n $main_rpm ]]
+main_files=$(rpm -qpl "$main_rpm")
+! grep -Fxq /usr/sbin/rustd-fedora-cutover <<<"$main_files"
+! grep -Fxq /usr/bin/rustd-fedora-cutover <<<"$main_files"
 
 resolved_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
     -name 'rustd-resolved-*.rpm' ! -name '*-nss-*' ! -name '*-debug*' \

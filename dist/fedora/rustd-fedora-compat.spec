@@ -94,7 +94,7 @@ rm -f halt poweroff reboot shutdown telinit runlevel
 
 %install
 install -d %{buildroot}%{_bindir} \
-           %{buildroot}%{_sbindir} \
+           %{buildroot}%{_prefix}/sbin \
            %{buildroot}%{_prefix}/lib/rustd \
            %{buildroot}%{_prefix}/lib/systemd \
            %{buildroot}%{_prefix}/lib/udev/rules.d \
@@ -111,10 +111,10 @@ install -m0644 dist/fedora/compat/50-rustd-default.rules \
 install -m0644 dist/fedora/compat/80-drivers.rules \
     %{buildroot}%{_prefix}/lib/udev/rules.d/80-drivers.rules
 ln -s ../rustd/rustd-udevd %{buildroot}%{_prefix}/lib/systemd/systemd-udevd
-ln -s ../lib/rustd/rustd %{buildroot}%{_sbindir}/init
+ln -s ../lib/rustd/rustd %{buildroot}%{_prefix}/sbin/init
 install -m0755 rustd-shutdown %{buildroot}%{_prefix}/lib/rustd/rustd-shutdown
 for name in halt poweroff reboot shutdown telinit runlevel; do
-    ln -s ../lib/rustd/rustd-shutdown %{buildroot}%{_sbindir}/$name
+    ln -s ../lib/rustd/rustd-shutdown %{buildroot}%{_prefix}/sbin/$name
 done
 install -m0644 dist/fedora/90-rustd-dracut.conf \
     %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
@@ -144,13 +144,13 @@ grep -R -Fq 'pam_rustd.so' /etc/pam.d \
 
 %files
 %license LICENSE*
-%{_sbindir}/init
-%{_sbindir}/halt
-%{_sbindir}/poweroff
-%{_sbindir}/reboot
-%{_sbindir}/runlevel
-%{_sbindir}/shutdown
-%{_sbindir}/telinit
+%{_prefix}/sbin/init
+%{_prefix}/sbin/halt
+%{_prefix}/sbin/poweroff
+%{_prefix}/sbin/reboot
+%{_prefix}/sbin/runlevel
+%{_prefix}/sbin/shutdown
+%{_prefix}/sbin/telinit
 %{_prefix}/lib/rustd/rustd-shutdown
 %{_bindir}/systemctl
 %{_bindir}/systemd-tmpfiles

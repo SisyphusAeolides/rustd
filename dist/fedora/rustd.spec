@@ -77,12 +77,13 @@ make DESTDIR=%{buildroot} \
      PAMLIBDIR=%{_libdir}/security \
      install
 install -Dm0755 dist/fedora/compat/rustd-fedora-cutover \
-    %{buildroot}%{_sbindir}/rustd-fedora-cutover
+    %{buildroot}%{_prefix}/sbin/rustd-fedora-cutover
 
 %files
 %license LICENSE*
 %doc README.md
 %{_bindir}/rust*
+%exclude %{_prefix}/sbin/rustd-fedora-cutover
 %{_prefix}/lib/rustd/
 %{_prefix}/lib/tmpfiles.d/rustd.conf
 %{_datadir}/dbus-1/system-services/*.service
@@ -97,7 +98,7 @@ install -Dm0755 dist/fedora/compat/rustd-fedora-cutover \
 
 %files cutover-tools
 %license LICENSE*
-%{_sbindir}/rustd-fedora-cutover
+%{_prefix}/sbin/rustd-fedora-cutover
 %{_libdir}/security/pam_rustd.so
 
 %files devel

@@ -130,17 +130,17 @@ compat_files = between(compat, "\n%files\n", "\n%changelog\n")
 
 assert "%package cutover-tools" in base
 assert "Requires:       rustd-resolved-nss%{?_isa} >= 0.2.3" in base
-assert "%{_sbindir}/init" not in main_files
+assert "%{_prefix}/sbin/init" not in main_files
 assert "pam_rustd.so" not in main_files
-assert "%{_sbindir}/rustd-fedora-cutover" in cutover_files
+assert "%{_prefix}/sbin/rustd-fedora-cutover" in cutover_files
 assert "%{_libdir}/security/pam_rustd.so" in cutover_files
 
 assert "%pretrans -p /bin/bash" in compat
 assert "authselect check" in compat
 assert "pam_systemd(_home|_loadkey)?" in compat
-assert "%{_sbindir}/init" in compat_files
+assert "%{_prefix}/sbin/init" in compat_files
 assert "%{_prefix}/lib/udev/rules.d/80-drivers.rules" in compat_files
-assert "%{_sbindir}/rustd-fedora-cutover" not in compat_files
+assert "%{_prefix}/sbin/rustd-fedora-cutover" not in compat_files
 assert "Requires:       authselect" not in compat
 assert "Requires:       python3" not in compat
 
