@@ -98,6 +98,11 @@ jobs:
             --setopt=tsflags=noscripts
           )
 
+          # DNF5 may unpack libgcc before the filesystem package in a fresh
+          # installroot, turning /lib64 into a directory before filesystem can
+          # install the merged-/usr symlink. Bootstrap filesystem separately.
+          dnf -y "${common[@]}" install filesystem
+
           # Establish an ordinary Fedora manager/PAM stack first.
           dnf -y "${common[@]}" install \
             systemd systemd-libs systemd-udev systemd-pam authselect dbus-daemon
