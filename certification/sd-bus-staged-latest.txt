@@ -1,5 +1,5 @@
 schema=rustd-sd-bus-staged-v1
 status=pass
-tested_sha=e3be9483fe8d031abc17591a4486d36a5420f99d
+tested_sha=d55ef5a56a09a5ecdfce06848a03e2ee2abc01e7
 compile_outcome=success
 backend=libdbus-1
