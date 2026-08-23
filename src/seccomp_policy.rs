@@ -315,6 +315,7 @@ mod tests {
         section.apply("SystemCallErrorNumber", "EPERM");
         section.apply("SystemCallFilter", "~getpid getppid:EACCES");
         let filter = compile_syscall_filter(&section).unwrap().unwrap();
+        assert!(filter.rules.iter().all(|rule| rule.nr >= 0));
         assert_eq!(filter.default_action, SECCOMP_ACTION_ALLOW);
         assert_eq!(
             rule_action(&filter, "getpid"),
@@ -350,5 +351,110 @@ mod tests {
         assert!(filter.rules.len() > 100);
         assert_eq!(rule_action(&filter, "read"), Some(SECCOMP_ACTION_ALLOW));
         assert_eq!(rule_action(&filter, "write"), Some(SECCOMP_ACTION_ALLOW));
+    }
+
+    #[test]
+    fn chronyd_deny_groups_install_as_a_native_filter() {
+        let mut section = ServiceSection::default();
+        section.apply(
+            "SystemCallFilter",
+            "~@cpu-emulation @debug @module @mount @obsolete @raw-io @reboot @swap",
+        );
+        section.apply(
+            "CapabilityBoundingSet",
+            "~CAP_AUDIT_CONTROL CAP_AUDIT_READ CAP_AUDIT_WRITE CAP_BLOCK_SUSPEND CAP_KILL CAP_LEASE CAP_LINUX_IMMUTABLE CAP_MAC_ADMIN CAP_MAC_OVERRIDE CAP_MKNOD CAP_SYS_ADMIN CAP_SYS_BOOT CAP_SYS_CHROOT CAP_SYS_MODULE CAP_SYS_PACCT CAP_SYS_PTRACE CAP_SYS_RAWIO CAP_SYS_TTY_CONFIG CAP_WAKE_ALARM",
+        );
+        let bounding_set = crate::sandbox::SecurityContext::from_service(&section)
+            .unwrap()
+            .cap_bounding_set;
+        let filter = compile_syscall_filter(&section).unwrap().unwrap();
+        let pid = unsafe { libc::fork() };
+        assert!(pid >= 0);
+        if pid == 0 {
+            let setup = [
+                unsafe { crate::ffi::seccomp::rustd_seccomp_memory_deny_write_execute() },
+                unsafe { crate::ffi::seccomp::rustd_seccomp_restrict_namespaces(0) },
+                unsafe { crate::ffi::seccomp::rustd_seccomp_protect_kernel_logs() },
+                unsafe { crate::ffi::seccomp::rustd_seccomp_restrict_native_architecture() },
+            ];
+            if let Some(index) = setup.iter().position(|result| *result < 0) {
+                unsafe { libc::_exit(100 + index as i32) };
+            }
+            let result = unsafe {
+                crate::ffi::seccomp::rustd_seccomp_syscall_rules(
+                    filter.rules.as_ptr(),
+                    filter.rules.len(),
+                    filter.default_action,
+                )
+            };
+            unsafe { libc::_exit(if result == 0 { 0 } else { -result }) };
+        }
+        let mut status = 0;
+        assert_eq!(unsafe { libc::waitpid(pid, &mut status, 0) }, pid);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
+
+        if unsafe { libc::geteuid() } != 0 {
+            return;
+        }
+        crate::ffi::spawn::configure_spawn_helper_from_self().unwrap();
+        let executable = CString::new("/bin/true").unwrap();
+        let argument = CString::new("true").unwrap();
+        let argv = [argument.as_ptr(), std::ptr::null()];
+        let sandbox = crate::ffi::spawn::SdSpawnSandbox {
+            no_new_privs: 1,
+            private_tmp: 1,
+            protect_system: 3,
+            protect_home: 1,
+            protect_kernel_tunables: 1,
+            protect_kernel_modules: 1,
+            memory_deny_write_execute: 1,
+            restrict_namespaces: 1,
+            protect_kernel_logs: 1,
+            protect_control_groups: 1,
+            restrict_suid_sgid: 1,
+            restrict_native_syscalls: 1,
+            syscall_filter_rules: filter.rules.as_ptr(),
+            n_syscall_filter_rules: filter.rules.len(),
+            syscall_filter_default_action: filter.default_action,
+            syscall_filter_enabled: 1,
+            ..Default::default()
+        };
+        let params = crate::ffi::spawn::SdSpawnParams {
+            path: executable.as_ptr(),
+            argv: argv.as_ptr(),
+            envp: std::ptr::null(),
+            cwd: std::ptr::null(),
+            cgroup_procs_path: std::ptr::null(),
+            rlimits: std::ptr::null(),
+            n_rlimits: 0,
+            uid: libc::uid_t::MAX,
+            gid: libc::gid_t::MAX,
+            selinux_context: std::ptr::null(),
+            selinux_context_ignore: 0,
+            apparmor_profile: std::ptr::null(),
+            apparmor_profile_ignore: 0,
+            stdin_fd: -1,
+            stdout_fd: -1,
+            stderr_fd: -1,
+            notify_fd: -1,
+            watchdog_usec: 0,
+            sandbox: std::ptr::addr_of!(sandbox),
+            listen_fds: std::ptr::null(),
+            n_listen_fds: 0,
+            cap_bounding_set: bounding_set,
+            ambient_caps: 0,
+            wait_for_exec: 1,
+            idle_read_fd: -1,
+            idle_write_fd: -1,
+        };
+        let spawned = unsafe { crate::ffi::spawn::rustd_spawn(std::ptr::addr_of!(params)) };
+        assert!(
+            spawned > 0,
+            "chronyd-like spawn transport failed: {spawned}"
+        );
+        assert_eq!(unsafe { libc::waitpid(spawned, &mut status, 0) }, spawned);
+        assert!(libc::WIFEXITED(status));
+        assert_eq!(libc::WEXITSTATUS(status), 0);
     }
 }

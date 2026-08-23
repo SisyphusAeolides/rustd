@@ -9,6 +9,17 @@ use rustd::ffi::spawn::{
 use rustd::sandbox::SecurityContext;
 use rustd::unit::section_service::{ProtectSystem, ServiceSection};
 
+struct MountedTmpfs(std::path::PathBuf);
+
+impl Drop for MountedTmpfs {
+    fn drop(&mut self) {
+        let path = CString::new(self.0.as_os_str().as_encoded_bytes()).unwrap();
+        unsafe {
+            libc::umount2(path.as_ptr(), libc::MNT_DETACH);
+        }
+    }
+}
+
 fn wait_success(pid: libc::pid_t) {
     let mut status = 0;
     let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
@@ -41,21 +52,42 @@ fn production_spawn_strict_root_preserves_declared_writable_exception() {
     let root = tempfile::tempdir().expect("temporary certification root");
     let writable = root.path().join("writable");
     let readonly = root.path().join("readonly");
+    let mounted = root.path().join("mounted");
     std::fs::create_dir(&writable).expect("create writable exception directory");
     std::fs::create_dir(&readonly).expect("create readonly sibling directory");
+    std::fs::create_dir(&mounted).expect("create mounted exception directory");
+    let mounted_c = CString::new(mounted.as_os_str().as_encoded_bytes()).unwrap();
+    let tmpfs = CString::new("tmpfs").unwrap();
+    let options = CString::new("mode=755,size=1m").unwrap();
+    assert_eq!(
+        unsafe {
+            libc::mount(
+                tmpfs.as_ptr(),
+                mounted_c.as_ptr(),
+                tmpfs.as_ptr(),
+                libc::MS_NODEV,
+                options.as_ptr().cast(),
+            )
+        },
+        0,
+        "mount tmpfs: {}",
+        std::io::Error::last_os_error()
+    );
+    let _mounted_guard = MountedTmpfs(mounted.clone());
 
     let writable_path = writable.to_string_lossy().into_owned();
     let readonly_path = readonly.to_string_lossy().into_owned();
+    let mounted_path = mounted.to_string_lossy().into_owned();
     let section = ServiceSection {
         protect_system: ProtectSystem::Strict,
-        read_write_paths: vec![writable_path.clone()],
+        read_write_paths: vec![writable_path.clone(), mounted_path.clone()],
         ..Default::default()
     };
     let security = SecurityContext::from_service(&section).expect("resolve strict sandbox context");
     assert_eq!(security.protect_system, 3);
     assert_eq!(
         security.read_write_paths,
-        std::slice::from_ref(&writable_path)
+        [writable_path.clone(), mounted_path.clone()]
     );
 
     let root_exception = ServiceSection {
@@ -89,6 +121,7 @@ fn production_spawn_strict_root_preserves_declared_writable_exception() {
     let shell = CString::new("/bin/sh").unwrap();
     let script = CString::new(format!(
         "set -eu; printf writable > '{writable_path}/probe'; \
+         printf mounted > '{mounted_path}/probe'; \
          if printf forbidden > '{readonly_path}/probe' 2>/dev/null; then exit 91; fi; \
          test \"$(cat '{writable_path}/probe')\" = writable"
     ))
@@ -139,6 +172,10 @@ fn production_spawn_strict_root_preserves_declared_writable_exception() {
     assert_eq!(
         std::fs::read_to_string(writable.join("probe")).unwrap(),
         "writable"
+    );
+    assert_eq!(
+        std::fs::read_to_string(mounted.join("probe")).unwrap(),
+        "mounted"
     );
     assert!(
         !readonly.join("probe").exists(),
