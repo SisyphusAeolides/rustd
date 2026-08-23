@@ -2,7 +2,6 @@
 #define _GNU_SOURCE
 #include <dbus/dbus.h>
 #include "sd_bus_abi.h"
-#include "sd_core_abi.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -16,6 +15,15 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
+
+typedef struct sd_event_source sd_event_source;
+extern int sd_event_add_io(sd_event *event, sd_event_source **ret, int fd,
+                           uint32_t events, void *callback, void *userdata)
+    __attribute__((weak));
+extern int sd_event_source_set_priority(sd_event_source *source, int64_t priority)
+    __attribute__((weak));
+extern sd_event_source *sd_event_source_unref(sd_event_source *source)
+    __attribute__((weak));
 
 /*
  * RustD libsystemd compatibility transport.
@@ -832,7 +840,10 @@ sd_bus *sd_bus_ref(sd_bus *bus) {
 void sd_bus_close(sd_bus *bus) {
     if (!bus)
         return;
-    bus->event_source = sd_event_source_unref(bus->event_source);
+    if (bus->event_source && sd_event_source_unref)
+        bus->event_source = sd_event_source_unref(bus->event_source);
+    else
+        bus->event_source = NULL;
     bus->event = NULL;
     if (bus->connection) {
         dbus_connection_close(bus->connection);
@@ -1043,6 +1054,8 @@ int sd_bus_attach_event(sd_bus *bus, sd_event *event, int priority) {
     int r;
     if (!bus || !event)
         return -EINVAL;
+    if (!sd_event_add_io || !sd_event_source_set_priority || !sd_event_source_unref)
+        return -ENOSYS;
     if (bus->event_source)
         return -EBUSY;
     fd = sd_bus_get_fd(bus);
