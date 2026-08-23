@@ -101,7 +101,7 @@ jobs:
           python3 - <<'PY'
           import json
           r=json.load(open('target/compat-readiness.json'))
-          if r['required'] != 184 or r['supported'] < 126 or r['unsupported'] > 58 or r['missing_source_definition'] != 0:
+          if r['required'] != 260 or r['supported'] != 260 or r['unsupported'] != 0 or r['missing_source_definition'] != 0:
               raise SystemExit(r)
           for symbol in ('sd_journal_send_with_location','sd_journal_print_with_location'):
               if symbol in r['unsupported_symbols'] or symbol in r['missing_symbols']:

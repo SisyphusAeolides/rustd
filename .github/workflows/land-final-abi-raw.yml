@@ -69,7 +69,7 @@ jobs:
               '/tmp/test-journal-send',
               '/tmp/test-journal-filters',
               '--require-complete',
-              "r['supported'] != 184",
+              "r['supported'] != 260",
           )
           if not all(x in run for x in required):
               raise SystemExit('final ABI raw payload is incomplete')
