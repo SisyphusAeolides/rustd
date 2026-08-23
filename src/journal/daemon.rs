@@ -7,6 +7,7 @@
 //! Pre-existing socket paths are never removed by this implementation. Socket
 //! paths created by a daemon instance are removed when that instance exits.
 
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -62,6 +63,7 @@ impl JournalDaemonConfig {
 pub struct JournalDaemon {
     event_loop: EventLoop,
     sink: Arc<JournalSink>,
+    _compatibility_links: Vec<SymlinkGuard>,
 }
 
 impl JournalDaemon {
@@ -106,7 +108,21 @@ impl JournalDaemon {
         event_loop.add_io(receiver.raw_fd(), libc::EPOLLIN as u32, Box::new(receiver))?;
         event_loop.add_io(stdout.raw_fd(), libc::EPOLLIN as u32, Box::new(stdout))?;
 
-        Ok(Self { event_loop, sink })
+        let compatibility_links =
+            if config.runtime_directory == Path::new(DEFAULT_RUNTIME_DIRECTORY) {
+                install_compatibility_links(
+                    &config.runtime_directory,
+                    Path::new("/run/systemd/journal"),
+                )?
+            } else {
+                Vec::new()
+            };
+
+        Ok(Self {
+            event_loop,
+            sink,
+            _compatibility_links: compatibility_links,
+        })
     }
 
     /// Dispatch journal socket events until a terminating signal is received.
@@ -142,6 +158,72 @@ impl JournalDaemon {
             )),
         }
     }
+}
+
+struct SymlinkGuard {
+    path: PathBuf,
+    target: PathBuf,
+    owned: bool,
+}
+
+impl Drop for SymlinkGuard {
+    fn drop(&mut self) {
+        if !self.owned {
+            return;
+        }
+        if std::fs::read_link(&self.path).ok().as_deref() == Some(self.target.as_path()) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn install_compatibility_links(
+    runtime_directory: &Path,
+    compatibility_directory: &Path,
+) -> anyhow::Result<Vec<SymlinkGuard>> {
+    prepare_directory(compatibility_directory)?;
+    let mut guards = Vec::new();
+    for name in ["socket", "stdout"] {
+        let target = runtime_directory.join(name);
+        let path = compatibility_directory.join(name);
+        match std::fs::read_link(&path) {
+            Ok(existing) if existing == target => guards.push(SymlinkGuard {
+                path,
+                target,
+                owned: false,
+            }),
+            Ok(existing) => {
+                anyhow::bail!(
+                    "journal compatibility link {} points to {} instead of {}",
+                    path.display(),
+                    existing.display(),
+                    target.display()
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+                anyhow::bail!(
+                    "journal compatibility path {} exists and is not a symlink",
+                    path.display()
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                symlink(&target, &path).map_err(|error| {
+                    anyhow::anyhow!(
+                        "create journal compatibility link {} -> {}: {error}",
+                        path.display(),
+                        target.display()
+                    )
+                })?;
+                guards.push(SymlinkGuard {
+                    path,
+                    target,
+                    owned: true,
+                });
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(guards)
 }
 
 fn prepare_directory(path: &Path) -> anyhow::Result<()> {
@@ -193,5 +275,37 @@ mod tests {
     fn rejects_relative_runtime_directory() {
         let error = prepare_directory(Path::new("relative/runtime")).unwrap_err();
         assert!(error.to_string().contains("must be absolute"));
+    }
+
+    #[test]
+    fn compatibility_links_target_native_sockets_and_clean_up_owned_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("run/rustd/journal");
+        let compatibility = root.path().join("run/systemd/journal");
+        prepare_directory(&runtime).unwrap();
+
+        let guards = install_compatibility_links(&runtime, &compatibility).unwrap();
+        assert_eq!(
+            std::fs::read_link(compatibility.join("socket")).unwrap(),
+            runtime.join("socket")
+        );
+        assert_eq!(
+            std::fs::read_link(compatibility.join("stdout")).unwrap(),
+            runtime.join("stdout")
+        );
+        drop(guards);
+        assert!(!std::fs::symlink_metadata(compatibility.join("socket")).is_ok());
+        assert!(!std::fs::symlink_metadata(compatibility.join("stdout")).is_ok());
+    }
+
+    #[test]
+    fn compatibility_links_refuse_to_replace_existing_paths() {
+        let root = tempfile::tempdir().unwrap();
+        let runtime = root.path().join("run/rustd/journal");
+        let compatibility = root.path().join("run/systemd/journal");
+        prepare_directory(&runtime).unwrap();
+        prepare_directory(&compatibility).unwrap();
+        std::fs::write(compatibility.join("socket"), "owned elsewhere").unwrap();
+        assert!(install_compatibility_links(&runtime, &compatibility).is_err());
     }
 }

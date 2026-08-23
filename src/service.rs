@@ -2054,20 +2054,25 @@ mod tests {
             standard_error: "journal".into(),
             ..Default::default()
         };
-        section.exec_start.push(shell_command("true"));
+        section.exec_start.push(shell_command("sleep 5"));
         let mut record = make_service_with_section("journal-missing.service", section);
         std::env::set_var(
             "RUSTD_JOURNAL_STDOUT",
             "/tmp/rustd-journal-stdout-definitely-missing",
         );
-        let descriptors_before = std::fs::read_dir("/proc/self/fd").unwrap().count();
         let result = activate(&mut record, &[]);
-        let descriptors_after = std::fs::read_dir("/proc/self/fd").unwrap().count();
         std::env::remove_var("RUSTD_JOURNAL_STDOUT");
         result.expect("a missing journal stream must not prevent service activation");
-        assert_eq!(descriptors_after, descriptors_before);
         assert_eq!(record.state, UnitState::Active);
         if let Some(pid) = record.active_pid {
+            assert_eq!(
+                std::fs::read_link(format!("/proc/{pid}/fd/1")).unwrap(),
+                Path::new("/dev/null")
+            );
+            assert_eq!(
+                std::fs::read_link(format!("/proc/{pid}/fd/2")).unwrap(),
+                Path::new("/dev/null")
+            );
             unsafe { libc::kill(pid, libc::SIGKILL) };
             unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
         }

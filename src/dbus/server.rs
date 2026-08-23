@@ -44,8 +44,8 @@ pub const RUSTD_OBJECT_PATH: &str = "/io/rustd/Manager1";
 ///
 /// Dropping this handle signals the runtime to shut down.
 pub struct DbusServer {
-    /// Shutdown sender — signals the tokio runtime to stop.
-    shutdown_tx: tokio::sync::oneshot::Sender<()>,
+    /// Shared shutdown flag observed by the reconnecting worker.
+    shutdown: Arc<AtomicBool>,
     /// Join handle for the OS thread running the runtime.
     _thread: thread::JoinHandle<()>,
 }
@@ -102,8 +102,9 @@ impl DbusServer {
             .build()
             .map_err(|e| anyhow!("dbus: failed to build tokio runtime: {e}"))?;
 
-        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let (signal_tx, signal_rx) = tokio::sync::mpsc::unbounded_channel::<ManagerSignal>();
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::clone(&shutdown);
+        let (signal_tx, mut signal_rx) = tokio::sync::mpsc::unbounded_channel::<ManagerSignal>();
         let signal_tx_clone = signal_tx.clone();
 
         let handle = thread::Builder::new()
@@ -114,56 +115,52 @@ impl DbusServer {
                     return;
                 }
                 rt.block_on(async move {
-                    let fatal_exit_requested = Arc::clone(&exit_requested);
-                    let fatal_wake = wake.clone();
-                    if let Err(e) = run_server(
-                        scope,
-                        cgroup,
-                        unit_defaults,
-                        default_timeout_start_sec,
-                        default_timeout_stop_sec,
-                        snapshot,
-                        queue,
-                        unit_load_requests,
-                        set_unit_property_requests,
-                        jobs,
-                        wake,
-                        reload_requested,
-                        reload_count,
-                        exit_code,
-                        exit_requested,
-                        reexecute_requested,
-                        shutdown_action,
-                        shutdown_start_realtime_ns,
-                        shutdown_start_monotonic_ns,
-                        startup_realtime_ns,
-                        startup_monotonic_ns,
-                        finish_realtime_ns,
-                        finish_monotonic_ns,
-                        units_load_start_realtime_ns,
-                        units_load_start_monotonic_ns,
-                        units_load_finish_realtime_ns,
-                        units_load_finish_monotonic_ns,
-                        units_load_timestamp_realtime_ns,
-                        units_load_timestamp_monotonic_ns,
-                        environment,
-                        log_level,
-                        log_target,
-                        reset_failed_requests,
-                        dbus_ready_events,
-                        signal_tx_clone,
-                        signal_rx,
-                        shutdown_rx,
-                    )
-                    .await
-                    {
-                        eprintln!("dbus: server error: {e}");
-                        if scope == ManagerScope::System && std::process::id() == 1 {
-                            // A system manager without its native API is not
-                            // operational. Stop PID 1 rather than continuing in
-                            // a deceptively degraded state.
-                            fatal_exit_requested.store(true, std::sync::atomic::Ordering::Release);
-                            let _ = fatal_wake.wake();
+                    while !worker_shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                        if let Err(e) = run_server(
+                            scope,
+                            cgroup.clone(),
+                            Arc::clone(&unit_defaults),
+                            default_timeout_start_sec,
+                            default_timeout_stop_sec,
+                            Arc::clone(&snapshot),
+                            Arc::clone(&queue),
+                            Arc::clone(&unit_load_requests),
+                            Arc::clone(&set_unit_property_requests),
+                            jobs.clone(),
+                            wake.clone(),
+                            Arc::clone(&reload_requested),
+                            Arc::clone(&reload_count),
+                            Arc::clone(&exit_code),
+                            Arc::clone(&exit_requested),
+                            Arc::clone(&reexecute_requested),
+                            Arc::clone(&shutdown_action),
+                            Arc::clone(&shutdown_start_realtime_ns),
+                            Arc::clone(&shutdown_start_monotonic_ns),
+                            startup_realtime_ns,
+                            startup_monotonic_ns,
+                            Arc::clone(&finish_realtime_ns),
+                            Arc::clone(&finish_monotonic_ns),
+                            Arc::clone(&units_load_start_realtime_ns),
+                            Arc::clone(&units_load_start_monotonic_ns),
+                            Arc::clone(&units_load_finish_realtime_ns),
+                            Arc::clone(&units_load_finish_monotonic_ns),
+                            Arc::clone(&units_load_timestamp_realtime_ns),
+                            Arc::clone(&units_load_timestamp_monotonic_ns),
+                            environment.clone(),
+                            log_level.clone(),
+                            log_target.clone(),
+                            Arc::clone(&reset_failed_requests),
+                            Arc::clone(&dbus_ready_events),
+                            signal_tx_clone.clone(),
+                            &mut signal_rx,
+                            Arc::clone(&worker_shutdown),
+                        )
+                        .await
+                        {
+                            eprintln!("dbus: server error: {e}");
+                        }
+                        if !worker_shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                            tokio::time::sleep(Duration::from_millis(250)).await;
                         }
                     }
                 });
@@ -172,7 +169,7 @@ impl DbusServer {
 
         Ok((
             Self {
-                shutdown_tx,
+                shutdown,
                 _thread: handle,
             },
             signal_tx,
@@ -181,7 +178,8 @@ impl DbusServer {
 
     /// Request the D-Bus server to stop.
     pub fn stop(self) {
-        let _ = self.shutdown_tx.send(());
+        self.shutdown
+            .store(true, std::sync::atomic::Ordering::Release);
     }
 }
 
@@ -226,8 +224,8 @@ async fn run_server(
     reset_failed_requests: ResetFailedRequests,
     dbus_ready_events: Arc<Mutex<Vec<String>>>,
     signal_tx: UnboundedSender<ManagerSignal>,
-    mut signal_rx: tokio::sync::mpsc::UnboundedReceiver<ManagerSignal>,
-    shutdown_rx: tokio::sync::oneshot::Receiver<()>,
+    signal_rx: &mut tokio::sync::mpsc::UnboundedReceiver<ManagerSignal>,
+    shutdown: Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     // Try system bus first (for PID 1), fall back to session bus.
     let conn = connect_bus(scope).await?;
@@ -315,12 +313,12 @@ async fn run_server(
     .await;
 
     // Dispatch loop: wait for signals, D-Bus readiness, or shutdown.
-    let mut shutdown_rx = std::pin::pin!(shutdown_rx);
-
     loop {
         tokio::select! {
-            _ = &mut shutdown_rx => break,
             _ = readiness_timer.tick() => {
+                if shutdown.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
                 sync_invocation_unit_objects(
                     scope,
                     &unit_defaults,

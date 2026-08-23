@@ -547,7 +547,15 @@ impl Manager {
                 .map(|(k, v)| (k.clone(), v.state))
                 .collect();
 
-            let ready = self.job_queue.drain_ready(&states, &afters);
+            // Dispatch one job, then rebuild states and ordering. Draining the
+            // whole ready set against a single pre-dispatch snapshot lets an
+            // `After=` successor appear ready while its predecessor is still
+            // merely Inactive with a queued start job.
+            let ready = self
+                .job_queue
+                .pop_ready(&states, &afters)
+                .into_iter()
+                .collect::<Vec<_>>();
             let dispatched_jobs = !ready.is_empty();
             self.run_ready_jobs(ready);
 
@@ -1715,8 +1723,10 @@ impl Manager {
                     }
                     if record.state == UnitState::Failed && !explicitly_stopping {
                         eprintln!(
-                            "rustd: service '{name}' exited unsuccessfully: code={} status={}",
-                            exit.code, exit.status
+                            "rustd: service '{name}' from {} exited unsuccessfully: code={} status={}",
+                            record.loaded.source_path().display(),
+                            exit.code,
+                            exit.status
                         );
                     }
                     if let Some(source) = self.start_timeouts.remove(&name) {

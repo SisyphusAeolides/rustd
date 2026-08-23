@@ -16,6 +16,7 @@ use std::ffi::CString;
 use std::os::unix::io::RawFd;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use anyhow::anyhow;
 
@@ -217,14 +218,22 @@ pub fn activate_socket(
     );
 
     let service_name = triggered_service_name(record.loaded.name(), &sock.specific.service);
+    let trigger_limit = Arc::new(Mutex::new(TriggerLimit::new(
+        sock.specific
+            .trigger_limit_interval_sec
+            .unwrap_or(Duration::from_secs(2)),
+        sock.specific.trigger_limit_burst.unwrap_or(20),
+    )));
     let mut source_ids = Vec::with_capacity(fds.len());
     for &fd in &fds {
         match event_loop.add_io(
             fd,
             libc::EPOLLIN as u32,
             Box::new(SocketReadableHandler {
+                socket_name: record.loaded.name().to_owned(),
                 service_name: service_name.clone(),
                 queue: Arc::clone(queue),
+                trigger_limit: Arc::clone(&trigger_limit),
             }),
         ) {
             Ok(source_id) => source_ids.push(source_id),
@@ -263,8 +272,56 @@ pub fn deactivate_socket(
 }
 
 struct SocketReadableHandler {
+    socket_name: String,
     service_name: String,
     queue: Arc<Mutex<JobQueue>>,
+    trigger_limit: Arc<Mutex<TriggerLimit>>,
+}
+
+struct TriggerLimit {
+    interval: Duration,
+    burst: u32,
+    window_started: Instant,
+    count: u32,
+    tripped: bool,
+}
+
+impl TriggerLimit {
+    fn new(interval: Duration, burst: u32) -> Self {
+        Self {
+            interval,
+            burst,
+            window_started: Instant::now(),
+            count: 0,
+            tripped: false,
+        }
+    }
+
+    fn admit(&mut self, now: Instant) -> TriggerDecision {
+        if self.burst == 0 || self.interval.is_zero() {
+            return TriggerDecision::Start;
+        }
+        if now.duration_since(self.window_started) >= self.interval {
+            self.window_started = now;
+            self.count = 0;
+        }
+        if self.count < self.burst {
+            self.count += 1;
+            return TriggerDecision::Start;
+        }
+        if self.tripped {
+            TriggerDecision::Ignore
+        } else {
+            self.tripped = true;
+            TriggerDecision::StopSocket
+        }
+    }
+}
+
+enum TriggerDecision {
+    Start,
+    StopSocket,
+    Ignore,
 }
 
 impl IoHandler for SocketReadableHandler {
@@ -272,8 +329,26 @@ impl IoHandler for SocketReadableHandler {
         if events & libc::EPOLLIN as u32 == 0 {
             return;
         }
+        let decision = self
+            .trigger_limit
+            .lock()
+            .map_or(TriggerDecision::Ignore, |mut limit| {
+                limit.admit(Instant::now())
+            });
         if let Ok(mut queue) = self.queue.lock() {
-            queue.enqueue(JobKind::Start, self.service_name.clone());
+            match decision {
+                TriggerDecision::Start => {
+                    queue.enqueue(JobKind::Start, self.service_name.clone());
+                }
+                TriggerDecision::StopSocket => {
+                    eprintln!(
+                        "rustd: trigger limit hit for '{}'; stopping socket",
+                        self.socket_name
+                    );
+                    queue.enqueue_internal(JobKind::Stop, self.socket_name.clone());
+                }
+                TriggerDecision::Ignore => {}
+            }
         }
     }
 }
@@ -361,6 +436,45 @@ mod tests {
         event_loop.run_once_timeout(100).unwrap();
         let job = queue.lock().unwrap().pop_front().unwrap();
         assert_eq!(job.unit_name, "trigger.service");
+
+        deactivate_socket(&mut record, &mut socket_record, &mut event_loop);
+    }
+
+    #[test]
+    fn trigger_limit_stops_a_persistently_readable_socket() {
+        let root = tempfile::tempdir().unwrap();
+        let socket_path = root.path().join("limited.sock");
+        let loaded = LoadedUnit::Socket(Box::new(ParsedUnit {
+            name: "limited.socket".to_owned(),
+            source_path: PathBuf::from("/fake/limited.socket"),
+            unit: UnitSection::default(),
+            install: InstallSection::default(),
+            specific: SocketSection {
+                listen: vec![ListenSpec {
+                    kind: "Stream".to_owned(),
+                    address: socket_path.display().to_string(),
+                }],
+                trigger_limit_interval_sec: Some(Duration::from_secs(60)),
+                trigger_limit_burst: Some(1),
+                ..Default::default()
+            },
+        }));
+        let mut record = UnitRecord::new(loaded);
+        let mut socket_record = SocketRecord::default();
+        let mut event_loop = EventLoop::new().unwrap();
+        let queue = Arc::new(Mutex::new(JobQueue::default()));
+
+        activate_socket(&mut record, &mut socket_record, &mut event_loop, &queue).unwrap();
+        let _connection = std::os::unix::net::UnixStream::connect(&socket_path).unwrap();
+        event_loop.run_once_timeout(100).unwrap();
+        assert_eq!(
+            queue.lock().unwrap().pop_front().unwrap().unit_name,
+            "limited.service"
+        );
+        event_loop.run_once_timeout(100).unwrap();
+        let stop = queue.lock().unwrap().pop_front().unwrap();
+        assert_eq!(stop.kind, JobKind::Stop);
+        assert_eq!(stop.unit_name, "limited.socket");
 
         deactivate_socket(&mut record, &mut socket_record, &mut event_loop);
     }
