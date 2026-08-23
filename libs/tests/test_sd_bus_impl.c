@@ -1,14 +1,29 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #define _GNU_SOURCE
 #include <assert.h>
+#include <dbus/dbus.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
 #include <unistd.h>
 #include "sd_bus_abi.h"
 
 static int async_called;
 static int async_saw_dbus;
+static int raw_filter_called;
+
+static int raw_filter(sd_bus_message *message, void *userdata, sd_bus_error *error) {
+    int *marker = userdata;
+    (void)message;
+    (void)error;
+    ++*marker;
+    raw_filter_called = 1;
+    return 1;
+}
 
 static int list_names_callback(sd_bus_message *reply, void *userdata, sd_bus_error *ret_error) {
     const char *name = NULL;
@@ -72,6 +87,16 @@ static void test_local_message_codec(void) {
     assert(sd_bus_message_at_end(m, 1) > 0);
 
     sd_bus_message_unref(m);
+    m = NULL;
+
+    assert(sd_bus_message_new_method_call(
+               bus, &m, "org.example.Test", "/org/example/Test",
+               "org.example.Test", "Struct") == 0);
+    assert(sd_bus_message_open_container(m, SD_BUS_TYPE_STRUCT, "ss") == 0);
+    assert(sd_bus_message_append(m, "ss", "left", "right") == 0);
+    assert(sd_bus_message_close_container(m) == 0);
+
+    sd_bus_message_unref(m);
     sd_bus_unref(bus);
 }
 
@@ -89,6 +114,10 @@ static void test_real_session_bus(void) {
     assert(sd_bus_get_events(bus) > 0);
     assert(sd_bus_get_unique_name(bus, &unique) == 0);
     assert(unique && unique[0] == ':');
+
+    assert(sd_bus_call_method_async(
+               bus, NULL, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+               "org.freedesktop.DBus", "ListNames", NULL, NULL, "") > 0);
 
     r = sd_bus_call_method(
         bus,
@@ -189,10 +218,127 @@ static void test_default_user_lifecycle(void) {
     assert(sd_bus_flush_close_unref(bus) == NULL);
 }
 
+static void transfer_exact(int fd, void *buffer, size_t size, int writing) {
+    unsigned char *cursor = buffer;
+    while (size > 0U) {
+        ssize_t n = writing ? write(fd, cursor, size) : read(fd, cursor, size);
+        assert(n > 0);
+        cursor += (size_t)n;
+        size -= (size_t)n;
+    }
+}
+
+static void raw_peer_reply(int fd) {
+    static const unsigned char auth_request[] =
+        "\0AUTH EXTERNAL\r\nDATA\r\nNEGOTIATE_UNIX_FD\r\nBEGIN\r\n";
+    static const char auth_reply[] =
+        "DATA\r\nOK 0123456789abcdef0123456789abcdef\r\nAGREE_UNIX_FD\r\n";
+    unsigned char received_auth[sizeof(auth_request) - 1U];
+    unsigned char header[16];
+    DBusMessage *reply;
+    DBusMessage *signal;
+    unsigned char *wire;
+    char *reply_wire = NULL;
+    unsigned char control[CMSG_SPACE(sizeof(int))];
+    struct iovec iov = {.iov_base = header, .iov_len = sizeof(header)};
+    struct msghdr received = {0};
+    struct cmsghdr *cmsg;
+    uint32_t call_serial;
+    int needed;
+    int reply_size = 0;
+
+    transfer_exact(fd, received_auth, sizeof(received_auth), 0);
+    assert(memcmp(received_auth, auth_request, sizeof(received_auth)) == 0);
+    transfer_exact(fd, (void *)auth_reply, sizeof(auth_reply) - 1U, 1);
+
+    received.msg_iov = &iov;
+    received.msg_iovlen = 1;
+    received.msg_control = control;
+    received.msg_controllen = sizeof(control);
+    assert(recvmsg(fd, &received, MSG_WAITALL) == (ssize_t)sizeof(header));
+    cmsg = CMSG_FIRSTHDR(&received);
+    assert(cmsg != NULL);
+    assert(cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS);
+    assert(cmsg->cmsg_len == CMSG_LEN(sizeof(int)));
+    close(*(int *)CMSG_DATA(cmsg));
+    needed = dbus_message_demarshal_bytes_needed((const char *)header, sizeof(header));
+    assert(needed >= (int)sizeof(header));
+    wire = malloc((size_t)needed);
+    assert(wire != NULL);
+    memcpy(wire, header, sizeof(header));
+    transfer_exact(fd, wire + sizeof(header), (size_t)needed - sizeof(header), 0);
+    if (header[0] == 'l')
+        call_serial = (uint32_t)header[8] | ((uint32_t)header[9] << 8) |
+                      ((uint32_t)header[10] << 16) | ((uint32_t)header[11] << 24);
+    else
+        call_serial = ((uint32_t)header[8] << 24) | ((uint32_t)header[9] << 16) |
+                      ((uint32_t)header[10] << 8) | (uint32_t)header[11];
+    free(wire);
+    assert(call_serial != 0U);
+    reply = dbus_message_new(DBUS_MESSAGE_TYPE_METHOD_RETURN);
+    assert(reply != NULL);
+    assert(dbus_message_set_reply_serial(reply, call_serial));
+    dbus_message_set_serial(reply, 77U);
+    assert(dbus_message_marshal(reply, &reply_wire, &reply_size));
+    transfer_exact(fd, reply_wire, (size_t)reply_size, 1);
+    dbus_free(reply_wire);
+    dbus_message_unref(reply);
+
+    signal = dbus_message_new_signal(
+        "/org/example/Peer", "org.example.Peer", "Changed");
+    assert(signal != NULL);
+    reply_wire = NULL;
+    reply_size = 0;
+    dbus_message_set_serial(signal, 78U);
+    assert(dbus_message_marshal(signal, &reply_wire, &reply_size));
+    transfer_exact(fd, reply_wire, (size_t)reply_size, 1);
+    dbus_free(reply_wire);
+    dbus_message_unref(signal);
+}
+
+static void test_raw_peer_call(void) {
+    int pair[2];
+    pid_t child;
+    sd_bus *bus = NULL;
+    sd_bus_message *call = NULL;
+    int probe[2];
+
+    assert(socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) == 0);
+    assert(pipe2(probe, O_CLOEXEC) == 0);
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        close(pair[0]);
+        close(probe[0]);
+        close(probe[1]);
+        raw_peer_reply(pair[1]);
+        close(pair[1]);
+        _exit(0);
+    }
+    close(pair[1]);
+    close(probe[1]);
+    assert(sd_bus_new(&bus) == 0);
+    assert(sd_bus_set_fd(bus, pair[0], pair[0]) == 0);
+    assert(sd_bus_add_filter(bus, NULL, raw_filter, &raw_filter_called) == 0);
+    assert(sd_bus_start(bus) == 0);
+    assert(sd_bus_message_new_method_call(
+               bus, &call, NULL, "/org/example/Peer", "org.example.Peer", "Probe") == 0);
+    assert(sd_bus_message_append(call, "h", probe[0]) == 0);
+    close(probe[0]);
+    assert(sd_bus_call(bus, call, 5U * 1000U * 1000U, NULL, NULL) > 0);
+    assert(sd_bus_wait(bus, 5U * 1000U * 1000U) > 0);
+    assert(sd_bus_process(bus, NULL) > 0);
+    assert(raw_filter_called > 0);
+    sd_bus_message_unref(call);
+    sd_bus_unref(bus);
+    assert(waitpid(child, NULL, 0) == child);
+}
+
 int main(void) {
     test_local_message_codec();
     test_real_session_bus();
     test_async_session_bus();
     test_default_user_lifecycle();
+    test_raw_peer_call();
     return 0;
 }

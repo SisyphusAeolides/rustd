@@ -71,6 +71,8 @@ pub trait DeferHandler: Send {
 
 struct IoSource {
     fd: i32,
+    events: u32,
+    enabled: bool,
     handler: Box<dyn IoHandler>,
 }
 
@@ -188,8 +190,47 @@ impl EventLoop {
         if r < 0 {
             return Err(anyhow::anyhow!("epoll_add_fd({fd}) failed: errno {}", -r));
         }
-        self.io_sources.insert(id, IoSource { fd, handler });
+        self.io_sources.insert(
+            id,
+            IoSource {
+                fd,
+                events,
+                enabled: true,
+                handler,
+            },
+        );
         Ok(id)
+    }
+
+    /// Enable or disable readiness delivery while retaining the IO handler.
+    ///
+    /// Socket units use this to stop level-triggered listener readiness from
+    /// repeatedly starting a service that already owns the activation fd.
+    ///
+    /// # Errors
+    /// Returns an error if the source is unknown or `epoll_ctl(MOD)` fails.
+    pub fn set_io_enabled(&mut self, id: SourceId, enabled: bool) -> anyhow::Result<()> {
+        let source = self
+            .io_sources
+            .get_mut(&id)
+            .ok_or_else(|| anyhow::anyhow!("unknown IO source {}", id.get()))?;
+        if source.enabled == enabled {
+            return Ok(());
+        }
+        let token = SourceToken::encode(SourceKind::Io, id);
+        let events = if enabled { source.events } else { 0 };
+        let result = unsafe {
+            crate::ffi::event::rustd_epoll_mod_fd(self.epfd.as_raw_fd(), source.fd, events, token.0)
+        };
+        if result < 0 {
+            return Err(anyhow::anyhow!(
+                "epoll_mod_fd({}) failed: errno {}",
+                source.fd,
+                -result
+            ));
+        }
+        source.enabled = enabled;
+        Ok(())
     }
 
     /// Register a timerfd source.  Returns the source id.
@@ -538,5 +579,57 @@ impl EventLoop {
                 offset += std::mem::size_of::<libc::inotify_event>() + ev.len as usize;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EventLoop, IoHandler};
+    use std::io::Write;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    struct CountingIo(Arc<AtomicUsize>);
+
+    impl IoHandler for CountingIo {
+        fn on_io(&mut self, fd: i32, _events: u32) {
+            let mut byte = 0_u8;
+            // Safety: the event loop invokes this handler only while the
+            // registered UnixStream descriptor remains open.
+            let _ = unsafe { libc::read(fd, (&raw mut byte).cast(), 1) };
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn disabled_io_source_retains_pending_readiness_until_reenabled() {
+        let (reader, mut writer) = UnixStream::pair().expect("socketpair");
+        reader.set_nonblocking(true).expect("nonblocking reader");
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut event_loop = EventLoop::new().expect("event loop");
+        let source = event_loop
+            .add_io(
+                reader.as_raw_fd(),
+                libc::EPOLLIN as u32,
+                Box::new(CountingIo(Arc::clone(&calls))),
+            )
+            .expect("register IO source");
+
+        event_loop
+            .set_io_enabled(source, false)
+            .expect("disable IO source");
+        writer.write_all(b"x").expect("make source readable");
+        event_loop.run_once_timeout(0).expect("disabled poll");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        event_loop
+            .set_io_enabled(source, true)
+            .expect("reenable IO source");
+        event_loop.run_once_timeout(100).expect("enabled poll");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

@@ -1766,6 +1766,7 @@ impl Manager {
                 }
             }
             if let Some(name) = exited_unit {
+                self.set_trigger_sockets_enabled(&name, true);
                 // A normal Continue-policy OOM classification applies to the
                 // matching child exit only. Stop/Kill policy state remains
                 // set until the service cgroup is empty so every process
@@ -2091,7 +2092,30 @@ impl Manager {
                 record.watchdog_timestamp_realtime_ns = clock_now(ClockId::Realtime).ok();
             }
         }
+        self.set_trigger_sockets_enabled(name, false);
         Ok(())
+    }
+
+    fn set_trigger_sockets_enabled(&mut self, service_name: &str, enabled: bool) {
+        use crate::socket_unit::triggered_service_name;
+        let source_ids: Vec<_> = self
+            .socket_records
+            .iter()
+            .filter_map(|(socket_name, socket_record)| {
+                let unit = self.units.get(socket_name)?;
+                let LoadedUnit::Socket(socket) = &unit.loaded else {
+                    return None;
+                };
+                (triggered_service_name(socket_name, &socket.specific.service) == service_name)
+                    .then_some(socket_record.source_ids.iter().copied())
+            })
+            .flatten()
+            .collect();
+        for source_id in source_ids {
+            if let Err(error) = self.event_loop.set_io_enabled(source_id, enabled) {
+                eprintln!("rustd: changing socket readiness for '{service_name}' failed: {error}");
+            }
+        }
     }
 
     fn service_kill_policy(
