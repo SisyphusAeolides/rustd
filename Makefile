@@ -168,7 +168,7 @@ check-compat: compat
 	done < libs/compat/needed_syms.txt; \
 	if [ "$$missing" = 1 ]; then exit 1; fi; \
 	echo "compat SONAMEs and symbol policy OK"
-	$(CC) $(CFLAGS) $(COMPAT_CFLAGS) -Ilibs/compat libs/tests/test_sd_bus_impl.c \
+	$(CC) $(CFLAGS) $(COMPAT_CFLAGS) -DRUSTD_TEST_EVENT_ATTACHMENT -Ilibs/compat libs/tests/test_sd_bus_impl.c \
 		-Wl,-rpath,$(abspath $(LIBS_DIR)) -L$(LIBS_DIR) -lsystemd -ldbus-1 \
 		-o build/test_sd_bus_impl
 	dbus-run-session -- ./build/test_sd_bus_impl

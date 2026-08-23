@@ -336,6 +336,7 @@ static void test_raw_peer_call(void) {
     assert(waitpid(child, NULL, 0) == child);
 }
 
+#ifdef RUSTD_TEST_EVENT_ATTACHMENT
 static void test_event_attachment(void) {
     sd_bus *bus = NULL;
     sd_event *event = NULL;
@@ -347,6 +348,7 @@ static void test_event_attachment(void) {
     sd_bus_unref(bus);
     sd_event_unref(event);
 }
+#endif
 
 int main(void) {
     test_local_message_codec();
@@ -354,6 +356,8 @@ int main(void) {
     test_async_session_bus();
     test_default_user_lifecycle();
     test_raw_peer_call();
+#ifdef RUSTD_TEST_EVENT_ATTACHMENT
     test_event_attachment();
+#endif
     return 0;
 }
