@@ -33,7 +33,8 @@ make -C "$WORK/selinux" \
     -f /usr/share/selinux/devel/Makefile rustd_fedora.pp
 test -s "$WORK/selinux/rustd_fedora.pp"
 
-grep -Fq 'Conflicts:      systemd-libs' dist/fedora/rustd-compat-libs.spec
+grep -Fq 'Obsoletes:      systemd-libs <= %{systemd_compat_evr}' \
+    dist/fedora/rustd-compat-libs.spec
 grep -Fq 'Provides:       systemd-libs = %{systemd_compat_evr}' \
     dist/fedora/rustd-compat-libs.spec
 grep -Fq 'Provides:       systemd = %{systemd_compat_evr}' \
@@ -50,7 +51,12 @@ for capability in \
     'udev%{?_isa} = %{systemd_compat_evr}'; do
     grep -Fq "Provides:       $capability" dist/fedora/rustd-fedora-compat.spec
 done
-grep -Fq 'Conflicts:      systemd-pam' dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Obsoletes:      systemd <= %{systemd_compat_evr}' \
+    dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Obsoletes:      systemd-udev <= %{systemd_compat_evr}' \
+    dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Obsoletes:      systemd-pam <= %{systemd_compat_evr}' \
+    dist/fedora/rustd-fedora-compat.spec
 grep -Fq 'Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}' \
     dist/fedora/rustd-fedora-compat.spec
 grep -Fq 'Requires:       rustd-cutover-tools%{?_isa} = %{version}-%{release}' \

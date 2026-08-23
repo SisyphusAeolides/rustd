@@ -27,9 +27,9 @@ Provides:       systemd-pam%{?_isa} = %{systemd_compat_evr}
 Provides:       systemd-units = %{systemd_compat_evr}
 Provides:       systemd-sysv = 206
 Provides:       udev%{?_isa} = %{systemd_compat_evr}
-Conflicts:      systemd
-Conflicts:      systemd-udev
-Conflicts:      systemd-pam
+Obsoletes:      systemd <= %{systemd_compat_evr}
+Obsoletes:      systemd-udev <= %{systemd_compat_evr}
+Obsoletes:      systemd-pam <= %{systemd_compat_evr}
 
 %description
 Fedora transaction compatibility entry points and package capabilities backed

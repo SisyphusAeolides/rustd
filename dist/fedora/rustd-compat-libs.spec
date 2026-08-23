@@ -20,7 +20,7 @@ Requires:       rustd%{?_isa} = %{version}-%{release}
 Provides:       systemd-libs = %{systemd_compat_evr}
 Provides:       libsystemd = %{systemd_compat_evr}
 Provides:       libudev = %{systemd_compat_evr}
-Conflicts:      systemd-libs
+Obsoletes:      systemd-libs <= %{systemd_compat_evr}
 
 %description
 RustD-owned runtime compatibility SONAMEs for Fedora binaries already linked to
