@@ -923,16 +923,34 @@ impl ServiceSection {
                 if value.is_empty() {
                     self.capability_bounding_set.clear();
                 } else {
+                    let (inverted, names) = value
+                        .strip_prefix('~')
+                        .map_or((false, value), |names| (true, names));
                     self.capability_bounding_set
-                        .extend(value.split_whitespace().map(str::to_owned));
+                        .extend(names.split_whitespace().map(|name| {
+                            if inverted {
+                                format!("~{name}")
+                            } else {
+                                name.to_owned()
+                            }
+                        }));
                 }
             }
             "AmbientCapabilities" => {
                 if value.is_empty() {
                     self.ambient_capabilities.clear();
                 } else {
+                    let (inverted, names) = value
+                        .strip_prefix('~')
+                        .map_or((false, value), |names| (true, names));
                     self.ambient_capabilities
-                        .extend(value.split_whitespace().map(str::to_owned));
+                        .extend(names.split_whitespace().map(|name| {
+                            if inverted {
+                                format!("~{name}")
+                            } else {
+                                name.to_owned()
+                            }
+                        }));
                 }
             }
             "NoNewPrivileges" => self.no_new_privileges = bv(),

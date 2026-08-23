@@ -93,9 +93,16 @@ impl SecurityContext {
         if names.is_empty() {
             return u64::MAX;
         }
-        let mut mask: u64 = 0;
-        for name in names {
-            let Ok(cname) = CString::new(name.as_str()) else {
+        let mut mask = if names[0].starts_with('~') {
+            u64::MAX
+        } else {
+            0
+        };
+        for raw_name in names {
+            let (inverted, name) = raw_name
+                .strip_prefix('~')
+                .map_or((false, raw_name.as_str()), |name| (true, name));
+            let Ok(cname) = CString::new(name) else {
                 continue;
             };
             let number =
@@ -104,7 +111,11 @@ impl SecurityContext {
                 continue;
             };
             if number < u64::BITS {
-                mask |= 1u64 << number;
+                if inverted {
+                    mask &= !(1u64 << number);
+                } else {
+                    mask |= 1u64 << number;
+                }
             }
         }
         mask
@@ -393,5 +404,26 @@ mod tests {
         assert!(!ctx.private_tmp);
         assert_eq!(ctx.protect_system, PROTECT_SYSTEM_NO);
         assert!(ctx.read_write_paths.is_empty());
+    }
+
+    #[test]
+    fn repeated_inverted_bounding_sets_subtract_the_union() {
+        let mut service = ServiceSection::default();
+        service.apply(
+            "CapabilityBoundingSet",
+            "~CAP_AUDIT_CONTROL CAP_AUDIT_READ CAP_AUDIT_WRITE",
+        );
+        service.apply(
+            "CapabilityBoundingSet",
+            "~CAP_SYS_ADMIN CAP_SYS_MODULE CAP_SYS_PTRACE",
+        );
+
+        let context = SecurityContext::from_service(&service).unwrap();
+        for removed in [21_u32, 16, 19, 30, 37, 29] {
+            assert_eq!(context.cap_bounding_set & (1_u64 << removed), 0);
+        }
+        for retained in [0_u32, 1, 6, 7, 25] {
+            assert_ne!(context.cap_bounding_set & (1_u64 << retained), 0);
+        }
     }
 }
