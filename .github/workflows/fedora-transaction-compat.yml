@@ -30,7 +30,7 @@ jobs:
         run: |
           exec > >(tee /tmp/fedora-transaction.log) 2>&1
           for file in dist/fedora/compat/* tests/fedora-transaction-compat.sh; do
-            bash -n "$file"
+            [[ $file == *.c ]] || bash -n "$file"
           done
           bash tests/fedora-transaction-compat.sh
       - name: Publish exact transaction voucher
