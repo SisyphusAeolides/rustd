@@ -158,6 +158,12 @@ grep -Fq 'pam_rustd.so' \
     dist/fedora/compat/rustd-fedora-cutover
 grep -Fq 'rustd_dns' \
     dist/fedora/compat/rustd-fedora-cutover
+grep -Fxq 'ExecStart=/usr/bin/rustd-sysusers' \
+    packaging/rustd/rustd-sysusers.service
+grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles' \
+    packaging/rustd/rustd-tmpfiles-setup.service
+grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles --prefix=/dev --create --boot' \
+    packaging/rustd/rustd-tmpfiles-setup-dev.service
 grep -Fq "owner_matches /usr/sbin/rustd-fedora-cutover '^rustd-cutover-tools$'" \
     scripts/fedora-cutover-gate.sh
 grep -Fq "owner_matches /usr/lib64/security/pam_rustd.so '^rustd-cutover-tools$'" \

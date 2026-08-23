@@ -7,5 +7,5 @@ Before=sysinit.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/lib/rustd/rustd-tmpfiles
+ExecStart=/usr/bin/rustd-tmpfiles
 RemainAfterExit=yes

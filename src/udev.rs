@@ -402,9 +402,16 @@ fn run_builtin(spec: &str, device: &mut Device) {
             if arguments.first() == Some(&"load") {
                 arguments.remove(0);
             }
-            let module = arguments.join(" ");
-            if !module.is_empty() {
-                let _ = Command::new("modprobe").args(["-b", &module]).status();
+            let modules = if arguments.is_empty() {
+                device
+                    .properties
+                    .get("MODALIAS")
+                    .map_or_else(Vec::new, |alias| vec![alias.as_str()])
+            } else {
+                arguments
+            };
+            for module in modules {
+                let _ = Command::new("modprobe").args(["-b", module]).status();
             }
         }
         "blkid" => {
