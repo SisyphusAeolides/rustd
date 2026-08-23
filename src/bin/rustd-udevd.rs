@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 const CONTROL_SOCKET: &str = "/run/udev/control";
 const QUEUE_FILE: &str = "/run/udev/queue";
 const LAST_SEQNUM_FILE: &str = "/run/udev/last-seqnum";
+const UEVENT_RECEIVE_BUFFER_SIZE: libc::c_int = 128 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
 enum ResolveNames {
@@ -240,6 +241,27 @@ fn open_uevent_socket() -> io::Result<OwnedFd> {
     };
     if fd < 0 {
         return Err(io::Error::last_os_error());
+    }
+    let receive_buffer = UEVENT_RECEIVE_BUFFER_SIZE;
+    let receive_buffer_result = unsafe {
+        libc::setsockopt(
+            fd,
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUFFORCE,
+            std::ptr::addr_of!(receive_buffer).cast(),
+            mem::size_of_val(&receive_buffer) as libc::socklen_t,
+        )
+    };
+    if receive_buffer_result < 0 {
+        unsafe {
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_RCVBUF,
+                std::ptr::addr_of!(receive_buffer).cast(),
+                mem::size_of_val(&receive_buffer) as libc::socklen_t,
+            )
+        };
     }
     let mut address: libc::sockaddr_nl = unsafe { mem::zeroed() };
     address.nl_family = libc::AF_NETLINK as libc::sa_family_t;
