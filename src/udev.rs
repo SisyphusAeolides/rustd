@@ -372,7 +372,11 @@ fn apply_assignment(token: &Token, device: &mut Device) {
             }
         }
         "IMPORT" => import_value(token.attr.as_deref(), &value, device),
-        "RUN" => run_command(&value, device),
+        "RUN" => match token.attr.as_deref() {
+            Some("builtin") => run_builtin(&value, device),
+            None | Some("program") => run_command(&value, device),
+            Some(_) => {}
+        },
         _ => {}
     }
 }
@@ -796,6 +800,26 @@ mod tests {
         assert_eq!(rule[0].key, "ATTRS");
         assert_eq!(rule[0].attr.as_deref(), Some("idVendor"));
         assert_eq!(rule[1].key, "GOTO");
+    }
+
+    #[test]
+    fn run_builtin_dispatches_to_the_builtin_engine() {
+        let mut device = Device {
+            devpath: "/devices/pci0000:00/0000:00:04.0".into(),
+            ..Device::default()
+        };
+        let rules = vec![Rule {
+            tokens: parse_rule_line(r#"RUN{builtin}+="path_id""#).unwrap(),
+            source: PathBuf::from("80-drivers.rules"),
+            line: 1,
+        }];
+
+        apply_rules(&rules, &mut device);
+
+        assert_eq!(
+            device.property("ID_PATH"),
+            "devices-pci0000:00-0000:00:04.0"
+        );
     }
 
     #[test]
