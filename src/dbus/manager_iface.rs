@@ -1550,7 +1550,12 @@ impl ManagerInterface {
             .write()
             .map_err(|_| zbus::fdo::Error::Failed("internal: log state lock poisoned".into()))?;
         if value.is_empty() {
-            state.level = state.original_level.clone();
+            let ManagerLogState {
+                level,
+                original_level,
+                ..
+            } = &mut *state;
+            level.clone_from(original_level);
         } else {
             state.level = value;
         }
@@ -1579,7 +1584,12 @@ impl ManagerInterface {
             .write()
             .map_err(|_| zbus::fdo::Error::Failed("internal: log state lock poisoned".into()))?;
         if value.is_empty() {
-            state.target = state.original_target.clone();
+            let ManagerLogState {
+                target,
+                original_target,
+                ..
+            } = &mut *state;
+            target.clone_from(original_target);
         } else {
             state.target = value;
         }

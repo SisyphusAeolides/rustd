@@ -38,7 +38,11 @@ fn plain(binary: &str, arguments: &[&str]) -> Output {
 fn wait_for_path(path: &std::path::Path) {
     let deadline = Instant::now() + Duration::from_secs(3);
     while !path.exists() {
-        assert!(Instant::now() < deadline, "timed out waiting for {path:?}");
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {}",
+            path.display()
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
 }

@@ -213,7 +213,7 @@ fn take_value<'a>(
 
 fn apply_value(options: &mut Options, name: &str, value: &str) -> Result<(), String> {
     match name {
-        "identifier" => options.identifier = value.to_owned(),
+        "identifier" => value.clone_into(&mut options.identifier),
         "priority" => {
             options.priority = parse_priority(value)
                 .ok_or_else(|| String::from("Failed to parse priority value."))?;

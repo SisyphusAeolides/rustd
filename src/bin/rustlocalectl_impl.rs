@@ -268,7 +268,10 @@ fn list_x11_keymaps(kind: &str, layout_filter: Option<&str>) {
     for line in BufReader::new(file).lines().map_while(Result::ok) {
         let line = line.trim();
         if let Some(rest) = line.strip_prefix('!') {
-            section = rest.split_whitespace().next().unwrap_or("").to_owned();
+            rest.split_whitespace()
+                .next()
+                .unwrap_or("")
+                .clone_into(&mut section);
             continue;
         }
         if section != wanted || line.is_empty() {

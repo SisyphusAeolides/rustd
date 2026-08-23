@@ -294,8 +294,8 @@ mod tests {
             runtime.join("stdout")
         );
         drop(guards);
-        assert!(!std::fs::symlink_metadata(compatibility.join("socket")).is_ok());
-        assert!(!std::fs::symlink_metadata(compatibility.join("stdout")).is_ok());
+        assert!(std::fs::symlink_metadata(compatibility.join("socket")).is_err());
+        assert!(std::fs::symlink_metadata(compatibility.join("stdout")).is_err());
     }
 
     #[test]

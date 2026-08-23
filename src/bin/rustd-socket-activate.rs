@@ -1726,7 +1726,7 @@ fn exec_process(
             .iter_mut()
             .find(|(candidate, _)| candidate == name)
         {
-            existing.1 = value.clone();
+            existing.1.clone_from(value);
         } else {
             child_environment.push((name.clone(), value.clone()));
         }

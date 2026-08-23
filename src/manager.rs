@@ -2684,7 +2684,7 @@ fn reset_failed_record(record: &mut UnitRecord) {
     record.start_limit_window_ns = 0;
     record.start_limit_count = 0;
     record.watchdog_triggered = false;
-    record.service_result = "success".to_owned();
+    "success".clone_into(&mut record.service_result);
     record.exec_main_code = 0;
     record.exec_main_status = 0;
 }

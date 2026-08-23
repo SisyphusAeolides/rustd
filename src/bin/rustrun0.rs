@@ -97,8 +97,9 @@ fn run(cli: Cli) -> anyhow::Result<i32> {
 
     // Set working directory
     if let Some(ref dir) = cli.working_directory {
-        env::set_current_dir(dir)
-            .map_err(|e| anyhow::anyhow!("Failed to change directory to '{dir:?}': {e}"))?;
+        env::set_current_dir(dir).map_err(|e| {
+            anyhow::anyhow!("Failed to change directory to '{}': {e}", dir.display())
+        })?;
     }
 
     // Apply custom environment variables

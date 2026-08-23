@@ -442,7 +442,7 @@ fn cmd_call(
 fn cmd_validate_idl(file: Option<&Path>) -> anyhow::Result<()> {
     let content = match file {
         Some(path) => fs::read_to_string(path)
-            .map_err(|e| anyhow::anyhow!("Failed to read IDL file '{path:?}': {e}"))?,
+            .map_err(|e| anyhow::anyhow!("Failed to read IDL file '{}': {e}", path.display()))?,
         None => {
             let mut input = String::new();
             std::io::stdin()

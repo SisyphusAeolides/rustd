@@ -450,7 +450,7 @@ fn merge_fields(mut generated: Vec<String>, supplied: &[String]) -> Vec<String> 
                 old.split_once('=')
                     .is_some_and(|(old_key, _)| old_key == key)
             }) {
-                generated[index] = item.clone();
+                generated[index].clone_from(item);
                 continue;
             }
             if let Some(index) = supplied.iter().rposition(|candidate| {

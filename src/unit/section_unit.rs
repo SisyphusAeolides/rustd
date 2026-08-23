@@ -179,7 +179,7 @@ impl UnitSection {
             "SurviveFinalKillSignal" => self.survive_final_kill_signal = parse_bool(value),
             "OnSuccessJobMode" => value.clone_into(&mut self.on_success_job_mode),
             "OnFailureJobMode" => value.clone_into(&mut self.on_failure_job_mode),
-            "OnFailureIsolate" => self.on_failure_job_mode = "isolate".to_owned(),
+            "OnFailureIsolate" => "isolate".clone_into(&mut self.on_failure_job_mode),
             "FailureAction" => self.failure_action = UnitAction::parse(value),
             "SuccessAction" => self.success_action = UnitAction::parse(value),
             "FailureActionExitStatus" => {

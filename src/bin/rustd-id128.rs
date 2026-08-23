@@ -624,7 +624,7 @@ fn show(arguments: &[String], options: &Options) -> Result<(), ()> {
     }
     let mut rows = Vec::new();
     if arguments.is_empty() {
-        rows = all.clone();
+        rows.clone_from(&all);
     } else {
         for argument in arguments {
             let (name, mut id) = if let Some(id) = Id128::parse(argument) {
