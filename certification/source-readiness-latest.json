@@ -2,9 +2,9 @@
   "complete": true,
   "missing_source_definition": 0,
   "missing_symbols": [],
-  "required": 331,
+  "required": 335,
   "schema": "rustd-source-readiness-v1",
-  "supported": 331,
+  "supported": 335,
   "supported_symbols": [
     "sd_booted",
     "sd_bus_add_filter",
@@ -28,6 +28,7 @@
     "sd_bus_creds_get_uid",
     "sd_bus_creds_ref",
     "sd_bus_creds_unref",
+    "sd_bus_default_system",
     "sd_bus_default_user",
     "sd_bus_emit_interfaces_added_strv",
     "sd_bus_emit_interfaces_removed_strv",
@@ -60,6 +61,7 @@
     "sd_bus_message_append_array",
     "sd_bus_message_append_basic",
     "sd_bus_message_append_string_space",
+    "sd_bus_message_append_strv",
     "sd_bus_message_at_end",
     "sd_bus_message_close_container",
     "sd_bus_message_copy",
@@ -232,6 +234,7 @@
     "sd_login_monitor_new",
     "sd_login_monitor_unref",
     "sd_notify",
+    "sd_notify_barrier",
     "sd_notifyf",
     "sd_pid_get_cgroup",
     "sd_pid_get_machine_name",
@@ -254,6 +257,7 @@
     "sd_session_get_display",
     "sd_session_get_leader",
     "sd_session_get_remote_host",
+    "sd_session_get_remote_user",
     "sd_session_get_seat",
     "sd_session_get_service",
     "sd_session_get_start_time",
@@ -338,7 +342,7 @@
     "udev_ref",
     "udev_unref"
   ],
-  "tested_sha": "160c02a6379002fb7842f053990de951278cec73",
+  "tested_sha": "7e7204d69cc4c0a9c63f838d8febb9d69a3efd6b",
   "unsupported": 0,
   "unsupported_symbols": []
 }
