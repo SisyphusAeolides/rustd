@@ -13,6 +13,7 @@
 #include <netdb.h>
 #include <netinet/in.h>
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -64,7 +65,15 @@ static void remove_stale_socket(const char *path) {
 /* ── AF_UNIX helpers ─────────────────────────────────────────────────────── */
 
 static int unix_bind(int type, const char *path) {
-    remove_stale_socket(path);
+    bool abstract;
+    size_t path_length;
+    socklen_t address_length;
+    if (!path || path[0] == '\0')
+        return -EINVAL;
+    abstract = path[0] == '@';
+    path_length = strlen(path + (abstract ? 1 : 0));
+    if (!abstract)
+        remove_stale_socket(path);
 
     int fd = socket(AF_UNIX, type | SOCK_CLOEXEC, 0);
     if (fd < 0)
@@ -75,13 +84,20 @@ static int unix_bind(int type, const char *path) {
     struct sockaddr_un addr;
     memset(&addr, 0, sizeof(addr));
     addr.sun_family = AF_UNIX;
-    if (strlen(path) >= sizeof(addr.sun_path)) {
+    if ((!abstract && path_length >= sizeof(addr.sun_path)) ||
+        (abstract && path_length > sizeof(addr.sun_path) - 1U)) {
         close(fd);
         return -ENAMETOOLONG;
     }
-    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+    if (abstract) {
+        memcpy(addr.sun_path + 1, path + 1, path_length);
+        address_length = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1U + path_length);
+    } else {
+        memcpy(addr.sun_path, path, path_length + 1U);
+        address_length = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + path_length + 1U);
+    }
 
-    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+    if (bind(fd, (struct sockaddr *)&addr, address_length) < 0) {
         int e = errno;
         close(fd);
         return -e;

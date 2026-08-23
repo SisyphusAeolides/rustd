@@ -408,6 +408,33 @@ mod tests {
     }
 
     #[test]
+    fn opens_linux_abstract_unix_listener_from_at_address() {
+        let address = format!("@rustd-abstract-test-{}", std::process::id());
+        let fd = open_one(&ListenSpec {
+            kind: "Stream".to_owned(),
+            address: address.clone(),
+        })
+        .unwrap();
+        let mut socket_address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+        let mut length = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+        let result =
+            unsafe { libc::getsockname(fd, (&raw mut socket_address).cast(), &raw mut length) };
+        unsafe { libc::close(fd) };
+
+        assert_eq!(result, 0);
+        assert_eq!(
+            socket_address.sun_family,
+            libc::AF_UNIX as libc::sa_family_t
+        );
+        assert_eq!(socket_address.sun_path[0], 0);
+        let actual = socket_address.sun_path[1..address.len()]
+            .iter()
+            .map(|byte| *byte as u8)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, address.as_bytes()[1..]);
+    }
+
+    #[test]
     fn listener_starts_companion_only_after_traffic() {
         let root = tempfile::tempdir().unwrap();
         let socket_path = root.path().join("trigger.sock");

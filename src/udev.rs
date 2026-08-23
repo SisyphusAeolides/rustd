@@ -190,19 +190,53 @@ pub fn load_rules() -> io::Result<Vec<Rule>> {
 pub fn parse_rule_file(path: &Path) -> io::Result<Vec<Rule>> {
     let text = fs::read_to_string(path)?;
     let mut rules = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let line = line.trim();
+    let mut logical = String::new();
+    let mut logical_line = 0_usize;
+    for (index, physical) in text.lines().enumerate() {
+        let mut line = physical.trim();
+        if logical.is_empty() {
+            logical_line = index + 1;
+        }
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        match parse_rule_line(line) {
+        let trailing_backslashes = line
+            .as_bytes()
+            .iter()
+            .rev()
+            .take_while(|byte| **byte == b'\\')
+            .count();
+        let continued = trailing_backslashes % 2 == 1;
+        if continued {
+            line = line[..line.len() - 1].trim_end();
+        }
+        if !logical.is_empty() && !line.is_empty() {
+            logical.push(' ');
+        }
+        logical.push_str(line);
+        if continued {
+            continue;
+        }
+        match parse_rule_line(&logical) {
             Ok(tokens) if !tokens.is_empty() => rules.push(Rule {
                 tokens,
                 source: path.to_path_buf(),
-                line: index + 1,
+                line: logical_line,
             }),
             Ok(_) => {}
-            Err(error) => eprintln!("rustd-udevd: {}:{}: {error}", path.display(), index + 1),
+            Err(error) => eprintln!("rustd-udevd: {}:{}: {error}", path.display(), logical_line),
+        }
+        logical.clear();
+    }
+    if !logical.is_empty() {
+        match parse_rule_line(&logical) {
+            Ok(tokens) if !tokens.is_empty() => rules.push(Rule {
+                tokens,
+                source: path.to_path_buf(),
+                line: logical_line,
+            }),
+            Ok(_) => {}
+            Err(error) => eprintln!("rustd-udevd: {}:{}: {error}", path.display(), logical_line),
         }
     }
     Ok(rules)
@@ -785,6 +819,7 @@ fn resolve_group(value: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     #[test]
     fn parses_quoted_rule_assignments() {
         let rule = parse_rule_line(r#"ACTION=="add", SUBSYSTEM=="block", ENV{ID_FS_TYPE}="ext4", SYMLINK+="disk/by-id/foo bar""#).unwrap();
@@ -800,6 +835,22 @@ mod tests {
         assert_eq!(rule[0].key, "ATTRS");
         assert_eq!(rule[0].attr.as_deref(), Some("idVendor"));
         assert_eq!(rule[1].key, "GOTO");
+    }
+
+    #[test]
+    fn rule_files_join_backslash_continuations_into_one_logical_rule() {
+        let mut file = tempfile::NamedTempFile::new().unwrap();
+        writeln!(
+            file,
+            "ACTION==\"add\", \\\n+             SUBSYSTEM==\"block\", \\\n+             ENV{{RUSTD_CONTINUED}}=\"yes\""
+        )
+        .unwrap();
+
+        let rules = parse_rule_file(file.path()).unwrap();
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].line, 1);
+        assert_eq!(rules[0].tokens.len(), 3);
+        assert_eq!(rules[0].tokens[2].attr.as_deref(), Some("RUSTD_CONTINUED"));
     }
 
     #[test]
