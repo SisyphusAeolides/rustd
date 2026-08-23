@@ -6,10 +6,11 @@ import argparse
 import json
 import os
 from pathlib import Path
-import stat
 import sys
 import time
 from typing import Any
+
+from certification_evidence_io import read_secure_text
 
 REQUIRED_GATES = (
     "networkd.nonfatal",
@@ -78,19 +79,6 @@ def require_integer(
     return value
 
 
-def validate_secure_file(path: Path) -> None:
-    info = path.stat()
-    if not stat.S_ISREG(info.st_mode):
-        fail(f"resolver certification report is not a regular file: {path}")
-    if info.st_mode & 0o022:
-        fail(f"resolver certification report must not be group/world writable: {path}")
-    if info.st_uid != os.geteuid():
-        fail(
-            "resolver certification report owner uid "
-            f"{info.st_uid} does not match current uid {os.geteuid()}: {path}"
-        )
-
-
 def validate_record(
     record: dict[str, Any], *, expected_sha: str, now: int, max_age: int
 ) -> dict[str, Any]:
@@ -148,30 +136,29 @@ def main() -> int:
     if options.max_age_seconds <= 0:
         fail("max evidence age must be positive")
 
-    validate_secure_file(options.report)
+    contents = read_secure_text(options.report, "resolver certification report")
     now = int(time.time())
     records: dict[str, dict[str, Any]] = {}
-    with options.report.open("r", encoding="utf-8") as handle:
-        for number, raw in enumerate(handle, 1):
-            if not raw.strip():
-                continue
-            try:
-                decoded = json.loads(raw)
-            except json.JSONDecodeError as error:
-                fail(f"line {number}: invalid JSON: {error}")
-            if not isinstance(decoded, dict):
-                fail(f"line {number}: resolver evidence record must be an object")
-            gate = decoded.get("gate")
-            if gate not in REQUIRED_GATES:
-                continue
-            if gate in records:
-                fail(f"duplicate resolver gate: {gate}")
-            records[gate] = validate_record(
-                decoded,
-                expected_sha=expected_sha,
-                now=now,
-                max_age=options.max_age_seconds,
-            )
+    for number, raw in enumerate(contents.splitlines(), 1):
+        if not raw.strip():
+            continue
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError as error:
+            fail(f"line {number}: invalid JSON: {error}")
+        if not isinstance(decoded, dict):
+            fail(f"line {number}: resolver evidence record must be an object")
+        gate = decoded.get("gate")
+        if gate not in REQUIRED_GATES:
+            continue
+        if gate in records:
+            fail(f"duplicate resolver gate: {gate}")
+        records[gate] = validate_record(
+            decoded,
+            expected_sha=expected_sha,
+            now=now,
+            max_age=options.max_age_seconds,
+        )
 
     missing = [gate for gate in REQUIRED_GATES if gate not in records]
     if missing:

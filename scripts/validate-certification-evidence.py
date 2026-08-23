@@ -6,10 +6,11 @@ import argparse
 import json
 import os
 from pathlib import Path
-import stat
 import sys
 import time
 from typing import Any
+
+from certification_evidence_io import read_secure_text
 
 REQUIRED_GATES = (
     "fault.disk_full_sim",
@@ -63,18 +64,6 @@ def fail(message: str) -> "None":
 
 def valid_sha(value: str) -> bool:
     return len(value) == 40 and all(ch in "0123456789abcdef" for ch in value)
-
-
-def validate_secure_file(path: Path) -> None:
-    info = path.stat()
-    if not stat.S_ISREG(info.st_mode):
-        fail(f"evidence is not a regular file: {path}")
-    if info.st_mode & 0o022:
-        fail(f"evidence must not be group/world writable: {path}")
-    if info.st_uid != os.geteuid():
-        fail(
-            f"evidence owner uid {info.st_uid} does not match current uid {os.geteuid()}: {path}"
-        )
 
 
 def validate_record(
@@ -138,30 +127,29 @@ def main() -> int:
     if options.max_age_seconds <= 0:
         fail("max evidence age must be positive")
 
-    validate_secure_file(options.evidence)
+    contents = read_secure_text(options.evidence, "evidence")
     now = int(time.time())
     records: dict[str, dict[str, Any]] = {}
-    with options.evidence.open("r", encoding="utf-8") as handle:
-        for number, raw in enumerate(handle, 1):
-            if not raw.strip():
-                continue
-            try:
-                decoded = json.loads(raw)
-            except json.JSONDecodeError as error:
-                fail(f"line {number}: invalid JSON: {error}")
-            if not isinstance(decoded, dict):
-                fail(f"line {number}: evidence record must be an object")
-            record = validate_record(
-                decoded,
-                expected_rustd_sha=rustd_sha,
-                expected_resolved_sha=resolved_sha,
-                now=now,
-                max_age=options.max_age_seconds,
-            )
-            gate = record["gate"]
-            if gate in records:
-                fail(f"duplicate gate: {gate}")
-            records[gate] = record
+    for number, raw in enumerate(contents.splitlines(), 1):
+        if not raw.strip():
+            continue
+        try:
+            decoded = json.loads(raw)
+        except json.JSONDecodeError as error:
+            fail(f"line {number}: invalid JSON: {error}")
+        if not isinstance(decoded, dict):
+            fail(f"line {number}: evidence record must be an object")
+        record = validate_record(
+            decoded,
+            expected_rustd_sha=rustd_sha,
+            expected_resolved_sha=resolved_sha,
+            now=now,
+            max_age=options.max_age_seconds,
+        )
+        gate = record["gate"]
+        if gate in records:
+            fail(f"duplicate gate: {gate}")
+        records[gate] = record
 
     missing = [gate for gate in REQUIRED_GATES if gate not in records]
     if missing:

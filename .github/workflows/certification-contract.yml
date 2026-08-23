@@ -31,8 +31,10 @@ jobs:
           bash -n scripts/exclusive-cutover-gate.sh
           python3 -m py_compile \
             scripts/validate-certification-evidence.py \
+            scripts/validate-installed-certification-report.py \
             scripts/validate-performance-evidence.py \
             scripts/validate-resolver-certification-report.py \
+            scripts/certification_evidence_io.py \
             scripts/check-resolver-certification-contract.py
           python3 scripts/check-resolver-certification-contract.py
 

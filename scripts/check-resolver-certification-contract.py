@@ -101,6 +101,23 @@ def main() -> int:
     soak = next(record for record in candidate if record["gate"] == "resolver.resource_soak")
     soak["peak_rss_kib"] = int(soak["max_rss_kib"]) + 1
     validate(candidate, succeeds=False)
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        report = root / "report.jsonl"
+        report.write_text(
+            "".join(json.dumps(record, sort_keys=True) + "\n" for record in baseline),
+            encoding="utf-8",
+        )
+        link = root / "report-link.jsonl"
+        link.symlink_to(report)
+        result = subprocess.run(
+            [sys.executable, str(VALIDATOR), str(link), "--expected-resolved-sha", REVISION],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if result.returncode == 0:
+            raise SystemExit("resolver report validator followed a symlink")
     print("resolver certification importer contract: PASS")
     return 0
 

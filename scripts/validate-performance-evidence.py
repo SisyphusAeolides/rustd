@@ -6,9 +6,10 @@ import argparse
 import json
 import os
 from pathlib import Path
-import stat
 import sys
 from typing import Any
+
+from certification_evidence_io import read_secure_text
 
 REQUIRED_METRICS = (
     "boot",
@@ -50,18 +51,6 @@ def valid_sha(value: str) -> bool:
     return len(value) == 40 and all(ch in "0123456789abcdef" for ch in value)
 
 
-def validate_secure_file(path: Path) -> None:
-    info = path.stat()
-    if not stat.S_ISREG(info.st_mode):
-        fail(f"performance evidence is not a regular file: {path}")
-    if info.st_mode & 0o022:
-        fail(f"performance evidence must not be group/world writable: {path}")
-    if info.st_uid != os.geteuid():
-        fail(
-            f"performance evidence owner uid {info.st_uid} does not match current uid {os.geteuid()}: {path}"
-        )
-
-
 def number(value: Any, name: str) -> float:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         fail(f"{name} must be numeric")
@@ -77,8 +66,7 @@ def main() -> int:
     if options.required_improvement_pct <= 0 or options.required_improvement_pct >= 100:
         fail("required improvement percentage must be between 0 and 100")
 
-    validate_secure_file(options.evidence)
-    evidence = json.loads(options.evidence.read_text(encoding="utf-8"))
+    evidence = json.loads(read_secure_text(options.evidence, "performance evidence"))
     if not isinstance(evidence, dict):
         fail("performance evidence must be a JSON object")
     if evidence.get("rustd_sha") != rustd_sha:
