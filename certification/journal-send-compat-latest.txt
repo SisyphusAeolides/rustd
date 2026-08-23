@@ -1,6 +1,6 @@
 schema=rustd-journal-send-compat-v1
 status=pass
-tested_sha=b8ffc0b85274a9101df3cec9638a4717c3e8151b
+tested_sha=3cd227fb1913cf6eeda3779247c143532e7b7daf
 behavior_outcome=success
 varargs=null-terminated-fields
 location=code-file-line-func
