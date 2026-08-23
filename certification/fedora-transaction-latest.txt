@@ -1,6 +1,6 @@
 schema=rustd-fedora-transaction-v1
 status=failure
-tested_sha=8acd3fb3ea2138d7a8ecccf06da289fb2f48d9e8
+tested_sha=8be10fadee5482cb53f2b293d4f1edae4584fd5f
 systemctl=rustd-backed
 update_helper=rustd-backed
 tmpfiles=rustd-backed
