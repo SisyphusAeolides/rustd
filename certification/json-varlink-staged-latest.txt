@@ -1,6 +1,6 @@
 schema=rustd-json-varlink-staged-v1
 status=pass
-tested_sha=2e57d39ad7c08915410293fe35beec9dcf64de1a
+tested_sha=8acd3fb3ea2138d7a8ecccf06da289fb2f48d9e8
 behavior_outcome=success
 backend=json-c+af-unix
 systemd_headers=none
