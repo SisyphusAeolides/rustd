@@ -1,6 +1,6 @@
 schema=rustd-fedora-transaction-v1
-status=failure
-tested_sha=08a154a48701d7d0fefe3a2e00327d637a085544
+status=pass
+tested_sha=f9b3744420871d671ffaffcc14b2dfbf1192cde4
 systemctl=rustd-backed
 update_helper=rustd-backed
 tmpfiles=rustd-backed
@@ -8,6 +8,3 @@ sysusers=rustd-backed
 sysctl=rustd-backed
 binfmt=rustd-backed
 udevadm=rustd-backed
---- tail ---
-dist/fedora/compat/rustd-shutdown.c: line 10: syntax error near unexpected token `('
-dist/fedora/compat/rustd-shutdown.c: line 10: `static const char *program_name(const char *path) {'
