@@ -107,6 +107,9 @@ compat_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
     -name 'rustd-fedora-compat-*.rpm' ! -name '*.src.rpm' | head -1)
 [[ -n $compat_rpm ]]
 compat_provides=$(rpm -qp --provides "$compat_rpm")
+compat_requires=$(rpm -qp --requires "$compat_rpm")
+grep -Fxq /bin/bash <<<"$compat_requires"
+! grep -Fxq /usr/bin/bash <<<"$compat_requires"
 for capability in \
     "systemd = $systemd_evr" \
     "systemd-udev = $systemd_evr" \
@@ -124,6 +127,13 @@ grep -Eq "^systemd-udev\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
 grep -Eq "^systemd-pam\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
 grep -Eq "^udev\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
 grep -Fxq "udev = $systemd_evr" <<<"$compat_provides"
+
+cutover_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
+    -name 'rustd-cutover-tools-*.rpm' ! -name '*-debug*' ! -name '*.src.rpm' | head -1)
+[[ -n $cutover_rpm ]]
+cutover_requires=$(rpm -qp --requires "$cutover_rpm")
+grep -Fxq /bin/bash <<<"$cutover_requires"
+! grep -Fxq /usr/bin/bash <<<"$cutover_requires"
 
 resolved_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
     -name 'rustd-resolved-*.rpm' ! -name '*-nss-*' ! -name '*-debug*' \

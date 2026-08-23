@@ -3,6 +3,10 @@
 # automatic debuginfo split so platforms whose macros emit an empty
 # debugsource file list (Rocky/RHEL) do not reject the otherwise valid RPM.
 %global debug_package %{nil}
+# EL/RHEL's shebang mangler rewrites /bin/bash to /usr/bin/bash even though
+# the bash RPM provides only /bin/bash. Preserve the dependency that the
+# distribution can actually satisfy.
+%global __brp_mangle_shebangs %{nil}
 
 Name:           rustd-fedora-compat
 Version:        0.1.2

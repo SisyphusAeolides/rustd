@@ -1,3 +1,8 @@
+# EL/RHEL's shebang mangler rewrites /bin/bash to /usr/bin/bash even though
+# the bash RPM provides only /bin/bash. Preserve the cutover tool's satisfiable
+# interpreter dependency.
+%global __brp_mangle_shebangs %{nil}
+
 Name:           rustd
 Version:        0.1.2
 Release:        1%{?dist}

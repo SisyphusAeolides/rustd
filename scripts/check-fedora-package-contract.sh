@@ -33,6 +33,8 @@ for frontend in dist/fedora/compat/*; do
     test "$(head -n1 "$frontend")" = '#!/bin/bash'
 done
 ! grep -R -n -F '#!/usr/bin/bash' dist/fedora/compat
+grep -Fq '%global __brp_mangle_shebangs %{nil}' dist/fedora/rustd.spec
+grep -Fq '%global __brp_mangle_shebangs %{nil}' dist/fedora/rustd-fedora-compat.spec
 
 mkdir -p "$WORK/selinux"
 cp dist/fedora/selinux/rustd_fedora.te "$WORK/selinux/"
