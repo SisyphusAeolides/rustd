@@ -8,7 +8,7 @@ use rustd::udev::{
 };
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::mem;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -44,9 +44,7 @@ fn main() -> anyhow::Result<()> {
     // RustD's native rule engine does not resolve owner/group names while
     // handling kernel events, so every accepted compatibility mode is safe.
     let _ = arguments.resolve_names;
-    if arguments.daemon {
-        daemonize()?;
-    }
+    let readiness = if arguments.daemon { daemonize()? } else { None };
 
     fs::create_dir_all("/run/udev/data")?;
     let listener = bind_control_socket()?;
@@ -55,6 +53,10 @@ fn main() -> anyhow::Result<()> {
         eprintln!("rustd-udevd: failed to load rules: {error}");
         Vec::new()
     });
+    if let Some(readiness) = readiness {
+        let mut readiness = fs::File::from(readiness);
+        readiness.write_all(b"1")?;
+    }
     let mut global_properties = BTreeMap::new();
     let running = AtomicBool::new(true);
     let stopped = AtomicBool::new(false);
@@ -131,14 +133,31 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn daemonize() -> io::Result<()> {
+fn daemonize() -> io::Result<Option<OwnedFd>> {
+    let mut readiness = [0; 2];
+    if unsafe { libc::pipe2(readiness.as_mut_ptr(), libc::O_CLOEXEC) } < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let read_end = unsafe { OwnedFd::from_raw_fd(readiness[0]) };
+    let write_end = unsafe { OwnedFd::from_raw_fd(readiness[1]) };
+
     let first = unsafe { libc::fork() };
     if first < 0 {
         return Err(io::Error::last_os_error());
     }
     if first > 0 {
-        unsafe { libc::_exit(0) };
+        drop(write_end);
+        let mut ready = 0_u8;
+        let count = unsafe {
+            libc::read(
+                read_end.as_raw_fd(),
+                std::ptr::addr_of_mut!(ready).cast(),
+                1,
+            )
+        };
+        unsafe { libc::_exit(i32::from(count != 1 || ready != b'1')) };
     }
+    drop(read_end);
 
     if unsafe { libc::setsid() } < 0 {
         return Err(io::Error::last_os_error());
@@ -149,6 +168,7 @@ fn daemonize() -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     if second > 0 {
+        drop(write_end);
         unsafe { libc::_exit(0) };
     }
 
@@ -162,7 +182,7 @@ fn daemonize() -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
     }
-    Ok(())
+    Ok(Some(write_end))
 }
 
 fn process_device(
