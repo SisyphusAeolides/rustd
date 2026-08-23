@@ -53,10 +53,17 @@ grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]memstrack([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
 for name in halt poweroff reboot shutdown telinit runlevel; do
-    ln -s rustd-shutdown "rustd-shutdown-test-$name"
-    test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./rustd-shutdown-test-$name ${name/telinit/6} 2>/dev/null || true)" != ""
-    rm -f "rustd-shutdown-test-$name"
+    ln -s rustd-shutdown "$name"
 done
+test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./halt)" = poweroff
+test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./poweroff)" = poweroff
+test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./reboot)" = reboot
+test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./shutdown -r now)" = reboot
+test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./shutdown -P now)" = poweroff
+test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./telinit 6)" = reboot
+test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./telinit 0)" = poweroff
+test "$(RUSTD_SHUTDOWN_DRY_RUN=1 ./runlevel)" = 'N N'
+rm -f halt poweroff reboot shutdown telinit runlevel
 
 %install
 install -d %{buildroot}%{_bindir} \
