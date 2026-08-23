@@ -9,6 +9,10 @@
 //! 2. `/run/rustd/system/`
 //! 3. `/usr/local/lib/rustd/system/`
 //! 4. `/usr/lib/rustd/system/`
+//! 5. `/etc/systemd/system/`
+//! 6. `/run/systemd/system/`
+//! 7. `/usr/local/lib/systemd/system/`
+//! 8. `/usr/lib/systemd/system/`
 
 use std::ffi::OsStr;
 use std::fmt::Write as _;
@@ -150,6 +154,10 @@ fn standard_unit_search_dirs() -> Vec<PathBuf> {
         PathBuf::from("/run/rustd/system"),
         PathBuf::from("/usr/local/lib/rustd/system"),
         PathBuf::from("/usr/lib/rustd/system"),
+        PathBuf::from("/etc/systemd/system"),
+        PathBuf::from("/run/systemd/system"),
+        PathBuf::from("/usr/local/lib/systemd/system"),
+        PathBuf::from("/usr/lib/systemd/system"),
     ]
 }
 
@@ -1005,6 +1013,14 @@ mod tests {
             Some(Path::new("/tmp/units"))
         );
         assert!(dirs.contains(&PathBuf::from("/usr/lib/rustd/system")));
+        assert!(dirs.contains(&PathBuf::from("/usr/lib/systemd/system")));
+        assert!(
+            dirs.iter()
+                .position(|path| path == Path::new("/usr/lib/rustd/system"))
+                < dirs
+                    .iter()
+                    .position(|path| path == Path::new("/usr/lib/systemd/system"))
+        );
     }
 
     #[test]

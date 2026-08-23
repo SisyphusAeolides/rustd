@@ -4,7 +4,7 @@ After=basic.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/agetty --noclear console linux
+ExecStart=/usr/sbin/agetty --noclear console linux
 Restart=always
 TTYPath=/dev/console
 StandardInput=tty

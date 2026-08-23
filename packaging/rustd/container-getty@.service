@@ -4,7 +4,7 @@ After=basic.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/agetty -L /dev/pts/%I 115200,38400,9600 vt220
+ExecStart=/usr/sbin/agetty -L /dev/pts/%I 115200,38400,9600 vt220
 Restart=always
 TTYPath=/dev/pts/%I
 StandardInput=tty
