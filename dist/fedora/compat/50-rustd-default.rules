@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Baseline device ownership and access policy for RustD installations.
+# These rules intentionally apply to both add events and coldplug change events.
+
+KERNEL=="null|zero|full|random|urandom", MODE="0666"
+KERNEL=="ptmx|tty", GROUP="tty", MODE="0666"
+SUBSYSTEM=="tty", KERNEL=="tty[0-9]*|hvc[0-9]*", GROUP="tty", MODE="0620"
+SUBSYSTEM=="tty", KERNEL=="tty[A-Z]*[0-9]*", GROUP="dialout"
+
+SUBSYSTEM=="mem", KERNEL=="mem|kmem|port", GROUP="kmem", MODE="0640"
+SUBSYSTEM=="input", GROUP="input"
+SUBSYSTEM=="video4linux|graphics|dvb|media|cec", GROUP="video"
+SUBSYSTEM=="drm", KERNEL!="renderD*", GROUP="video"
+SUBSYSTEM=="drm", KERNEL=="renderD*", GROUP="render", MODE="0666"
+SUBSYSTEM=="kfd|accel", GROUP="render", MODE="0666"
+SUBSYSTEM=="sound", GROUP="audio"
+
+SUBSYSTEM=="block", GROUP="disk"
+SUBSYSTEM=="block", KERNEL=="sr[0-9]*", GROUP="cdrom"
+SUBSYSTEM=="scsi_generic", GROUP="disk"
+SUBSYSTEM=="scsi_tape", GROUP="tape"
+
+KERNEL=="rfkill", MODE="0664"
+KERNEL=="tun|fuse|kvm|vfio|vsock", MODE="0666"
+KERNEL=="kvm|vhost-vsock|vhost-net|udmabuf", GROUP="kvm"

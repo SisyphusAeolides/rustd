@@ -162,4 +162,5 @@ jobs:
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib64/libnss_rustd_dns.so.2)" = rustd-resolved-nss
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/bin/systemctl)" = rustd-fedora-compat
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib/systemd/systemd-udevd)" = rustd-fedora-compat
+          test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/lib/udev/rules.d/50-rustd-default.rules)" = rustd-fedora-compat
           test "$(readlink "$root/usr/sbin/init")" = ../lib/rustd/rustd

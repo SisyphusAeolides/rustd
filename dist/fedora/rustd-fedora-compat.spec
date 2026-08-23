@@ -92,6 +92,8 @@ install -m0755 dist/fedora/compat/udevadm %{buildroot}%{_bindir}/udevadm
 install -m0755 dist/fedora/compat/systemd-update-helper %{buildroot}%{_prefix}/lib/systemd/systemd-update-helper
 install -m0755 dist/fedora/compat/systemd-sysctl %{buildroot}%{_prefix}/lib/systemd/systemd-sysctl
 install -m0755 dist/fedora/compat/systemd-binfmt %{buildroot}%{_prefix}/lib/systemd/systemd-binfmt
+install -m0644 dist/fedora/compat/50-rustd-default.rules \
+    %{buildroot}%{_prefix}/lib/udev/rules.d/50-rustd-default.rules
 install -m0644 dist/fedora/compat/80-drivers.rules \
     %{buildroot}%{_prefix}/lib/udev/rules.d/80-drivers.rules
 ln -s ../rustd/rustd-udevd %{buildroot}%{_prefix}/lib/systemd/systemd-udevd
@@ -144,6 +146,7 @@ grep -R -Fq 'pam_rustd.so' /etc/pam.d \
 %{_prefix}/lib/systemd/systemd-sysctl
 %{_prefix}/lib/systemd/systemd-binfmt
 %{_prefix}/lib/systemd/systemd-udevd
+%{_prefix}/lib/udev/rules.d/50-rustd-default.rules
 %{_prefix}/lib/udev/rules.d/80-drivers.rules
 %{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
 

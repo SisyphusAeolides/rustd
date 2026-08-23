@@ -716,10 +716,7 @@ fn create_node(device: &Device, node: &str) -> io::Result<()> {
     if result != 0 && io::Error::last_os_error().kind() != io::ErrorKind::AlreadyExists {
         return Err(io::Error::last_os_error());
     }
-    fs::set_permissions(
-        path,
-        fs::Permissions::from_mode(device.mode.unwrap_or(0o660)),
-    )?;
+    apply_node_permissions(path, device.mode, result == 0)?;
     let uid = device
         .owner
         .as_deref()
@@ -732,6 +729,20 @@ fn create_node(device: &Device, node: &str) -> io::Result<()> {
         .unwrap_or(u32::MAX);
     if uid != u32::MAX || gid != u32::MAX {
         let _ = unsafe { libc::chown(c_path.as_ptr(), uid, gid) };
+    }
+    Ok(())
+}
+
+fn apply_node_permissions(
+    path: &Path,
+    explicit_mode: Option<u32>,
+    created: bool,
+) -> io::Result<()> {
+    if created || explicit_mode.is_some() {
+        fs::set_permissions(
+            path,
+            fs::Permissions::from_mode(explicit_mode.unwrap_or(0o660)),
+        )?;
     }
     Ok(())
 }
@@ -851,6 +862,57 @@ mod tests {
         assert_eq!(rules[0].line, 1);
         assert_eq!(rules[0].tokens.len(), 3);
         assert_eq!(rules[0].tokens[2].attr.as_deref(), Some("RUSTD_CONTINUED"));
+    }
+
+    #[test]
+    fn existing_device_nodes_keep_their_mode_without_an_explicit_rule() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        fs::set_permissions(file.path(), fs::Permissions::from_mode(0o666)).unwrap();
+
+        apply_node_permissions(file.path(), None, false).unwrap();
+        assert_eq!(
+            fs::metadata(file.path()).unwrap().permissions().mode() & 0o777,
+            0o666
+        );
+
+        apply_node_permissions(file.path(), Some(0o640), false).unwrap();
+        assert_eq!(
+            fs::metadata(file.path()).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+
+        apply_node_permissions(file.path(), None, true).unwrap();
+        assert_eq!(
+            fs::metadata(file.path()).unwrap().permissions().mode() & 0o777,
+            0o660
+        );
+    }
+
+    #[test]
+    fn packaged_default_rules_cover_coldplug_core_and_storage_nodes() {
+        let rules = parse_rule_file(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("dist/fedora/compat/50-rustd-default.rules")
+                .as_path(),
+        )
+        .unwrap();
+        let mut null = Device {
+            action: "change".into(),
+            kernel: "null".into(),
+            subsystem: "mem".into(),
+            ..Device::default()
+        };
+        apply_rules(&rules, &mut null);
+        assert_eq!(null.mode, Some(0o666));
+
+        let mut disk = Device {
+            action: "change".into(),
+            kernel: "vda".into(),
+            subsystem: "block".into(),
+            ..Device::default()
+        };
+        apply_rules(&rules, &mut disk);
+        assert_eq!(disk.group.as_deref(), Some("disk"));
     }
 
     #[test]
