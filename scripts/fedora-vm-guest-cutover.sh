@@ -82,7 +82,8 @@ dnf -y \
 # autoremove to prune unrelated Fedora packages.
 mapfile -t residual < <(rpm -qa --qf '%{NAME}\n' | grep -E '^systemd($|-)' | sort -u || true)
 if ((${#residual[@]})); then
-    dnf -y --setopt=protected_packages= remove --no-autoremove "${residual[@]}"
+    dnf -y --setopt=protected_packages= \
+        --setopt=clean_requirements_on_remove=False remove "${residual[@]}"
 fi
 
 dnf -q check

@@ -132,7 +132,8 @@ jobs:
               | grep -E '^systemd($|-)' | sort -u || true
           )
           if ((${#residual[@]})); then
-            dnf -y "${common[@]}" remove --no-autoremove "${residual[@]}"
+            dnf -y "${common[@]}" \
+              --setopt=clean_requirements_on_remove=False remove "${residual[@]}"
           fi
           dnf -q "${common[@]}" check
 
