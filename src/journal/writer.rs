@@ -8,8 +8,11 @@
 //! Upstream reference: `src/journal/journal-file.c` (v261).
 
 use std::ffi::CString;
+use std::io;
 use std::os::unix::io::RawFd;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ffi::journal::{
     rustd_journal_file_append, rustd_journal_file_close, rustd_journal_file_open, SdJournalField,
@@ -42,22 +45,98 @@ impl JournalWriter {
     /// Returns an error if `path` cannot be converted to a C string or if
     /// [`rustd_journal_file_open`] returns a negative errno.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
-        let c_path = CString::new(path.as_os_str().as_encoded_bytes())
-            .map_err(|e| anyhow::anyhow!("journal path contains NUL: {e}"))?;
-        // Safety: c_path is valid for the duration of the call.
-        let fd = unsafe { rustd_journal_file_open(c_path.as_ptr()) };
-        if fd < 0 {
-            return Err(anyhow::anyhow!(
-                "rustd_journal_file_open({}) failed: errno {}",
-                path.display(),
-                -fd,
-            ));
-        }
+        let fd = open_fd(path)?;
         Ok(Self {
             fd,
             path: path.to_owned(),
             bytes_written: 0,
         })
+    }
+
+    /// Open a journal, quarantining a structurally damaged active file once.
+    ///
+    /// Permission, capacity, and other operational errors remain fatal. Only
+    /// errors that identify invalid journal contents cause the active file to
+    /// be moved aside and replaced.
+    ///
+    /// # Errors
+    /// Returns an error if the initial failure is not corruption-related, the
+    /// damaged file cannot be quarantined, or the replacement cannot be opened.
+    pub fn open_resilient(path: &Path) -> anyhow::Result<Self> {
+        match Self::open(path) {
+            Ok(writer) => Ok(writer),
+            Err(error) => {
+                let Some(errno) = journal_errno(&error) else {
+                    return Err(error);
+                };
+                if !is_corruption_errno(errno) || !path.exists() {
+                    return Err(error);
+                }
+                let quarantined = quarantine_path(path)?;
+                Self::open(path).map_err(|replacement| {
+                    anyhow::anyhow!(
+                        "quarantined damaged journal {} as {} after errno {errno}, but replacement open failed: {replacement}",
+                        path.display(),
+                        quarantined.display()
+                    )
+                })
+            }
+        }
+    }
+
+    fn reopen_after_corruption(&mut self, errno: i32) -> anyhow::Result<PathBuf> {
+        let _ = self.close_fd();
+        let quarantined = quarantine_path(&self.path).map_err(|error| {
+            anyhow::anyhow!(
+                "journal append failed with errno {errno}, and {} could not be quarantined: {error}",
+                self.path.display()
+            )
+        })?;
+        self.fd = open_fd(&self.path).map_err(|error| {
+            anyhow::anyhow!(
+                "quarantined damaged journal {} as {}, but replacement open failed: {error}",
+                self.path.display(),
+                quarantined.display()
+            )
+        })?;
+        self.bytes_written = 0;
+        Ok(quarantined)
+    }
+
+    fn append_fields(&self, fields: &[SdJournalField], entry: &JournalEntry) -> libc::c_int {
+        // Safety: field pointers are owned by the caller for this call and the
+        // writer fd remains open for the duration of the append.
+        unsafe {
+            rustd_journal_file_append(
+                self.fd,
+                fields.as_ptr(),
+                fields.len(),
+                entry.realtime_usec,
+                entry.seqnum,
+            )
+        }
+    }
+
+    fn append_error(errno: i32) -> anyhow::Error {
+        anyhow::anyhow!("rustd_journal_file_append failed: errno {errno}")
+    }
+
+    fn open_error(path: &Path, errno: i32) -> anyhow::Error {
+        anyhow::Error::new(io::Error::from_raw_os_error(errno)).context(format!(
+            "rustd_journal_file_open({}) failed",
+            path.display()
+        ))
+    }
+
+    fn checked_open(path: &Path) -> anyhow::Result<RawFd> {
+        let c_path = CString::new(path.as_os_str().as_encoded_bytes())
+            .map_err(|e| anyhow::anyhow!("journal path contains NUL: {e}"))?;
+        // Safety: c_path is valid for the duration of the call.
+        let fd = unsafe { rustd_journal_file_open(c_path.as_ptr()) };
+        if fd < 0 {
+            return Err(Self::open_error(path, -fd));
+        }
+        Ok(fd)
     }
 
     /// Append a single entry to the journal file.
@@ -84,22 +163,21 @@ impl JournalWriter {
             ckeys.push(ckey);
         }
 
-        // Safety: c_fields[i].key points into ckeys[i], which is alive here.
-        //         c_fields[i].value points into entry.fields values, alive here.
-        let rc = unsafe {
-            rustd_journal_file_append(
-                self.fd,
-                c_fields.as_ptr(),
-                c_fields.len(),
-                entry.realtime_usec,
-                entry.seqnum,
-            )
-        };
+        let mut rc = self.append_fields(&c_fields, entry);
         if rc < 0 {
-            return Err(anyhow::anyhow!(
-                "rustd_journal_file_append failed: errno {}",
-                -rc
-            ));
+            let errno = -rc;
+            if !is_corruption_errno(errno) {
+                return Err(Self::append_error(errno));
+            }
+            let quarantined = self.reopen_after_corruption(errno)?;
+            rc = self.append_fields(&c_fields, entry);
+            if rc < 0 {
+                return Err(anyhow::anyhow!(
+                    "journal append retry failed with errno {} after quarantining {}",
+                    -rc,
+                    quarantined.display()
+                ));
+            }
         }
 
         // Coarse byte estimate matching the upstream rotation heuristic.
@@ -150,6 +228,67 @@ impl JournalWriter {
     }
 }
 
+fn open_fd(path: &Path) -> anyhow::Result<RawFd> {
+    JournalWriter::checked_open(path)
+}
+
+fn is_corruption_errno(errno: i32) -> bool {
+    matches!(
+        errno,
+        libc::EIO
+            | libc::EBADMSG
+            | libc::ENODATA
+            | libc::EPROTONOSUPPORT
+            | libc::EHOSTDOWN
+            | libc::ESTALE
+            | libc::EINVAL
+    )
+}
+
+fn journal_errno(error: &anyhow::Error) -> Option<i32> {
+    error
+        .chain()
+        .find_map(|cause| cause.downcast_ref::<io::Error>())
+        .and_then(io::Error::raw_os_error)
+}
+
+fn quarantine_path(path: &Path) -> anyhow::Result<PathBuf> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let parent = path.parent().ok_or_else(|| {
+        anyhow::anyhow!("journal path {} has no parent directory", path.display())
+    })?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("journal path {} has no file name", path.display()))?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    for _ in 0..1024 {
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(
+            "{}.corrupt-{timestamp}-{}-{sequence}",
+            name.to_string_lossy(),
+            std::process::id()
+        ));
+        if candidate.exists() {
+            continue;
+        }
+        std::fs::rename(path, &candidate).map_err(|error| {
+            anyhow::anyhow!(
+                "move damaged journal {} to {}: {error}",
+                path.display(),
+                candidate.display()
+            )
+        })?;
+        return Ok(candidate);
+    }
+    anyhow::bail!(
+        "could not allocate a quarantine name for damaged journal {}",
+        path.display()
+    )
+}
+
 impl Drop for JournalWriter {
     fn drop(&mut self) {
         if self.fd >= 0 {
@@ -157,5 +296,63 @@ impl Drop for JournalWriter {
             unsafe { rustd_journal_file_close(self.fd) };
             self.fd = -1;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recovery_is_limited_to_structural_failures() {
+        for errno in [
+            libc::EIO,
+            libc::EBADMSG,
+            libc::ENODATA,
+            libc::EPROTONOSUPPORT,
+            libc::EHOSTDOWN,
+            libc::ESTALE,
+            libc::EINVAL,
+        ] {
+            assert!(is_corruption_errno(errno), "errno {errno}");
+        }
+        for errno in [
+            libc::EACCES,
+            libc::EPERM,
+            libc::ENOSPC,
+            libc::EDQUOT,
+            libc::EROFS,
+            libc::EMFILE,
+        ] {
+            assert!(!is_corruption_errno(errno), "errno {errno}");
+        }
+    }
+
+    #[test]
+    fn resilient_open_quarantines_invalid_active_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("system.journal");
+        std::fs::write(&path, b"not a journal").unwrap();
+
+        let mut writer = JournalWriter::open_resilient(&path).unwrap();
+        writer
+            .append(&JournalEntry::message("probe.service", 6, "recovered"))
+            .unwrap();
+        writer.close().unwrap();
+
+        assert!(path.is_file());
+        let quarantined: Vec<_> = std::fs::read_dir(directory.path())
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|candidate| {
+                candidate.file_name().is_some_and(|name| {
+                    name.to_string_lossy()
+                        .starts_with("system.journal.corrupt-")
+                })
+            })
+            .collect();
+        assert_eq!(quarantined.len(), 1);
+        assert_eq!(std::fs::read(&quarantined[0]).unwrap(), b"not a journal");
     }
 }

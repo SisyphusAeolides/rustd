@@ -91,7 +91,7 @@ impl JournalDaemon {
         prepare_directory(journal_parent)?;
 
         let ring = Arc::new(Mutex::new(EntryRing::new(config.ring_capacity)));
-        let writer = JournalWriter::open(&journal_path)?;
+        let writer = JournalWriter::open_resilient(&journal_path)?;
         let sink = JournalSink::with_writer(ring, writer);
 
         let receiver_path = config.runtime_directory.join("socket");
