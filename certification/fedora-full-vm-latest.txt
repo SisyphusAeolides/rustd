@@ -1,10 +1,10 @@
 schema=rustd-fedora-full-vm-v2
 status=failure
 conclusion=failure
-tested_sha=33e18bd84c6ddd9c08a66afbdd957688f68e1fa5
+tested_sha=188b31af47d541aa9fb1e8e1ecbe52d00f6edc62
 resolved_sha=4afd70442bf3848d561bc3367c01eb2d7a591237
-abi_status=pass
-run_id=32659692349
+abi_status=failure
+run_id=32662458533
 fedora_release=44
 image=Fedora-Cloud-Base-Generic-44-1.7.x86_64.qcow2
 required.systemd_rpms=zero
