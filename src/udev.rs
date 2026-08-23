@@ -413,11 +413,7 @@ fn run_builtin(spec: &str, device: &mut Device) {
                     .args(["-o", "export", "-p", &node])
                     .output()
                 {
-                    for line in String::from_utf8_lossy(&output.stdout).lines() {
-                        if let Some((key, value)) = line.split_once('=') {
-                            device.properties.insert(key.to_string(), value.to_string());
-                        }
-                    }
+                    import_blkid_export(&String::from_utf8_lossy(&output.stdout), device);
                 }
             }
         }
@@ -458,6 +454,52 @@ fn run_builtin(spec: &str, device: &mut Device) {
         }
         _ => {}
     }
+}
+
+fn import_blkid_export(export: &str, device: &mut Device) {
+    for line in export.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let property = match key {
+            "UUID" => Some("ID_FS_UUID"),
+            "UUID_SUB" => Some("ID_FS_UUID_SUB"),
+            "LABEL" => Some("ID_FS_LABEL"),
+            "TYPE" => Some("ID_FS_TYPE"),
+            "USAGE" => Some("ID_FS_USAGE"),
+            "VERSION" => Some("ID_FS_VERSION"),
+            "PTTYPE" => Some("ID_PART_TABLE_TYPE"),
+            "PTUUID" => Some("ID_PART_TABLE_UUID"),
+            _ => None,
+        };
+        if let Some(property) = property {
+            device
+                .properties
+                .insert(property.to_string(), value.to_string());
+            if matches!(key, "UUID" | "UUID_SUB" | "LABEL") {
+                device
+                    .properties
+                    .insert(format!("{property}_ENC"), udev_escape(value));
+            }
+        } else if let Some(suffix) = key.strip_prefix("PART_ENTRY_") {
+            device
+                .properties
+                .insert(format!("ID_PART_ENTRY_{suffix}"), value.to_string());
+        }
+    }
+}
+
+fn udev_escape(value: &str) -> String {
+    let mut escaped = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b'+') {
+            escaped.push(char::from(byte));
+        } else {
+            use std::fmt::Write as _;
+            let _ = write!(escaped, "\\x{byte:02x}");
+        }
+    }
+    escaped
 }
 
 fn command_output(command: &str, device: &Device) -> io::Result<std::process::Output> {
@@ -691,5 +733,24 @@ mod tests {
         assert_eq!(rule[0].key, "ATTRS");
         assert_eq!(rule[0].attr.as_deref(), Some("idVendor"));
         assert_eq!(rule[1].key, "GOTO");
+    }
+
+    #[test]
+    fn blkid_export_uses_udev_property_names() {
+        let mut device = Device::default();
+        import_blkid_export(
+            "DEVNAME=/dev/vda1\nUUID=01582c00-2b49-4e9b-86ee-75f418a4b720\nLABEL=root fs\nTYPE=xfs\nUSAGE=filesystem\nPTTYPE=gpt\nPART_ENTRY_NUMBER=1\n",
+            &mut device,
+        );
+        assert_eq!(device.property("ID_FS_TYPE"), "xfs");
+        assert_eq!(device.property("ID_FS_USAGE"), "filesystem");
+        assert_eq!(
+            device.property("ID_FS_UUID_ENC"),
+            "01582c00-2b49-4e9b-86ee-75f418a4b720"
+        );
+        assert_eq!(device.property("ID_FS_LABEL_ENC"), "root\\x20fs");
+        assert_eq!(device.property("ID_PART_TABLE_TYPE"), "gpt");
+        assert_eq!(device.property("ID_PART_ENTRY_NUMBER"), "1");
+        assert!(device.property("DEVNAME").is_empty());
     }
 }
