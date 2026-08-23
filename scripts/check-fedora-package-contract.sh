@@ -48,6 +48,7 @@ for capability in \
     'systemd-pam%{?_isa} = %{systemd_compat_evr}' \
     'systemd-units = %{systemd_compat_evr}' \
     'systemd-sysv = 206' \
+    'udev = %{systemd_compat_evr}' \
     'udev%{?_isa} = %{systemd_compat_evr}'; do
     grep -Fq "Provides:       $capability" dist/fedora/rustd-fedora-compat.spec
 done
