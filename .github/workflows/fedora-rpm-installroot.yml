@@ -90,6 +90,7 @@ jobs:
           common=(
             --installroot="$root"
             --releasever=44
+            --use-host-config
             --setopt=install_weak_deps=False
             --setopt=keepcache=False
             --repofrompath=rustd,"file://$GITHUB_WORKSPACE/target/fedora-rpms"
