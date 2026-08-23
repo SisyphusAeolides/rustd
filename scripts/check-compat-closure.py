@@ -78,6 +78,12 @@ def main() -> int:
     parser.add_argument("--report", required=True, type=Path)
     parser.add_argument("--libsystemd", required=True, type=Path)
     parser.add_argument("--libudev", required=True, type=Path)
+    parser.add_argument(
+        "--repository-root",
+        type=Path,
+        default=Path(__file__).resolve().parents[1],
+        help="source tree used to reject behaviorally unsupported exports",
+    )
     args = parser.parse_args()
 
     report = json.loads(args.report.read_text(encoding="utf-8"))
@@ -100,8 +106,7 @@ def main() -> int:
         and not ("@" not in symbol and unversioned(symbol) in provided_bases)
     )
 
-    repository_root = Path(__file__).resolve().parents[1]
-    unsupported_exports = unsupported_symbols(repository_root)
+    unsupported_exports = unsupported_symbols(args.repository_root)
     unsupported = sorted(
         symbol for symbol in required if unversioned(symbol) in unsupported_exports
     )

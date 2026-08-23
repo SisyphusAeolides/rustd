@@ -215,6 +215,10 @@ jobs:
           tar -C target/fedora-rpms -cf - . | "${ssh_cmd[@]}" 'tar -C /var/tmp/rustd-rpms -xf -'
           tar -cf - scripts/audit-systemd-elf-consumers.py scripts/check-compat-closure.py \
             | "${ssh_cmd[@]}" 'sudo tar -C /var/tmp -xf -'
+          tar -cf - libs/compat/systemd.c libs/compat/journal_send_impl.c \
+            libs/compat/sd_bus_impl.c libs/compat/sd_json_varlink_impl.c \
+            libs/compat/sd_varlink_idl_impl.c libs/compat/udev.c \
+            | "${ssh_cmd[@]}" 'sudo mkdir -p /var/tmp/rustd-source && sudo tar -C /var/tmp/rustd-source -xf -'
           cat scripts/fedora-vm-guest-cutover.sh | "${ssh_cmd[@]}" 'sudo bash -s'
           "${ssh_cmd[@]}" 'cat /var/tmp/rustd-initrd-modules.txt' > "$RUNNER_TEMP/rustd-initrd-modules.txt"
           "${ssh_cmd[@]}" 'grep -E "systemd-udevd|usr/lib/rustd/rustd-udevd" /var/tmp/rustd-lsinitrd.txt || true' > "$RUNNER_TEMP/rustd-initrd-udev.txt"

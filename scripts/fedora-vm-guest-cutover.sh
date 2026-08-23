@@ -155,6 +155,7 @@ test "$(rpm -qf --qf '%{NAME}\n' "$compat_systemd")" = rustd-compat-libs
 test "$(rpm -qf --qf '%{NAME}\n' "$compat_udev")" = rustd-compat-libs
 /var/tmp/scripts/check-compat-closure.py \
     --report /var/tmp/rustd-precutover-elf-audit.json \
+    --repository-root /var/tmp/rustd-source \
     --libsystemd "$compat_systemd" \
     --libudev "$compat_udev"
 test "$(rpm -qf --qf '%{NAME}\n' /usr/lib/systemd/systemd-udevd)" = rustd-fedora-compat
