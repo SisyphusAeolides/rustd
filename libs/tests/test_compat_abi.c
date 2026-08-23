@@ -148,6 +148,13 @@ static void verify_event_semantics(void) {
     source = sd_event_source_unref(source);
     event = sd_event_unref(event);
 
+    assert(sd_event_default(&event) == 0);
+    assert(sd_event_add_signal(event, &source, SIGUSR2, NULL, NULL) == 0);
+    assert(kill(getpid(), SIGUSR2) == 0);
+    assert(sd_event_loop(event) == 0);
+    source = sd_event_source_unref(source);
+    event = sd_event_unref(event);
+
     called = 0;
     assert(sd_event_default(&event) == 0);
     child = fork();

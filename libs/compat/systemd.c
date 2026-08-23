@@ -2018,6 +2018,14 @@ int sd_event_add_io(
     return 0;
 }
 
+static int event_signal_exit(
+    struct sd_event_source *source,
+    const struct signalfd_siginfo *info,
+    void *userdata) {
+    (void)info;
+    return sd_event_exit(source->event, (int)(intptr_t)userdata);
+}
+
 int sd_event_add_signal(
     struct sd_event *event, struct sd_event_source **ret, int signal, void *callback,
     void *userdata) {
@@ -2026,8 +2034,10 @@ int sd_event_add_signal(
     int fd;
     int result;
     int number = signal & ~(1U << 30);
-    if (!event || !callback || number <= 0 || number >= NSIG)
+    if (!event || number <= 0 || number >= NSIG)
         return -EINVAL;
+    if (!callback)
+        callback = (void *)event_signal_exit;
     sigemptyset(&mask);
     sigaddset(&mask, number);
     result = pthread_sigmask(SIG_BLOCK, &mask, NULL);
