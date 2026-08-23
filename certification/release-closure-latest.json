@@ -6,6 +6,6 @@
   "schema": "rustd-release-closure-v1",
   "status": "pass",
   "supported": 184,
-  "tested_sha": "3cd227fb1913cf6eeda3779247c143532e7b7daf",
+  "tested_sha": "26bb6eeb6854bae47e73c296b1e71d8a717629ac",
   "unsupported": 0
 }
