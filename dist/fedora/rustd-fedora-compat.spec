@@ -57,6 +57,7 @@ done
 bash tests/fedora-transaction-compat.sh
 grep -Fq 'omit_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
 grep -Fq 'force_add_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
+grep -Fq 'install_items+=" /usr/bin/rustudevadm "' dist/fedora/90-rustd-dracut.conf
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]memstrack([[:space:]]|$)' \
