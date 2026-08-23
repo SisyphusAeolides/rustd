@@ -1,6 +1,6 @@
 schema=rustd-sd-bus-header-independence-v1
 status=pass
-tested_sha=a55128c3fc90642ed01dd4a303f7f6537f6d4e84
+tested_sha=160c02a6379002fb7842f053990de951278cec73
 behavior_outcome=success
 backend=libdbus-1
 systemd_headers=none
