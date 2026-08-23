@@ -112,8 +112,8 @@ jobs:
           if [[ -r certification/final-abi-closure-latest.txt ]] \
              && scripts/check-voucher-source-equivalence.sh certification/final-abi-closure-latest.txt "$GITHUB_SHA" \
              && grep -Fxq 'status=pass' certification/final-abi-closure-latest.txt \
-             && grep -Fxq 'required=260' certification/final-abi-closure-latest.txt \
-             && grep -Fxq 'supported=260' certification/final-abi-closure-latest.txt \
+             && grep -Fxq 'required=331' certification/final-abi-closure-latest.txt \
+             && grep -Fxq 'supported=331' certification/final-abi-closure-latest.txt \
              && grep -Fxq 'unsupported=0' certification/final-abi-closure-latest.txt \
              && grep -Fxq 'systemd_headers=none' certification/final-abi-closure-latest.txt \
              && grep -Fxq 'systemd_runtime_link=none' certification/final-abi-closure-latest.txt; then

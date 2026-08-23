@@ -54,10 +54,10 @@ jobs:
           supported = int(report["supported"])
           unsupported = int(report["unsupported"])
           missing = int(report["missing_source_definition"])
-          if int(report["required"]) != 260:
-              raise SystemExit(f"required compatibility surface changed: {report['required']} != 260")
-          if supported != 260:
-              raise SystemExit(f"compatibility support is incomplete: {supported} != 260")
+          if int(report["required"]) != 331:
+              raise SystemExit(f"required compatibility surface changed: {report['required']} != 331")
+          if supported != 331:
+              raise SystemExit(f"compatibility support is incomplete: {supported} != 331")
           if unsupported != 0:
               raise SystemExit(f"unsupported compatibility surface remains: {unsupported}")
           if missing != 0:
