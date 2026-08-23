@@ -579,6 +579,40 @@ pub fn persist_device(device: &Device) -> io::Result<()> {
     fs::write(Path::new("/run/udev/data").join(id), data)
 }
 
+/// Add the canonical persistent-storage links implied by probed filesystem and
+/// partition metadata. Distribution rule files normally request these links,
+/// but creating them from the normalized properties also makes early userspace
+/// robust when its reduced rule set omits or cannot parse those assignments.
+pub fn add_persistent_storage_links(device: &mut Device) {
+    let usage = device.property("ID_FS_USAGE");
+    if matches!(usage.as_str(), "filesystem" | "other" | "crypto") {
+        if let Some(uuid) = device.properties.get("ID_FS_UUID_ENC") {
+            if !uuid.is_empty() {
+                device.symlinks.insert(format!("disk/by-uuid/{uuid}"));
+            }
+        }
+        if let Some(label) = device.properties.get("ID_FS_LABEL_ENC") {
+            if !label.is_empty() {
+                device.symlinks.insert(format!("disk/by-label/{label}"));
+            }
+        }
+    }
+    if let Some(uuid) = device.properties.get("ID_PART_ENTRY_UUID") {
+        if !uuid.is_empty() {
+            device.symlinks.insert(format!("disk/by-partuuid/{uuid}"));
+        }
+    }
+    if device.property("ID_PART_ENTRY_SCHEME") == "gpt" {
+        if let Some(name) = device.properties.get("ID_PART_ENTRY_NAME") {
+            if !name.is_empty() {
+                device
+                    .symlinks
+                    .insert(format!("disk/by-partlabel/{}", udev_escape(name)));
+            }
+        }
+    }
+}
+
 fn device_node(device: &Device) -> Option<String> {
     let name = device
         .name
@@ -752,5 +786,28 @@ mod tests {
         assert_eq!(device.property("ID_PART_TABLE_TYPE"), "gpt");
         assert_eq!(device.property("ID_PART_ENTRY_NUMBER"), "1");
         assert!(device.property("DEVNAME").is_empty());
+    }
+
+    #[test]
+    fn probed_storage_metadata_always_creates_canonical_links() {
+        let mut device = Device::default();
+        device
+            .properties
+            .insert("ID_FS_USAGE".into(), "filesystem".into());
+        device
+            .properties
+            .insert("ID_FS_UUID_ENC".into(), "1234-abcd".into());
+        device
+            .properties
+            .insert("ID_FS_LABEL_ENC".into(), "root\\x20disk".into());
+        device
+            .properties
+            .insert("ID_PART_ENTRY_UUID".into(), "part-uuid".into());
+
+        add_persistent_storage_links(&mut device);
+
+        assert!(device.symlinks.contains("disk/by-uuid/1234-abcd"));
+        assert!(device.symlinks.contains("disk/by-label/root\\x20disk"));
+        assert!(device.symlinks.contains("disk/by-partuuid/part-uuid"));
     }
 }

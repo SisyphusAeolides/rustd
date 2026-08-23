@@ -2,7 +2,9 @@
 //! Native uevent daemon for `RustD`.
 
 use clap::{Parser, ValueEnum};
-use rustd::udev::{apply_rules, load_rules, persist_device, Device, Rule};
+use rustd::udev::{
+    add_persistent_storage_links, apply_rules, load_rules, persist_device, Device, Rule,
+};
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Read};
@@ -176,6 +178,7 @@ fn process_device(
         device.properties.insert(key.clone(), value.clone());
     }
     apply_rules(rules, device);
+    add_persistent_storage_links(device);
     if !dry_run {
         if let Err(error) = persist_device(device) {
             eprintln!("rustd-udevd: failed to persist {}: {error}", device.devpath);
