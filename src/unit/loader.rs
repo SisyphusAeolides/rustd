@@ -6,12 +6,12 @@
 //!
 //! Native system unit search directory priority (highest first):
 //! 1. `/etc/rustd/system/`
-//! 2. `/run/rustd/system/`
-//! 3. `/usr/local/lib/rustd/system/`
-//! 4. `/usr/lib/rustd/system/`
-//! 5. `/etc/systemd/system/`
-//! 6. `/run/systemd/system/`
-//! 7. `/usr/local/lib/systemd/system/`
+//! 2. `/etc/systemd/system/`
+//! 3. `/run/rustd/system/`
+//! 4. `/run/systemd/system/`
+//! 5. `/usr/local/lib/rustd/system/`
+//! 6. `/usr/local/lib/systemd/system/`
+//! 7. `/usr/lib/rustd/system/`
 //! 8. `/usr/lib/systemd/system/`
 
 use std::ffi::OsStr;
@@ -151,12 +151,12 @@ pub struct ParsedUnit<T> {
 fn standard_unit_search_dirs() -> Vec<PathBuf> {
     vec![
         PathBuf::from("/etc/rustd/system"),
-        PathBuf::from("/run/rustd/system"),
-        PathBuf::from("/usr/local/lib/rustd/system"),
-        PathBuf::from("/usr/lib/rustd/system"),
         PathBuf::from("/etc/systemd/system"),
+        PathBuf::from("/run/rustd/system"),
         PathBuf::from("/run/systemd/system"),
+        PathBuf::from("/usr/local/lib/rustd/system"),
         PathBuf::from("/usr/local/lib/systemd/system"),
+        PathBuf::from("/usr/lib/rustd/system"),
         PathBuf::from("/usr/lib/systemd/system"),
     ]
 }
@@ -408,18 +408,35 @@ impl UnitLoader {
                     )
                 })?;
         }
-        Ok(self.apply_dependency_directories(unit_name, loaded))
+        Ok(self.apply_dependency_directories(unit_name, &unit_path, loaded))
     }
 
     /// Merge units enabled via `*.wants/` and `*.requires/` into the loaded unit.
     ///
-    /// `RustD` packages install enablement symlinks in the native search roots.
-    fn apply_dependency_directories(&self, unit_name: &str, mut loaded: LoadedUnit) -> LoadedUnit {
+    /// Both native and compatibility roots are searched. When the requested
+    /// name is an alias symlink, dependency directories belonging to the
+    /// canonical target are merged as well.
+    fn apply_dependency_directories(
+        &self,
+        unit_name: &str,
+        unit_path: &Path,
+        mut loaded: LoadedUnit,
+    ) -> LoadedUnit {
         let mut wants = Vec::new();
         let mut requires = Vec::new();
-        for directory in &self.search_dirs {
-            collect_dependency_links(directory, unit_name, "wants", &mut wants);
-            collect_dependency_links(directory, unit_name, "requires", &mut requires);
+        let mut dependency_names = vec![unit_name.to_owned()];
+        if let Ok(canonical) = std::fs::canonicalize(unit_path) {
+            if let Some(name) = canonical.file_name().and_then(OsStr::to_str) {
+                if name != unit_name {
+                    dependency_names.push(name.to_owned());
+                }
+            }
+        }
+        for dependency_name in dependency_names {
+            for directory in &self.search_dirs {
+                collect_dependency_links(directory, &dependency_name, "wants", &mut wants);
+                collect_dependency_links(directory, &dependency_name, "requires", &mut requires);
+            }
         }
 
         if wants.is_empty() && requires.is_empty() {
@@ -1021,6 +1038,50 @@ mod tests {
                     .iter()
                     .position(|path| path == Path::new("/usr/lib/systemd/system"))
         );
+    }
+
+    #[test]
+    fn standard_paths_honor_admin_compatibility_over_native_vendor_units() {
+        let dirs = standard_unit_search_dirs();
+        let position = |path: &str| {
+            dirs.iter()
+                .position(|item| item == Path::new(path))
+                .unwrap()
+        };
+        assert!(position("/etc/rustd/system") < position("/etc/systemd/system"));
+        assert!(position("/etc/systemd/system") < position("/usr/lib/rustd/system"));
+        assert!(position("/run/systemd/system") < position("/usr/lib/rustd/system"));
+        assert!(position("/usr/lib/rustd/system") < position("/usr/lib/systemd/system"));
+    }
+
+    #[test]
+    fn alias_merges_canonical_target_dependency_directories() {
+        let root = tempfile::tempdir().unwrap();
+        let admin = root.path().join("etc/systemd/system");
+        let vendor = root.path().join("usr/lib/rustd/system");
+        std::fs::create_dir_all(admin.join("multi-user.target.wants")).unwrap();
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(
+            vendor.join("multi-user.target"),
+            "[Unit]\nDescription=Multi User\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            vendor.join("multi-user.target"),
+            admin.join("default.target"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            vendor.join("example.service"),
+            admin.join("multi-user.target.wants/example.service"),
+        )
+        .unwrap();
+
+        let loader = UnitLoader::with_dirs(vec![admin, vendor]);
+        let LoadedUnit::Target(target) = loader.load("default.target").unwrap() else {
+            panic!("expected target");
+        };
+        assert_eq!(target.unit.wants, vec!["example.service"]);
     }
 
     #[test]

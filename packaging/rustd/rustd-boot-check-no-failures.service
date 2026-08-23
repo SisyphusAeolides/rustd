@@ -8,4 +8,4 @@ ExecStart=/usr/lib/rustd/rustd-boot-check-no-failures
 RemainAfterExit=yes
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target

@@ -13,7 +13,7 @@ use std::ffi::{CStr, CString};
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::{Path, PathBuf};
 
 use anyhow::anyhow;
@@ -1348,7 +1348,7 @@ fn compile_rlimits(section: &ServiceSection) -> Vec<SdSpawnRlimit> {
     limits
 }
 
-fn open_dev_null(flags: libc::c_int) -> anyhow::Result<libc::c_int> {
+fn open_dev_null(flags: libc::c_int) -> anyhow::Result<std::fs::File> {
     let path = CString::new("/dev/null").expect("/dev/null is a valid CString");
     // Safety: path is a valid NUL-terminated C string.
     let fd = unsafe { libc::open(path.as_ptr(), flags | libc::O_CLOEXEC) };
@@ -1358,7 +1358,8 @@ fn open_dev_null(flags: libc::c_int) -> anyhow::Result<libc::c_int> {
             std::io::Error::last_os_error()
         ));
     }
-    Ok(fd)
+    // Safety: `fd` is a newly opened descriptor owned by this function.
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
 fn is_journal_daemon(unit_name: &str) -> bool {
@@ -1558,6 +1559,8 @@ fn spawn_command(
         .map_or_else(|| PathBuf::from(DEFAULT_STDOUT_PATH), PathBuf::from);
     let mut stdout_stream = None;
     let mut stderr_stream = None;
+    let mut stdout_fallback = None;
+    let mut stderr_fallback = None;
     let route_journal = !is_journal_daemon(unit_name);
     let stdout_fd = if route_journal && wants_journal_stdio(&section.standard_output) {
         match connect_service_stream_with_limits(
@@ -1578,7 +1581,10 @@ fn spawn_command(
                     "rustd: {unit_name} StandardOutput=journal unavailable at {}: {error}; using /dev/null",
                     journal_path.display()
                 );
-                open_dev_null(libc::O_WRONLY)?
+                let file = open_dev_null(libc::O_WRONLY)?;
+                let fd = file.as_raw_fd();
+                stdout_fallback = Some(file);
+                fd
             }
         }
     } else {
@@ -1610,7 +1616,10 @@ fn spawn_command(
                     "rustd: {unit_name} StandardError=journal unavailable at {}: {error}; using /dev/null",
                     journal_path.display()
                 );
-                open_dev_null(libc::O_WRONLY)?
+                let file = open_dev_null(libc::O_WRONLY)?;
+                let fd = file.as_raw_fd();
+                stderr_fallback = Some(file);
+                fd
             }
         }
     } else {
@@ -1681,6 +1690,8 @@ fn spawn_command(
     let pid = unsafe { rustd_spawn(&params) };
     drop(stdout_stream);
     drop(stderr_stream);
+    drop(stdout_fallback);
+    drop(stderr_fallback);
     if idle_pipe[0] >= 0 {
         // Safety: the parent owns the read descriptor after `rustd_spawn` returns.
         unsafe { libc::close(idle_pipe[0]) };
@@ -2040,7 +2051,7 @@ mod tests {
         let mut section = ServiceSection {
             service_type: ServiceType::Simple,
             standard_output: "journal".into(),
-            standard_error: "null".into(),
+            standard_error: "journal".into(),
             ..Default::default()
         };
         section.exec_start.push(shell_command("true"));
@@ -2049,12 +2060,16 @@ mod tests {
             "RUSTD_JOURNAL_STDOUT",
             "/tmp/rustd-journal-stdout-definitely-missing",
         );
+        let descriptors_before = std::fs::read_dir("/proc/self/fd").unwrap().count();
         let result = activate(&mut record, &[]);
+        let descriptors_after = std::fs::read_dir("/proc/self/fd").unwrap().count();
         std::env::remove_var("RUSTD_JOURNAL_STDOUT");
         result.expect("a missing journal stream must not prevent service activation");
+        assert_eq!(descriptors_after, descriptors_before);
         assert_eq!(record.state, UnitState::Active);
         if let Some(pid) = record.active_pid {
             unsafe { libc::kill(pid, libc::SIGKILL) };
+            unsafe { libc::waitpid(pid, std::ptr::null_mut(), 0) };
         }
     }
 
