@@ -197,6 +197,9 @@ int rustd_capability_bounding_set_drop(uint64_t keep_mask) {
         return 0;
 
     int last_cap = capability_last_cap();
+    int r = capability_mask_validate(keep_mask, last_cap);
+    if (r < 0)
+        return r;
 
     for (int cap = 0; cap <= last_cap; cap++) {
         if ((keep_mask & (UINT64_C(1) << cap)) != 0)
