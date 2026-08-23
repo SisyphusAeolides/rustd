@@ -600,7 +600,7 @@ mod tests {
             let mut byte = 0_u8;
             // Safety: the event loop invokes this handler only while the
             // registered UnixStream descriptor remains open.
-            let _ = unsafe { libc::read(fd, (&raw mut byte).cast(), 1) };
+            let _ = unsafe { libc::read(fd, std::ptr::addr_of_mut!(byte).cast(), 1) };
             self.0.fetch_add(1, Ordering::SeqCst);
         }
     }

@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include <assert.h>
 #include <dbus/dbus.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -11,6 +12,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "sd_bus_abi.h"
+#include "sd_core_abi.h"
 
 static int async_called;
 static int async_saw_dbus;
@@ -334,11 +336,24 @@ static void test_raw_peer_call(void) {
     assert(waitpid(child, NULL, 0) == child);
 }
 
+static void test_event_attachment(void) {
+    sd_bus *bus = NULL;
+    sd_event *event = NULL;
+
+    assert(sd_bus_open_user(&bus) == 0);
+    assert(sd_event_default(&event) == 0);
+    assert(sd_bus_attach_event(bus, event, 17) == 0);
+    assert(sd_bus_attach_event(bus, event, 17) == -EBUSY);
+    sd_bus_unref(bus);
+    sd_event_unref(event);
+}
+
 int main(void) {
     test_local_message_codec();
     test_real_session_bus();
     test_async_session_bus();
     test_default_user_lifecycle();
     test_raw_peer_call();
+    test_event_attachment();
     return 0;
 }

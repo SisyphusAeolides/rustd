@@ -417,8 +417,13 @@ mod tests {
         .unwrap();
         let mut socket_address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
         let mut length = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
-        let result =
-            unsafe { libc::getsockname(fd, (&raw mut socket_address).cast(), &raw mut length) };
+        let result = unsafe {
+            libc::getsockname(
+                fd,
+                std::ptr::addr_of_mut!(socket_address).cast(),
+                std::ptr::addr_of_mut!(length),
+            )
+        };
         unsafe { libc::close(fd) };
 
         assert_eq!(result, 0);
