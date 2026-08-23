@@ -146,7 +146,7 @@ grep -Fq "rpm -q --qf '%{EVR}' systemd-udev " scripts/build-fedora-rpms.sh
 grep -Fq '"$systemd_evr" == "$systemd_libs_evr"' scripts/build-fedora-rpms.sh
 grep -Fq '"$systemd_evr" == "$systemd_udev_evr"' scripts/build-fedora-rpms.sh
 test "$(grep -Fc -- '--define "systemd_compat_evr $systemd_evr"' \
-    scripts/build-fedora-rpms.sh)" -eq 2
+    scripts/build-fedora-rpms.sh)" -eq 3
 
 pinned="$(tr -d '[:space:]' < scripts/rustd-resolved-revision.txt)"
 [[ $pinned =~ ^[0-9a-f]{40}$ ]]

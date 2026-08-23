@@ -96,7 +96,9 @@ rpmbuild -ba "${rpmbuild_common[@]}" \
 rpmbuild -ba "${rpmbuild_common[@]}" \
     --define "systemd_compat_evr $systemd_evr" \
     "$TOPDIR/SPECS/rustd-compat-libs.spec"
-rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd-resolved.spec"
+rpmbuild -ba "${rpmbuild_common[@]}" \
+    --define "systemd_compat_evr $systemd_evr" \
+    "$TOPDIR/SPECS/rustd-resolved.spec"
 
 find "$TOPDIR/RPMS" -type f -name '*.rpm' -exec cp -a {} "$OUTPUT/" \;
 find "$TOPDIR/SRPMS" -type f -name '*.src.rpm' -exec cp -a {} "$OUTPUT/" \;
@@ -117,6 +119,16 @@ grep -Eq "^systemd\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
 grep -Eq "^systemd-udev\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
 grep -Eq "^systemd-pam\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
 grep -Eq "^udev\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
+grep -Fxq "udev = $systemd_evr" <<<"$compat_provides"
+
+resolved_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
+    -name 'rustd-resolved-*.rpm' ! -name '*-nss-*' ! -name '*-debug*' \
+    ! -name '*.src.rpm' | head -1)
+[[ -n $resolved_rpm ]]
+resolved_provides=$(rpm -qp --provides "$resolved_rpm")
+grep -Fxq "systemd-resolved = $systemd_evr" <<<"$resolved_provides"
+grep -Eq "^systemd-resolved\([^)]*\) = ${systemd_evr//./\\.}$" \
+    <<<"$resolved_provides"
 
 manifest="$OUTPUT/manifest.txt"
 {
