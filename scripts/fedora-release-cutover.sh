@@ -44,14 +44,14 @@ for key in systemctl update_helper tmpfiles sysusers sysctl binfmt udevadm; do
         || fail "Fedora transaction voucher is missing $key=rustd-backed"
 done
 
-# 331/331 is non-negotiable before systemd-libs can leave the RPM transaction.
+# 335/335 is non-negotiable before systemd-libs can leave the RPM transaction.
 abi="$SOURCE_ROOT/certification/final-abi-closure-latest.txt"
 [[ -r $abi ]] || fail 'final RustD ABI closure voucher is missing'
 "$SOURCE_ROOT/scripts/check-voucher-source-equivalence.sh" "$abi" \
     || fail 'final RustD ABI closure voucher is stale for this source revision'
 grep -Fxq 'status=pass' "$abi" || fail 'final RustD ABI closure is not green'
-grep -Fxq 'required=331' "$abi" || fail 'ABI voucher does not require 331 symbols'
-grep -Fxq 'supported=331' "$abi" || fail 'ABI voucher does not certify 331 symbols'
+grep -Fxq 'required=335' "$abi" || fail 'ABI voucher does not require 335 symbols'
+grep -Fxq 'supported=335' "$abi" || fail 'ABI voucher does not certify 335 symbols'
 grep -Fxq 'unsupported=0' "$abi" || fail 'ABI voucher still has unsupported symbols'
 grep -Fxq 'missing=0' "$abi" || fail 'ABI voucher still has missing symbols'
 grep -Fxq 'systemd_headers=none' "$abi" || fail 'systemd development headers remain in the compatibility implementation'
