@@ -21,7 +21,7 @@ test "$(getenforce)" = Enforcing
 # with newer compatibility Provides can otherwise make DNF erase consumers
 # whose dependencies are locked to the older systemd build.
 dnf -y upgrade --refresh
-dnf -y install createrepo_c dracut authselect
+dnf -y install createrepo_c dracut authselect binutils
 createrepo_c "$RPM_REPO"
 /var/tmp/scripts/audit-systemd-elf-consumers.py \
     --output /var/tmp/rustd-precutover-elf-audit.json
