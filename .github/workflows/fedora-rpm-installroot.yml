@@ -104,7 +104,10 @@ jobs:
           dnf -y "${common[@]}" install filesystem
 
           # Establish an ordinary Fedora manager/PAM stack first.
-          dnf -y "${common[@]}" install \
+          # The local replacement repository must not participate in this
+          # baseline solve: its exact-EVR Provides intentionally outrank the
+          # Fedora systemd packages during the later exclusive transaction.
+          dnf -y "${common[@]}" --disablerepo=rustd install \
             systemd systemd-libs systemd-udev systemd-pam authselect dbus-daemon
           rpm --root "$root" -q systemd systemd-libs systemd-udev systemd-pam authselect
           test "$(rpm --root "$root" -qf --qf '%{NAME}\n' /usr/sbin/init)" = systemd
