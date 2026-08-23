@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #include "sd_bus_abi.h"
 #include "sd_core_abi.h"
@@ -17,6 +18,16 @@
 static int async_called;
 static int async_saw_dbus;
 static int raw_filter_called;
+static int match_called;
+
+static int match_callback(sd_bus_message *message, void *userdata, sd_bus_error *error) {
+    sd_bus *bus = userdata;
+    (void)error;
+    assert(message != NULL);
+    assert(sd_bus_get_current_message(bus) == message);
+    match_called++;
+    return 1;
+}
 
 static int raw_filter(sd_bus_message *message, void *userdata, sd_bus_error *error) {
     int *marker = userdata;
@@ -32,6 +43,26 @@ static int list_names_callback(sd_bus_message *reply, void *userdata, sd_bus_err
     int *marker = userdata;
     (void)ret_error;
     assert(reply != NULL);
+
+    {
+        sd_bus_creds *creds = NULL;
+        pid_t pid = 0;
+        uid_t uid = (uid_t)-1;
+        gid_t gid = (gid_t)-1;
+        const gid_t *groups = NULL;
+        uint64_t mask = SD_BUS_CREDS_PID | SD_BUS_CREDS_UID | SD_BUS_CREDS_EUID |
+                        SD_BUS_CREDS_GID | SD_BUS_CREDS_EGID |
+                        SD_BUS_CREDS_SUPPLEMENTARY_GIDS;
+        assert(sd_bus_query_sender_creds(reply, mask, &creds) == 0);
+        assert(creds != NULL);
+        assert(sd_bus_creds_ref(creds) == creds);
+        assert(sd_bus_creds_unref(creds) == NULL);
+        assert(sd_bus_creds_get_pid(creds, &pid) == 0 && pid > 0);
+        assert(sd_bus_creds_get_uid(creds, &uid) == 0 && uid != (uid_t)-1);
+        assert(sd_bus_creds_get_gid(creds, &gid) == 0 && gid != (gid_t)-1);
+        assert(sd_bus_creds_get_supplementary_gids(creds, &groups) >= 0);
+        sd_bus_creds_unref(creds);
+    }
     assert(marker != NULL);
     assert(sd_bus_message_enter_container(reply, SD_BUS_TYPE_ARRAY, "s") > 0);
     while (sd_bus_message_read(reply, "s", &name) > 0) {
@@ -43,6 +74,41 @@ static int list_names_callback(sd_bus_message *reply, void *userdata, sd_bus_err
     *marker = 1;
     async_called = 1;
     return 1;
+}
+
+static void test_matches_and_emission(void) {
+    sd_bus *bus = NULL;
+    sd_bus_slot *slot = NULL;
+    sd_bus_message *signal = NULL;
+    char *interfaces[] = {"org.example.Test", NULL};
+    char *properties[] = {"Value", NULL};
+    int r;
+
+    match_called = 0;
+    assert(sd_bus_open_user(&bus) == 0);
+    assert(sd_bus_request_name(bus, "org.example.RustDTest", 0U) > 0);
+    assert(sd_bus_add_match(bus, &slot,
+                            "type='signal',interface='org.example.Test',member='Changed'",
+                            match_callback, bus) == 0);
+    assert(sd_bus_message_new_signal(bus, &signal, "/org/example/Test",
+                                     "org.example.Test", "Changed") == 0);
+    assert(sd_bus_send(bus, signal, NULL) > 0);
+    assert(sd_bus_flush(bus) == 0);
+    for (int i = 0; i < 200 && match_called == 0; ++i) {
+        r = sd_bus_process(bus, NULL);
+        assert(r >= 0);
+        if (match_called == 0)
+            usleep(5000);
+    }
+    assert(match_called == 1);
+    assert(sd_bus_emit_properties_changed_strv(bus, "/org/example/Test",
+                                               "org.example.Test", properties) > 0);
+    assert(sd_bus_emit_interfaces_added_strv(bus, "/org/example/Test", interfaces) > 0);
+    assert(sd_bus_emit_interfaces_removed_strv(bus, "/org/example/Test", interfaces) > 0);
+    assert(sd_bus_release_name(bus, "org.example.RustDTest") > 0);
+    sd_bus_message_unref(signal);
+    sd_bus_slot_unref(slot);
+    sd_bus_unref(bus);
 }
 
 static void test_local_message_codec(void) {
@@ -99,6 +165,61 @@ static void test_local_message_codec(void) {
     assert(sd_bus_message_close_container(m) == 0);
 
     sd_bus_message_unref(m);
+    sd_bus_unref(bus);
+}
+
+static void test_extended_message_codec(void) {
+    sd_bus *bus = NULL;
+    sd_bus_message *source = NULL;
+    sd_bus_message *copy = NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+    const uint32_t values[] = {3U, 5U, 8U};
+    const void *read_values = NULL;
+    const char *text = NULL;
+    char *space = NULL;
+    size_t size = 0U;
+    uint64_t cookie = 0U;
+    char type = 0;
+
+    assert(sd_bus_service_name_is_valid("org.example.Test"));
+    assert(!sd_bus_service_name_is_valid("not valid"));
+    assert(sd_bus_interface_name_is_valid("org.example.Test"));
+    assert(sd_bus_member_name_is_valid("Changed"));
+    assert(sd_bus_object_path_is_valid("/org/example/Test"));
+    assert(sd_bus_error_set(&error, "org.example.Error", "failure") < 0);
+    assert(sd_bus_error_is_set(&error));
+    sd_bus_error_free(&error);
+
+    assert(sd_bus_new(&bus) == 0);
+    assert(sd_bus_message_new_method_call(bus, &source, "org.example.Test",
+                                          "/org/example/Test",
+                                          "org.example.Test", "Changed") == 0);
+    assert(sd_bus_message_is_empty(source) > 0);
+    assert(sd_bus_message_append_string_space(source, 5U, &space) == 0);
+    memcpy(space, "hello", 5U);
+    assert(sd_bus_message_append_array(source, SD_BUS_TYPE_UINT32,
+                                       values, sizeof(values)) == 0);
+    assert(sd_bus_message_seal(source, 41U, 1000U) == 0);
+    assert(sd_bus_message_get_cookie(source, &cookie) == 0 && cookie == 41U);
+    assert(sd_bus_message_get_expect_reply(source) > 0);
+    assert(sd_bus_message_set_expect_reply(source, 0) == 0);
+    assert(sd_bus_message_get_expect_reply(source) == 0);
+    assert(sd_bus_message_peek_type(source, &type, NULL) > 0 && type == SD_BUS_TYPE_STRING);
+    assert(sd_bus_message_read(source, "s", &text) == 1 && strcmp(text, "hello") == 0);
+    assert(sd_bus_message_read_array(source, SD_BUS_TYPE_UINT32, &read_values, &size) > 0);
+    assert(size == sizeof(values) && memcmp(read_values, values, size) == 0);
+
+    assert(sd_bus_message_rewind(source, 1) > 0);
+    assert(sd_bus_message_new_method_call(bus, &copy, "org.example.Test",
+                                          "/org/example/Test",
+                                          "org.example.Test", "Copied") == 0);
+    assert(sd_bus_message_copy(copy, source, 1) == 2);
+    assert(sd_bus_message_read(copy, "s", &text) == 1 && strcmp(text, "hello") == 0);
+    assert(sd_bus_message_read_array(copy, SD_BUS_TYPE_UINT32, &read_values, &size) > 0);
+    assert(size == sizeof(values) && memcmp(read_values, values, size) == 0);
+
+    sd_bus_message_unref(copy);
+    sd_bus_message_unref(source);
     sd_bus_unref(bus);
 }
 
@@ -337,6 +458,26 @@ static void test_raw_peer_call(void) {
 }
 
 #ifdef RUSTD_TEST_EVENT_ATTACHMENT
+struct event_test_context {
+    int prepared;
+    int called;
+};
+
+static int event_prepare(sd_event_source *source, void *userdata) {
+    struct event_test_context *context = userdata;
+    assert(source != NULL);
+    context->prepared++;
+    return 0;
+}
+
+static int event_timer(sd_event_source *source, uint64_t usec, void *userdata) {
+    sd_event *event = sd_event_source_get_event(source);
+    struct event_test_context *context = userdata;
+    assert(usec > 0U);
+    context->called++;
+    return sd_event_exit(event, 23);
+}
+
 static void test_event_attachment(void) {
     sd_bus *bus = NULL;
     sd_event *event = NULL;
@@ -348,16 +489,48 @@ static void test_event_attachment(void) {
     sd_bus_unref(bus);
     sd_event_unref(event);
 }
+
+static void test_event_controls(void) {
+    struct timespec now;
+    sd_event *event = NULL;
+    sd_event_source *timer = NULL;
+    sd_event_source *disabled = NULL;
+    uint64_t usec;
+    struct event_test_context context = {0};
+
+    assert(clock_gettime(CLOCK_MONOTONIC, &now) == 0);
+    usec = (uint64_t)now.tv_sec * 1000000U + (uint64_t)now.tv_nsec / 1000U + 2000U;
+    assert(sd_event_default(&event) == 0);
+    assert(sd_event_ref(event) == event);
+    assert(sd_event_unref(event) == NULL);
+    assert(sd_event_add_time(event, &timer, CLOCK_MONOTONIC, usec, 0U,
+                             event_timer, &context) == 0);
+    assert(sd_event_source_set_description(timer, "test timer") == 0);
+    assert(sd_event_source_set_prepare(timer, event_prepare) == 0);
+    assert(sd_event_loop(event) == 23);
+    assert(context.called == 1);
+    assert(context.prepared >= 1);
+    assert(sd_event_add_time(event, &disabled, CLOCK_MONOTONIC, usec, 0U,
+                             event_timer, &context) == 0);
+    assert(sd_event_source_set_enabled(disabled, 0) == 0);
+    assert(sd_event_source_set_time(disabled, usec) == 0);
+    assert(sd_event_source_disable_unref(disabled) == NULL);
+    sd_event_source_unref(timer);
+    sd_event_unref(event);
+}
 #endif
 
 int main(void) {
     test_local_message_codec();
+    test_extended_message_codec();
     test_real_session_bus();
+    test_matches_and_emission();
     test_async_session_bus();
     test_default_user_lifecycle();
     test_raw_peer_call();
 #ifdef RUSTD_TEST_EVENT_ATTACHMENT
     test_event_attachment();
+    test_event_controls();
 #endif
     return 0;
 }

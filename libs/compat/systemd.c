@@ -1444,6 +1444,7 @@ struct sd_event_source {
     enum { RUSTD_EVENT_TIME, RUSTD_EVENT_IO, RUSTD_EVENT_SIGNAL,
            RUSTD_EVENT_CHILD, RUSTD_EVENT_INOTIFY } kind;
     uint64_t deadline_usec;
+    clockid_t clock;
     int fd;
     uint32_t events;
     int owns_fd;
@@ -1451,9 +1452,11 @@ struct sd_event_source {
     pid_t pid;
     int options;
     void *callback;
+    void *prepare_callback;
     void *userdata;
     int enabled;
     int64_t priority;
+    char *description;
     struct sd_event_source *next;
 };
 
@@ -1476,6 +1479,7 @@ static void rustd_event_free(struct sd_event *event) {
         struct sd_event_source *next = source->next;
         if (source->owns_fd && source->fd >= 0)
             close(source->fd);
+        free(source->description);
         free(source);
         source = next;
     }
@@ -1486,6 +1490,41 @@ static uint64_t rustd_event_monotonic_usec(void) {
     struct timespec ts;
     if (clock_gettime(CLOCK_MONOTONIC, &ts) < 0) return 0;
     return (uint64_t)ts.tv_sec * UINT64_C(1000000) + (uint64_t)ts.tv_nsec / UINT64_C(1000);
+}
+
+static int rustd_event_clock_usec(clockid_t clock, uint64_t *ret) {
+    struct timespec ts;
+    if (!ret)
+        return -EINVAL;
+    if (clock_gettime(clock, &ts) < 0)
+        return -errno;
+    if (ts.tv_sec < 0)
+        return -ERANGE;
+    *ret = (uint64_t)ts.tv_sec * UINT64_C(1000000) +
+           (uint64_t)ts.tv_nsec / UINT64_C(1000);
+    return 0;
+}
+
+static int rustd_event_absolute_to_monotonic(clockid_t clock, uint64_t usec,
+                                              uint64_t *ret) {
+    uint64_t clock_now = 0;
+    uint64_t monotonic_now;
+    int r;
+    if (clock != CLOCK_MONOTONIC && clock != CLOCK_BOOTTIME &&
+        clock != CLOCK_REALTIME)
+        return -EOPNOTSUPP;
+    r = rustd_event_clock_usec(clock, &clock_now);
+    if (r < 0)
+        return r;
+    monotonic_now = rustd_event_monotonic_usec();
+    if (usec <= clock_now) {
+        *ret = monotonic_now;
+        return 0;
+    }
+    if (UINT64_MAX - monotonic_now < usec - clock_now)
+        return -ERANGE;
+    *ret = monotonic_now + usec - clock_now;
+    return 0;
 }
 
 int sd_device_monitor_start(struct sd_device_monitor *monitor, void *callback, void *userdata) {
@@ -1507,17 +1546,51 @@ struct sd_event *sd_device_monitor_get_event(struct sd_device_monitor *monitor) 
 }
 
 int sd_event_add_time_relative(struct sd_event *event, void **ret, int clock, uint64_t usec, uint64_t accuracy, void *callback, void *userdata) {
-    struct sd_event_source *source; uint64_t now; (void)accuracy;
+    struct sd_event_source *source; uint64_t now = 0; uint64_t absolute; int r; (void)accuracy;
     if (!event || !callback) return -EINVAL;
     if (clock != CLOCK_MONOTONIC && clock != CLOCK_BOOTTIME) return -EOPNOTSUPP;
-    now = rustd_event_monotonic_usec();
+    r = rustd_event_clock_usec((clockid_t)clock, &now);
+    if (r < 0) return r;
     if (UINT64_MAX - now < usec) return -ERANGE;
+    r = rustd_event_absolute_to_monotonic((clockid_t)clock, now + usec, &absolute);
+    if (r < 0) return r;
     source = calloc(1, sizeof(*source)); if (!source) return -ENOMEM;
     source->refs = 1U; source->event = event; source->kind = RUSTD_EVENT_TIME;
+    source->clock = (clockid_t)clock;
     source->fd = -1; source->enabled = 1;
-    source->deadline_usec = now + usec;
+    source->deadline_usec = absolute;
     source->callback = callback;
     source->userdata = userdata; source->next = event->sources; event->sources = source;
+    if (ret)
+        *ret = source;
+    return 0;
+}
+
+int sd_event_add_time(struct sd_event *event, void **ret, int clock, uint64_t usec,
+                      uint64_t accuracy, void *callback, void *userdata) {
+    struct sd_event_source *source;
+    uint64_t deadline;
+    int r;
+    (void)accuracy;
+    if (!event || !callback)
+        return -EINVAL;
+    r = rustd_event_absolute_to_monotonic((clockid_t)clock, usec, &deadline);
+    if (r < 0)
+        return r;
+    source = calloc(1, sizeof(*source));
+    if (!source)
+        return -ENOMEM;
+    source->refs = 1U;
+    source->event = event;
+    source->kind = RUSTD_EVENT_TIME;
+    source->clock = (clockid_t)clock;
+    source->fd = -1;
+    source->enabled = 1;
+    source->deadline_usec = deadline;
+    source->callback = callback;
+    source->userdata = userdata;
+    source->next = event->sources;
+    event->sources = source;
     if (ret)
         *ret = source;
     return 0;
@@ -1533,8 +1606,13 @@ static int rustd_event_dispatch_timers(struct sd_event *event, uint64_t now) {
             source->deadline_usec > now)
             continue;
         source->enabled = 0;
-        result = ((int (*)(struct sd_event_source *, uint64_t, void *))source->callback)(
-            source, now, source->userdata);
+        {
+            uint64_t callback_now = now;
+            if (source->clock != CLOCK_MONOTONIC)
+                (void)rustd_event_clock_usec(source->clock, &callback_now);
+            result = ((int (*)(struct sd_event_source *, uint64_t, void *))source->callback)(
+                source, callback_now, source->userdata);
+        }
         if (result < 0)
             return result;
     }
@@ -1551,6 +1629,12 @@ int sd_event_loop(struct sd_event *event) {
         uint64_t now = rustd_event_monotonic_usec(); uint64_t nearest = UINT64_MAX;
         struct sd_event_source *source; int timeout = -1; int r;
         for (source = event->sources; source; source = source->next) {
+            if (source->enabled && source->prepare_callback) {
+                r = ((int (*)(struct sd_event_source *, void *))source->prepare_callback)(
+                    source, source->userdata);
+                if (r < 0)
+                    return r;
+            }
             if (source->enabled && source->kind == RUSTD_EVENT_TIME &&
                 source->deadline_usec < nearest)
                 nearest = source->deadline_usec;
@@ -1634,6 +1718,8 @@ int sd_event_loop(struct sd_event *event) {
                 }
             }
             if (r < 0) { free(pollfds); free(owners); return r; }
+            if (ready->enabled == -1)
+                ready->enabled = 0;
         }
         free(pollfds);
         free(owners);
@@ -1980,6 +2066,12 @@ int sd_event_default(struct sd_event **ret) {
     return 0;
 }
 
+struct sd_event *sd_event_ref(struct sd_event *event) {
+    if (event)
+        event->refs++;
+    return event;
+}
+
 static struct sd_event_source *event_source_new(struct sd_event *event, int kind,
                                                  void *callback, void *userdata) {
     struct sd_event_source *source;
@@ -2127,6 +2219,48 @@ int sd_event_source_set_priority(struct sd_event_source *source, int64_t priorit
     return 0;
 }
 
+int sd_event_source_set_description(struct sd_event_source *source, const char *description) {
+    char *copy = NULL;
+    if (!source)
+        return -EINVAL;
+    if (description) {
+        copy = strdup(description);
+        if (!copy)
+            return -ENOMEM;
+    }
+    free(source->description);
+    source->description = copy;
+    return 0;
+}
+
+int sd_event_source_set_enabled(struct sd_event_source *source, int mode) {
+    if (!source || (mode != -1 && mode != 0 && mode != 1))
+        return -EINVAL;
+    source->enabled = mode;
+    return 0;
+}
+
+int sd_event_source_set_io_events(struct sd_event_source *source, uint32_t events) {
+    if (!source || source->kind != RUSTD_EVENT_IO || events == 0U)
+        return -EINVAL;
+    source->events = events;
+    return 0;
+}
+
+int sd_event_source_set_prepare(struct sd_event_source *source, void *callback) {
+    if (!source)
+        return -EINVAL;
+    source->prepare_callback = callback;
+    return 0;
+}
+
+int sd_event_source_set_time(struct sd_event_source *source, uint64_t usec) {
+    if (!source || source->kind != RUSTD_EVENT_TIME)
+        return -EINVAL;
+    return rustd_event_absolute_to_monotonic(source->clock, usec,
+                                             &source->deadline_usec);
+}
+
 struct sd_event_source *sd_event_source_unref(struct sd_event_source *source) {
     struct sd_event_source **cursor;
     if (!source)
@@ -2142,8 +2276,15 @@ struct sd_event_source *sd_event_source_unref(struct sd_event_source *source) {
     }
     if (source->owns_fd && source->fd >= 0)
         close(source->fd);
+    free(source->description);
     free(source);
     return NULL;
+}
+
+struct sd_event_source *sd_event_source_disable_unref(struct sd_event_source *source) {
+    if (source)
+        source->enabled = 0;
+    return sd_event_source_unref(source);
 }
 
 struct sd_event *sd_event_unref(struct sd_event *event) {

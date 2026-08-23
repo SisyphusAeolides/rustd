@@ -21,9 +21,12 @@ typedef struct sd_device sd_device;
 typedef struct sd_device_monitor sd_device_monitor;
 typedef int64_t sd_device_action_t;
 typedef struct sd_event_source sd_event_source;
+#ifndef RUSTD_SD_ID128_T_DEFINED
+#define RUSTD_SD_ID128_T_DEFINED 1
 typedef struct sd_id128 {
     uint8_t bytes[16];
 } sd_id128_t;
+#endif
 
 int sd_id128_from_string(const char *text, sd_id128_t *ret);
 int sd_id128_get_boot(sd_id128_t *ret);
@@ -34,6 +37,9 @@ int sd_is_socket_unix(int fd, int type, int listening, const char *path, size_t 
 int sd_event_default(sd_event **ret);
 int sd_event_add_io(sd_event *event, sd_event_source **ret, int fd, uint32_t events,
                     void *callback, void *userdata);
+int sd_event_add_time(sd_event *event, sd_event_source **ret, int clock,
+                      uint64_t usec, uint64_t accuracy, void *callback, void *userdata);
+sd_event *sd_event_ref(sd_event *event);
 int sd_event_add_signal(sd_event *event, sd_event_source **ret, int signal,
                         void *callback, void *userdata);
 int sd_event_add_child(sd_event *event, sd_event_source **ret, pid_t pid, int options,
@@ -44,6 +50,12 @@ int sd_event_exit(sd_event *event, int code);
 int sd_event_loop(sd_event *event);
 sd_event *sd_event_source_get_event(sd_event_source *source);
 int sd_event_source_set_priority(sd_event_source *source, int64_t priority);
+int sd_event_source_set_description(sd_event_source *source, const char *description);
+int sd_event_source_set_enabled(sd_event_source *source, int mode);
+int sd_event_source_set_io_events(sd_event_source *source, uint32_t events);
+int sd_event_source_set_prepare(sd_event_source *source, void *callback);
+int sd_event_source_set_time(sd_event_source *source, uint64_t usec);
+sd_event_source *sd_event_source_disable_unref(sd_event_source *source);
 sd_event_source *sd_event_source_unref(sd_event_source *source);
 sd_event *sd_event_unref(sd_event *event);
 

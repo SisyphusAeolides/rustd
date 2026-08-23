@@ -25,7 +25,7 @@ Obsoletes:      systemd-libs <= %{systemd_compat_evr}
 %description
 RustD-owned runtime compatibility SONAMEs for Fedora binaries already linked to
 libsystemd.so.0 or libudev.so.1. The build and check phases require RustD's
-measured compatibility surface to be 260/260 with zero unsupported or missing
+measured compatibility surface to be 331/331 with zero unsupported or missing
 definitions. It does not provide the package-level "systemd" capability.
 
 %prep
