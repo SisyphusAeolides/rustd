@@ -48,7 +48,9 @@ done
 bash tests/fedora-transaction-compat.sh
 grep -Fq 'omit_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
 grep -Fq 'force_add_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
-grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd[[:space:]].*[[:space:]]memstrack[[:space:]]' \
+grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
+    dist/fedora/90-rustd-dracut.conf
+grep -Eq 'omit_dracutmodules\+=".*[[:space:]]memstrack([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
 for name in halt poweroff reboot shutdown telinit runlevel; do
     ln -s rustd-shutdown "rustd-shutdown-test-$name"
