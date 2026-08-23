@@ -35,6 +35,8 @@ fi
 # Ensure the Fedora transaction compatibility surface itself is certified.
 transaction_voucher="$SOURCE_ROOT/certification/fedora-transaction-latest.txt"
 [[ -r $transaction_voucher ]] || fail 'Fedora transaction voucher is missing'
+"$SOURCE_ROOT/scripts/check-voucher-source-equivalence.sh" "$transaction_voucher" \
+    || fail 'Fedora transaction voucher is stale for this source revision'
 grep -Fxq 'status=pass' "$transaction_voucher" \
     || fail 'Fedora transaction compatibility is not green'
 for key in systemctl update_helper tmpfiles sysusers sysctl binfmt udevadm; do
@@ -45,6 +47,8 @@ done
 # 184/184 is non-negotiable before systemd-libs can leave the RPM transaction.
 abi="$SOURCE_ROOT/certification/final-abi-closure-latest.txt"
 [[ -r $abi ]] || fail 'final RustD ABI closure voucher is missing'
+"$SOURCE_ROOT/scripts/check-voucher-source-equivalence.sh" "$abi" \
+    || fail 'final RustD ABI closure voucher is stale for this source revision'
 grep -Fxq 'status=pass' "$abi" || fail 'final RustD ABI closure is not green'
 grep -Fxq 'required=184' "$abi" || fail 'ABI voucher does not require 184 symbols'
 grep -Fxq 'supported=184' "$abi" || fail 'ABI voucher does not certify 184 symbols'
@@ -56,6 +60,8 @@ grep -Fxq 'systemd_runtime_link=none' "$abi" || fail 'RustD compatibility librar
 # Fedora package/SELinux source contracts must have been compiled on Fedora.
 package_voucher="$SOURCE_ROOT/certification/fedora-package-contract-latest.txt"
 [[ -r $package_voucher ]] || fail 'Fedora package/SELinux contract voucher is missing'
+"$SOURCE_ROOT/scripts/check-voucher-source-equivalence.sh" "$package_voucher" \
+    || fail 'Fedora package/SELinux contract voucher is stale for this source revision'
 grep -Eq '^status=(success|pass)$' "$package_voucher" \
     || fail 'Fedora package/SELinux contract is not green'
 grep -Fxq 'selinux_reference_policy=compiled' "$package_voucher" \
