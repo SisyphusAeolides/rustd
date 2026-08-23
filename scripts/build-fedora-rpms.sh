@@ -112,6 +112,10 @@ for capability in \
     "systemd-udev = $systemd_evr" \
     "systemd-pam = $systemd_evr" \
     "systemd-units = $systemd_evr" \
+    "systemd-sysusers = $systemd_evr" \
+    "systemd-standalone-sysusers = $systemd_evr" \
+    "systemd-tmpfiles = $systemd_evr" \
+    "systemd-standalone-tmpfiles = $systemd_evr" \
     'systemd-sysv = 206'; do
     grep -Fxq "$capability" <<<"$compat_provides"
 done

@@ -26,11 +26,21 @@ Provides:       systemd-pam = %{systemd_compat_evr}
 Provides:       systemd-pam%{?_isa} = %{systemd_compat_evr}
 Provides:       systemd-units = %{systemd_compat_evr}
 Provides:       systemd-sysv = 206
+Provides:       systemd-sysusers = %{systemd_compat_evr}
+Provides:       systemd-sysusers%{?_isa} = %{systemd_compat_evr}
+Provides:       systemd-standalone-sysusers = %{systemd_compat_evr}
+Provides:       systemd-standalone-sysusers%{?_isa} = %{systemd_compat_evr}
+Provides:       systemd-tmpfiles = %{systemd_compat_evr}
+Provides:       systemd-standalone-tmpfiles = %{systemd_compat_evr}
+Provides:       systemd-standalone-tmpfiles%{?_isa} = %{systemd_compat_evr}
 Provides:       udev = %{systemd_compat_evr}
 Provides:       udev%{?_isa} = %{systemd_compat_evr}
 Obsoletes:      systemd <= %{systemd_compat_evr}
 Obsoletes:      systemd-udev <= %{systemd_compat_evr}
 Obsoletes:      systemd-pam <= %{systemd_compat_evr}
+Obsoletes:      systemd-sysusers <= %{systemd_compat_evr}
+Obsoletes:      systemd-standalone-sysusers <= %{systemd_compat_evr}
+Obsoletes:      systemd-standalone-tmpfiles <= %{systemd_compat_evr}
 
 %description
 Fedora transaction compatibility entry points and package capabilities backed

@@ -48,6 +48,13 @@ for capability in \
     'systemd-pam%{?_isa} = %{systemd_compat_evr}' \
     'systemd-units = %{systemd_compat_evr}' \
     'systemd-sysv = 206' \
+    'systemd-sysusers = %{systemd_compat_evr}' \
+    'systemd-sysusers%{?_isa} = %{systemd_compat_evr}' \
+    'systemd-standalone-sysusers = %{systemd_compat_evr}' \
+    'systemd-standalone-sysusers%{?_isa} = %{systemd_compat_evr}' \
+    'systemd-tmpfiles = %{systemd_compat_evr}' \
+    'systemd-standalone-tmpfiles = %{systemd_compat_evr}' \
+    'systemd-standalone-tmpfiles%{?_isa} = %{systemd_compat_evr}' \
     'udev = %{systemd_compat_evr}' \
     'udev%{?_isa} = %{systemd_compat_evr}'; do
     grep -Fq "Provides:       $capability" dist/fedora/rustd-fedora-compat.spec
@@ -57,6 +64,12 @@ grep -Fq 'Obsoletes:      systemd <= %{systemd_compat_evr}' \
 grep -Fq 'Obsoletes:      systemd-udev <= %{systemd_compat_evr}' \
     dist/fedora/rustd-fedora-compat.spec
 grep -Fq 'Obsoletes:      systemd-pam <= %{systemd_compat_evr}' \
+    dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Obsoletes:      systemd-sysusers <= %{systemd_compat_evr}' \
+    dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Obsoletes:      systemd-standalone-sysusers <= %{systemd_compat_evr}' \
+    dist/fedora/rustd-fedora-compat.spec
+grep -Fq 'Obsoletes:      systemd-standalone-tmpfiles <= %{systemd_compat_evr}' \
     dist/fedora/rustd-fedora-compat.spec
 grep -Fq 'Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}' \
     dist/fedora/rustd-fedora-compat.spec
