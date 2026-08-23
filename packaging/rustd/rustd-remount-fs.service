@@ -1,0 +1,11 @@
+[Unit]
+Description=Remount Root and Kernel File Systems
+DefaultDependencies=no
+Before=local-fs.target rustd-journald.service shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/rustd-remount-fs
+Environment=SYSTEMD_REMOUNT_ROOT_RW=1
+RemainAfterExit=yes

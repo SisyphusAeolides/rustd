@@ -1,2 +1,4 @@
 [Unit]
 Description=RustD Local File Systems
+Wants=rustd-remount-fs.service
+After=rustd-remount-fs.service
