@@ -167,6 +167,8 @@ grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles --prefix=/dev --create --boot' \
     packaging/rustd/rustd-tmpfiles-setup-dev.service
 grep -Fxq 'ENV{MODALIAS}=="?*", RUN{builtin}+="kmod load"' \
     dist/fedora/compat/80-drivers.rules
+grep -Fxq 'ACTION=="remove", GOTO="rustd_drivers_end"' \
+    dist/fedora/compat/80-drivers.rules
 grep -Fq "grep -Fq 'usr/lib/udev/rules.d/80-drivers.rules'" \
     scripts/fedora-vm-guest-cutover.sh
 grep -Fq "owner_matches /usr/sbin/rustd-fedora-cutover '^rustd-cutover-tools$'" \

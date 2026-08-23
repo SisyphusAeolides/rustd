@@ -3,7 +3,10 @@
 # starts. RustD owns this rule because replacing systemd-udev removes the
 # distribution copy that otherwise invokes the kmod builtin.
 
-ACTION!="add", GOTO="rustd_drivers_end"
+# rustudevadm uses "change" for its default coldplug trigger, while devices
+# arriving after startup use "add". Loading an already-present module is
+# idempotent, so process every discovery event except device removal.
+ACTION=="remove", GOTO="rustd_drivers_end"
 
 ENV{MODALIAS}=="?*", RUN{builtin}+="kmod load"
 SUBSYSTEM=="tifm", ENV{TIFM_CARD_TYPE}=="SD", RUN{builtin}+="kmod load tifm_sd"
