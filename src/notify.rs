@@ -10,6 +10,7 @@
 //!   `src/core/service.c service_notify_message()` (v261)
 
 use std::collections::{HashMap, VecDeque};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -394,6 +395,17 @@ fn create_notify_socket(path: &str) -> anyhow::Result<(OwnedFd, Option<PathBuf>)
         }
         return Err(std::io::Error::last_os_error().into());
     }
+    if let Some(socket_path) = &filesystem_path {
+        // Type=notify services commonly drop privileges before reporting
+        // readiness.  Access control is enforced from SCM_CREDENTIALS and
+        // NotifyAccess=, so every service must be able to write the socket.
+        if let Err(error) =
+            std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o666))
+        {
+            let _ = std::fs::remove_file(socket_path);
+            return Err(error.into());
+        }
+    }
 
     Ok((fd, filesystem_path))
 }
@@ -636,5 +648,16 @@ mod tests {
         };
         assert_eq!(result, 0);
         assert_eq!(enabled, 1);
+    }
+
+    #[test]
+    fn filesystem_socket_accepts_unprivileged_service_notifications() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notify.sock");
+        let _server = NotifyServer::new_at(path.to_str().unwrap()).unwrap();
+        assert_eq!(
+            std::fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o666
+        );
     }
 }
