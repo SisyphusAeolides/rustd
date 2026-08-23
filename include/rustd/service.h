@@ -27,6 +27,7 @@ int rustd_peer_uid(int fd, uid_t *uid_out);
 int rustd_peer_pid(int fd, pid_t *pid_out);
 
 int rustd_notify_send(pid_t pid, const char *state, const int *fds, size_t n_fds);
+int rustd_notify_barrier(pid_t pid, uint64_t timeout_usec);
 
 #ifdef __cplusplus
 }

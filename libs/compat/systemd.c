@@ -130,6 +130,16 @@ int sd_pid_notify_with_fds(pid_t pid, int unset_environment, const char *state,
     return result;
 }
 
+int sd_notify_barrier(int unset_environment, uint64_t timeout_usec) {
+    int result;
+    alias_notify_env();
+    result = rustd_notify_barrier(0, timeout_usec);
+    clear_legacy_notify(unset_environment);
+    if (unset_environment)
+        (void)unsetenv("RUSTD_NOTIFY_SOCKET");
+    return result;
+}
+
 int sd_listen_fds(int unset_environment) {
     int result;
     alias_listen_env();
@@ -977,6 +987,9 @@ int sd_session_get_leader(const char *session, pid_t *leader) {
 }
 int sd_session_get_remote_host(const char *session, char **host) {
     return rustd_session_get_remote_host(session, host);
+}
+int sd_session_get_remote_user(const char *session, char **user) {
+    return rustd_session_get_remote_user(session, user);
 }
 int sd_session_get_start_time(const char *session, uint64_t *usec) {
     return rustd_session_get_start_time(session, usec);

@@ -8,6 +8,8 @@ sd_bus_call_method
 sd_bus_call_method_async
 sd_bus_close
 sd_bus_default_user
+sd_bus_default_system
+sd_bus_message_append_strv
 sd_bus_error_free
 sd_bus_error_get_errno
 sd_bus_error_has_name
@@ -154,6 +156,7 @@ sd_login_monitor_new
 sd_login_monitor_unref
 sd_notify
 sd_notifyf
+sd_notify_barrier
 sd_pid_get_cgroup
 sd_pid_get_machine_name
 sd_pid_get_owner_uid
@@ -175,6 +178,7 @@ sd_session_get_class
 sd_session_get_display
 sd_session_get_leader
 sd_session_get_remote_host
+sd_session_get_remote_user
 sd_session_get_seat
 sd_session_get_service
 sd_session_get_start_time

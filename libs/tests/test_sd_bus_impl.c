@@ -229,6 +229,26 @@ static void test_extended_message_codec(void) {
     sd_bus_unref(bus);
 }
 
+static void test_string_vector_codec(void) {
+    sd_bus *bus = NULL;
+    sd_bus_message *message = NULL;
+    char *values[] = {"alpha", "beta", NULL};
+    const char *value = NULL;
+
+    assert(sd_bus_new(&bus) == 0);
+    assert(sd_bus_message_new_method_call(bus, &message, "org.example.Test",
+                                          "/org/example/Test",
+                                          "org.example.Test", "Strings") == 0);
+    assert(sd_bus_message_append_strv(message, values) == 0);
+    assert(sd_bus_message_enter_container(message, SD_BUS_TYPE_ARRAY, "s") > 0);
+    assert(sd_bus_message_read(message, "s", &value) == 1 && strcmp(value, "alpha") == 0);
+    assert(sd_bus_message_read(message, "s", &value) == 1 && strcmp(value, "beta") == 0);
+    assert(sd_bus_message_at_end(message, 0) > 0);
+    assert(sd_bus_message_exit_container(message) > 0);
+    sd_bus_message_unref(message);
+    sd_bus_unref(bus);
+}
+
 static void test_real_session_bus(void) {
     sd_bus *bus = NULL;
     sd_bus_message *reply = NULL;
@@ -734,6 +754,7 @@ static void test_event_controls(void) {
 int main(void) {
     test_local_message_codec();
     test_extended_message_codec();
+    test_string_vector_codec();
     test_real_session_bus();
     test_matches_and_emission();
     test_async_session_bus();

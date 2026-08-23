@@ -671,6 +671,30 @@ int sd_bus_message_append_string_space(sd_bus_message *m, size_t size, char **re
     return 0;
 }
 
+int sd_bus_message_append_strv(sd_bus_message *m, char **values) {
+    DBusMessageIter *iter;
+    DBusMessageIter array;
+    size_t index;
+    int r;
+    if (!m)
+        return -EINVAL;
+    if (m->sealed)
+        return -EPERM;
+    r = rustd_commit_string_space(m);
+    if (r < 0)
+        return r;
+    iter = rustd_append_iter(m);
+    if (!dbus_message_iter_open_container(iter, DBUS_TYPE_ARRAY, DBUS_TYPE_STRING_AS_STRING,
+                                          &array))
+        return -ENOMEM;
+    for (index = 0; values && values[index]; index++) {
+        const char *value = values[index];
+        if (!dbus_message_iter_append_basic(&array, DBUS_TYPE_STRING, &value))
+            return -ENOMEM;
+    }
+    return dbus_message_iter_close_container(iter, &array) ? 0 : -ENOMEM;
+}
+
 static int rustd_dbus_fixed_size(char type) {
     switch (type) {
     case DBUS_TYPE_BYTE: return 1;
@@ -1372,6 +1396,10 @@ int sd_bus_open_user(sd_bus **ret) {
 
 int sd_bus_default_user(sd_bus **ret) {
     return sd_bus_open_user(ret);
+}
+
+int sd_bus_default_system(sd_bus **ret) {
+    return sd_bus_open_system(ret);
 }
 
 sd_bus *sd_bus_flush_close_unref(sd_bus *bus) {

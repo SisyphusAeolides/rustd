@@ -12,6 +12,7 @@ RUSTD_SERVICE_1.0 {
     rustd_peer_uid;
     rustd_peer_pid;
     rustd_notify_send;
+    rustd_notify_barrier;
   local:
     *;
 };

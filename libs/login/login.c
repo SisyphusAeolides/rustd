@@ -214,6 +214,7 @@ SESSION_STRING_GETTER(tty, "TTY")
 SESSION_STRING_GETTER(service, "SERVICE")
 SESSION_STRING_GETTER(username, "USER")
 SESSION_STRING_GETTER(remote_host, "REMOTE_HOST")
+SESSION_STRING_GETTER(remote_user, "REMOTE_USER")
 
 int rustd_session_get_leader(const char *session, pid_t *leader) {
     char *path = session_path(session);

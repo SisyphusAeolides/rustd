@@ -29,6 +29,7 @@ int rustd_session_get_service(const char *session, char **service);
 int rustd_session_get_username(const char *session, char **user);
 int rustd_session_get_leader(const char *session, pid_t *leader);
 int rustd_session_get_remote_host(const char *session, char **host);
+int rustd_session_get_remote_user(const char *session, char **user);
 int rustd_session_get_start_time(const char *session, uint64_t *usec);
 int rustd_session_is_remote(const char *session);
 

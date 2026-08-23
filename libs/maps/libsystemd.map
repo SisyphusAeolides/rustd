@@ -78,6 +78,7 @@ LIBSYSTEMD_209 {
     sd_session_get_class;
     sd_session_get_display;
     sd_session_get_remote_host;
+    sd_session_get_remote_user;
     sd_session_get_service;
     sd_session_get_seat;
     sd_session_get_state;
@@ -236,6 +237,8 @@ LIBSYSTEMD_221 {
     sd_bus_request_name;
     sd_bus_send;
     sd_bus_default_user;
+    sd_bus_default_system;
+    sd_bus_message_append_strv;
     sd_bus_process;
     sd_bus_query_sender_creds;
     sd_bus_wait;
@@ -383,6 +386,7 @@ LIBSYSTEMD_245 {
 
 LIBSYSTEMD_246 {
   global:
+    sd_notify_barrier;
     sd_bus_interface_name_is_valid;
     sd_bus_member_name_is_valid;
     sd_bus_object_path_is_valid;
