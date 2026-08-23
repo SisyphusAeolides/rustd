@@ -81,6 +81,28 @@ getent passwd root >/dev/null
 
 # Phase two owns the overlapping Fedora paths and replacement capabilities.
 # --allowerasing is permitted only after the staged migration has passed.
+solver_log=/var/tmp/rustd-exclusive-solver.txt
+set +e
+LC_ALL=C dnf \
+    --repofrompath=rustd,"file://$RPM_REPO" \
+    --setopt=rustd.gpgcheck=0 \
+    --setopt=install_weak_deps=False \
+    --setopt=protected_packages= \
+    install rustd rustd-resolved rustd-compat-libs rustd-fedora-compat rustd-selinux \
+    --allowerasing --assumeno >"$solver_log" 2>&1
+solver_status=$?
+set -e
+cat "$solver_log"
+[[ $solver_status -ne 0 ]] || {
+    echo 'exclusive solver preflight unexpectedly completed a transaction' >&2
+    exit 1
+}
+grep -Fq 'Transaction Summary' "$solver_log"
+if grep -Fq 'Removing dependent packages:' "$solver_log"; then
+    echo 'exclusive solver preflight would remove dependent packages' >&2
+    exit 1
+fi
+
 dnf -y \
     --repofrompath=rustd,"file://$RPM_REPO" \
     --setopt=rustd.gpgcheck=0 \
