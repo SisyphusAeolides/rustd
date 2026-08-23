@@ -3,7 +3,9 @@
 
 use std::ffi::CString;
 use std::fs;
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context};
 
@@ -35,7 +37,8 @@ pub fn activate_mount(record: &mut UnitRecord) -> anyhow::Result<()> {
     }
 
     let (flags, data) = parse_mount_options(&mount.specific.options);
-    let source = CString::new(mount.specific.what.as_str())?;
+    let source_path = resolve_mount_source(&mount.specific.what)?;
+    let source = CString::new(source_path.as_os_str().as_bytes())?;
     let target = CString::new(mount.specific.where_.as_str())?;
     let fstype = (!mount.specific.r#type.is_empty() && mount.specific.r#type != "auto")
         .then(|| CString::new(mount.specific.r#type.as_str()))
@@ -62,6 +65,32 @@ pub fn activate_mount(record: &mut UnitRecord) -> anyhow::Result<()> {
     }
     record.state = UnitState::Active;
     Ok(())
+}
+
+fn resolve_mount_source(spec: &str) -> anyhow::Result<PathBuf> {
+    resolve_mount_source_in(spec, Path::new("/dev/disk"))
+}
+
+fn resolve_mount_source_in(spec: &str, disk_root: &Path) -> anyhow::Result<PathBuf> {
+    let mappings = [
+        ("UUID=", "by-uuid"),
+        ("LABEL=", "by-label"),
+        ("PARTUUID=", "by-partuuid"),
+        ("PARTLABEL=", "by-partlabel"),
+    ];
+    let Some((value, directory)) = mappings
+        .iter()
+        .find_map(|(prefix, directory)| spec.strip_prefix(prefix).map(|value| (value, directory)))
+    else {
+        return Ok(PathBuf::from(spec));
+    };
+    if value.is_empty() || value.contains('/') {
+        return Err(anyhow!("invalid mount source specification '{spec}'"));
+    }
+
+    let link = disk_root.join(directory).join(value);
+    fs::canonicalize(&link)
+        .with_context(|| format!("resolve mount source {spec} through {}", link.display()))
 }
 
 /// Unmount a `.mount` unit.
@@ -172,7 +201,7 @@ fn parse_mount_options(options: &str) -> (libc::c_ulong, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
+    use std::os::unix::fs::symlink;
 
     #[test]
     fn mount_options_split_kernel_flags_from_filesystem_data() {
@@ -186,5 +215,36 @@ mod tests {
     #[test]
     fn path_type_is_used_for_mount_points() {
         assert!(Path::new("/srv/data").is_absolute());
+    }
+
+    #[test]
+    fn resolves_fstab_device_identifiers_through_dev_disk_links() {
+        let root = tempfile::tempdir().unwrap();
+        let device = root.path().join("vda3");
+        fs::write(&device, []).unwrap();
+
+        for (spec, directory, value) in [
+            ("UUID=dead-beef", "by-uuid", "dead-beef"),
+            ("LABEL=fedora", "by-label", "fedora"),
+            ("PARTUUID=1234", "by-partuuid", "1234"),
+            ("PARTLABEL=root", "by-partlabel", "root"),
+        ] {
+            let links = root.path().join(directory);
+            fs::create_dir_all(&links).unwrap();
+            symlink(&device, links.join(value)).unwrap();
+            assert_eq!(resolve_mount_source_in(spec, root.path()).unwrap(), device);
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_or_unresolved_fstab_device_identifiers() {
+        let root = tempfile::tempdir().unwrap();
+        assert!(resolve_mount_source_in("UUID=", root.path()).is_err());
+        assert!(resolve_mount_source_in("LABEL=../../escape", root.path()).is_err());
+        assert!(resolve_mount_source_in("UUID=missing", root.path()).is_err());
+        assert_eq!(
+            resolve_mount_source_in("/dev/vda3", root.path()).unwrap(),
+            PathBuf::from("/dev/vda3")
+        );
     }
 }

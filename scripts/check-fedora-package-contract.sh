@@ -192,6 +192,10 @@ grep -Fq 'Wants=rustd-remount-fs.service' \
     packaging/rustd/local-fs.target
 grep -Fq 'After=rustd-remount-fs.service' \
     packaging/rustd/local-fs.target
+grep -Fq 'Wants=rustd-remount-fs.service rustd-udev-settle.service' \
+    packaging/rustd/local-fs.target
+grep -Fq 'After=rustd-remount-fs.service rustd-udev-settle.service' \
+    packaging/rustd/local-fs.target
 grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles' \
     packaging/rustd/rustd-tmpfiles-setup.service
 grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles --prefix=/dev --create --boot' \
