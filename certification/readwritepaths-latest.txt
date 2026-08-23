@@ -1,6 +1,6 @@
 schema=rustd-readwritepaths-cert-v1
 status=failure
-tested_sha=e3be9483fe8d031abc17591a4486d36a5420f99d
+tested_sha=08f856a499d5dbbf4b746aa7a4c2c151f0438a9e
 build_outcome=failure
 cert_outcome=skipped
 protect_system=strict
