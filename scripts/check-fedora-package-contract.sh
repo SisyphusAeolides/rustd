@@ -26,6 +26,14 @@ for spec in dist/fedora/*.spec; do
     test -s "$expanded"
 done
 
+for frontend in dist/fedora/compat/*; do
+    case "$frontend" in
+        *.c|*.rules) continue ;;
+    esac
+    test "$(head -n1 "$frontend")" = '#!/bin/bash'
+done
+! grep -R -n -F '#!/usr/bin/bash' dist/fedora/compat
+
 mkdir -p "$WORK/selinux"
 cp dist/fedora/selinux/rustd_fedora.te "$WORK/selinux/"
 cp dist/fedora/selinux/rustd_fedora.fc "$WORK/selinux/"

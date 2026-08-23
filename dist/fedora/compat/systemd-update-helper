@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Fedora RPM transaction helper implemented on the RustD control plane.
 set -euo pipefail
