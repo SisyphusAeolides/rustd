@@ -621,20 +621,21 @@ impl Manager {
                 return Ok(result);
             }
 
-            // A completed dispatch batch may make ordered successor jobs
-            // runnable without producing an fd event. Re-enter scheduling
-            // immediately instead of sleeping until an unrelated wakeup or
-            // the bounded poll timeout.
-            if dispatched_jobs {
-                continue;
-            }
-
-            if exit_when_idle && self.is_idle() {
+            if !dispatched_jobs && exit_when_idle && self.is_idle() {
                 return Ok(LoopResult::Exit);
             }
 
-            // 9. Poll until an event or the nearest watchdog deadline.
-            let poll_timeout_ms = self.next_poll_timeout_ms();
+            // 9. Poll until an event or the nearest watchdog deadline.  A
+            // completed job dispatch may immediately unblock an ordered
+            // successor, so do not sleep in that case.  Still perform a
+            // non-blocking poll: a large boot transaction must not starve
+            // readiness, child-exit, socket, or timer events while jobs keep
+            // becoming runnable.
+            let poll_timeout_ms = if dispatched_jobs {
+                0
+            } else {
+                self.next_poll_timeout_ms()
+            };
             let r = self.event_loop.run_once_timeout(poll_timeout_ms)?;
 
             // 2b. Apply any child exits collected inside run_once (via SIGCHLD).

@@ -9,19 +9,20 @@
 //! Upstream reference: `src/core/manager.c manager_setup_notify()`,
 //!   `src/core/service.c service_notify_message()` (v261)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::os::unix::io::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 const NOTIFY_EVENTS_PER_WAKE: usize = 256;
 const NOTIFY_BUFFER_SIZE: usize = 65_536;
+const DEFERRED_NOTIFY_LIMIT: usize = 256;
 
 use crate::event::loop_::IoHandler;
 use crate::unit::section_service::NotifyAccess;
 
-/// Default abstract notification socket.
-pub const RUSTD_NOTIFY_SOCKET_PATH: &str = "@rustd/notify";
+/// Default filesystem notification socket.
+pub const RUSTD_NOTIFY_SOCKET_PATH: &str = "/run/rustd/notify";
 
 /// A parsed `rustd_notify` message.
 #[derive(Debug, Default, Clone)]
@@ -85,6 +86,7 @@ struct Registration {
 struct NotifyState {
     registrations: HashMap<libc::pid_t, Registration>,
     pending: Vec<NotifyEvent>,
+    deferred: VecDeque<(libc::pid_t, NotifyMessage)>,
 }
 
 /// The manager-side notification socket.
@@ -147,14 +149,31 @@ impl NotifyServer {
             .state
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let unit_name = unit_name.into();
         state.registrations.insert(
             pid,
             Registration {
-                unit_name: unit_name.into(),
+                unit_name: unit_name.clone(),
                 access,
                 main_pid: pid,
             },
         );
+        // A daemon can exec and call sd_notify() before its parent returns
+        // from rustd_spawn().  Preserve that authenticated datagram until the
+        // manager has associated the child PID with its unit.
+        let mut retained = VecDeque::with_capacity(state.deferred.len());
+        while let Some((sender_pid, message)) = state.deferred.pop_front() {
+            if sender_pid == pid {
+                state.pending.push(NotifyEvent {
+                    unit_name: unit_name.clone(),
+                    sender_pid,
+                    message,
+                });
+            } else {
+                retained.push_back((sender_pid, message));
+            }
+        }
+        state.deferred = retained;
     }
 
     /// Replace a registered main PID after an authenticated `MAINPID=` update.
@@ -230,6 +249,11 @@ impl IoHandler for NotifyIoHandler {
                     sender_pid,
                     message,
                 });
+            } else {
+                if state.deferred.len() == DEFERRED_NOTIFY_LIMIT {
+                    state.deferred.pop_front();
+                }
+                state.deferred.push_back((sender_pid, message));
             }
         }
     }
@@ -541,6 +565,31 @@ mod tests {
 
         producer.join().unwrap();
         assert_eq!(received_events, total_events);
+    }
+
+    #[test]
+    fn notification_sent_before_pid_registration_is_delivered() {
+        use std::os::unix::net::UnixDatagram;
+
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("notify-early.sock");
+        let server = NotifyServer::new_at(path.to_str().unwrap()).unwrap();
+        let sender = UnixDatagram::unbound().unwrap();
+        sender.connect(&path).unwrap();
+        sender.send(b"READY=1").unwrap();
+
+        let mut handler = server.io_handler();
+        handler.on_io(server.raw_fd(), libc::EPOLLIN as u32);
+        assert!(server.drain_events().is_empty());
+
+        // Safety: getpid has no preconditions and is the credential PID the
+        // kernel attached to the datagram sent above.
+        let pid = unsafe { libc::getpid() };
+        server.register_pid(pid, "early.service", NotifyAccess::Main);
+        let events = server.drain_events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].unit_name, "early.service");
+        assert!(events[0].message.ready);
     }
 
     #[test]

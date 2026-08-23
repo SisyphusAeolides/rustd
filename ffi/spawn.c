@@ -496,7 +496,7 @@ pid_t rustd_spawn(const rustd_spawn_params *p) {
     if (p->notify_fd >= 0) {
         notify_socket = getenv("RUSTD_NOTIFY_SOCKET");
         if (!notify_socket || notify_socket[0] == '\0')
-            notify_socket = "@rustd/notify";
+            notify_socket = "/run/rustd/notify";
     }
 
     rustd_spawn_writer measure = { .data = NULL, .capacity = 0, .offset = 0, .failed = 0 };
