@@ -40,6 +40,17 @@ grep -Fq 'Provides:       systemd = %{systemd_compat_evr}' \
     dist/fedora/rustd-fedora-compat.spec
 grep -Fq 'Provides:       systemd-udev = %{systemd_compat_evr}' \
     dist/fedora/rustd-fedora-compat.spec
+for capability in \
+    'systemd%{?_isa} = %{systemd_compat_evr}' \
+    'systemd-udev%{?_isa} = %{systemd_compat_evr}' \
+    'systemd-pam = %{systemd_compat_evr}' \
+    'systemd-pam%{?_isa} = %{systemd_compat_evr}' \
+    'systemd-units = %{systemd_compat_evr}' \
+    'systemd-sysv = 206' \
+    'udev%{?_isa} = %{systemd_compat_evr}'; do
+    grep -Fq "Provides:       $capability" dist/fedora/rustd-fedora-compat.spec
+done
+grep -Fq 'Conflicts:      systemd-pam' dist/fedora/rustd-fedora-compat.spec
 grep -Fq 'Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}' \
     dist/fedora/rustd-fedora-compat.spec
 grep -Fq 'Requires:       rustd-cutover-tools%{?_isa} = %{version}-%{release}' \
@@ -53,6 +64,10 @@ mapfile -t manager_providers < <(
 grep -Eq "^Provides:[[:space:]]+systemd = ${REFERENCE_EVR//./\\.}$" \
     "$WORK/rustd-fedora-compat.spec.expanded"
 grep -Eq "^Provides:[[:space:]]+systemd-udev = ${REFERENCE_EVR//./\\.}$" \
+    "$WORK/rustd-fedora-compat.spec.expanded"
+grep -Eq "^Provides:[[:space:]]+systemd-units = ${REFERENCE_EVR//./\\.}$" \
+    "$WORK/rustd-fedora-compat.spec.expanded"
+grep -Eq '^Provides:[[:space:]]+systemd-sysv = 206$' \
     "$WORK/rustd-fedora-compat.spec.expanded"
 grep -Eq "^Provides:[[:space:]]+systemd-libs = ${REFERENCE_EVR//./\\.}$" \
     "$WORK/rustd-compat-libs.spec.expanded"

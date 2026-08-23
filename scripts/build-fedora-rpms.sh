@@ -101,6 +101,23 @@ rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd-resolved.spec"
 find "$TOPDIR/RPMS" -type f -name '*.rpm' -exec cp -a {} "$OUTPUT/" \;
 find "$TOPDIR/SRPMS" -type f -name '*.src.rpm' -exec cp -a {} "$OUTPUT/" \;
 
+compat_rpm=$(find "$OUTPUT" -maxdepth 1 -type f \
+    -name 'rustd-fedora-compat-*.rpm' ! -name '*.src.rpm' | head -1)
+[[ -n $compat_rpm ]]
+compat_provides=$(rpm -qp --provides "$compat_rpm")
+for capability in \
+    "systemd = $systemd_evr" \
+    "systemd-udev = $systemd_evr" \
+    "systemd-pam = $systemd_evr" \
+    "systemd-units = $systemd_evr" \
+    'systemd-sysv = 206'; do
+    grep -Fxq "$capability" <<<"$compat_provides"
+done
+grep -Eq "^systemd\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
+grep -Eq "^systemd-udev\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
+grep -Eq "^systemd-pam\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
+grep -Eq "^udev\([^)]*\) = ${systemd_evr//./\\.}$" <<<"$compat_provides"
+
 manifest="$OUTPUT/manifest.txt"
 {
     printf 'schema=rustd-fedora-rpm-set-v1\n'

@@ -19,9 +19,17 @@ Requires:       rustd-cutover-tools%{?_isa} = %{version}-%{release}
 Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}
 Requires:       dracut
 Provides:       systemd = %{systemd_compat_evr}
+Provides:       systemd%{?_isa} = %{systemd_compat_evr}
 Provides:       systemd-udev = %{systemd_compat_evr}
+Provides:       systemd-udev%{?_isa} = %{systemd_compat_evr}
+Provides:       systemd-pam = %{systemd_compat_evr}
+Provides:       systemd-pam%{?_isa} = %{systemd_compat_evr}
+Provides:       systemd-units = %{systemd_compat_evr}
+Provides:       systemd-sysv = 206
+Provides:       udev%{?_isa} = %{systemd_compat_evr}
 Conflicts:      systemd
 Conflicts:      systemd-udev
+Conflicts:      systemd-pam
 
 %description
 Fedora transaction compatibility entry points and package capabilities backed
