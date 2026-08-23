@@ -6,6 +6,6 @@ Conflicts=shutdown.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/rustd-remount-fs
+ExecStart=/usr/lib/rustd/rustd-remount-fs
 Environment=SYSTEMD_REMOUNT_ROOT_RW=1
 RemainAfterExit=yes

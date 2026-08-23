@@ -184,7 +184,7 @@ grep -Fq 'rustd_dns' \
     dist/fedora/compat/rustd-fedora-cutover
 grep -Fxq 'ExecStart=/usr/bin/rustd-sysusers' \
     packaging/rustd/rustd-sysusers.service
-grep -Fxq 'ExecStart=/usr/bin/rustd-remount-fs' \
+grep -Fxq 'ExecStart=/usr/lib/rustd/rustd-remount-fs' \
     packaging/rustd/rustd-remount-fs.service
 grep -Fxq 'Environment=SYSTEMD_REMOUNT_ROOT_RW=1' \
     packaging/rustd/rustd-remount-fs.service
