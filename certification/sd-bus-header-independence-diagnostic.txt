@@ -1,0 +1,3 @@
+/usr/bin/ld: /tmp/ccYHtgOi.o: undefined reference to symbol 'sd_event_add_io@@LIBSYSTEMD_221'
+/usr/bin/ld: /lib/x86_64-linux-gnu/libsystemd.so.0: error adding symbols: DSO missing from command line
+collect2: error: ld returned 1 exit status
