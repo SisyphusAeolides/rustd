@@ -3,7 +3,8 @@
 
 use clap::{Parser, ValueEnum};
 use rustd::udev::{
-    add_persistent_storage_links, apply_rules, load_rules, persist_device, Device, Rule,
+    add_persistent_storage_links, apply_rules, load_rules, persist_device, probe_block_metadata,
+    Device, Rule,
 };
 use std::collections::BTreeMap;
 use std::fs;
@@ -177,6 +178,7 @@ fn process_device(
     for (key, value) in global_properties {
         device.properties.insert(key.clone(), value.clone());
     }
+    probe_block_metadata(device);
     apply_rules(rules, device);
     add_persistent_storage_links(device);
     if !dry_run {

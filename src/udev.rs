@@ -489,6 +489,28 @@ fn import_blkid_export(export: &str, device: &mut Device) {
     }
 }
 
+/// Probe filesystem and partition metadata for a block event before applying
+/// distribution rules. This guarantees that early userspace can identify its
+/// root device even when a reduced or newer rule file is not understood by the
+/// native rule engine yet.
+pub fn probe_block_metadata(device: &mut Device) {
+    if device.subsystem != "block" {
+        return;
+    }
+    let Some(node) = device_node(device) else {
+        return;
+    };
+    let Ok(output) = Command::new("blkid")
+        .args(["-o", "export", "-p", &node])
+        .output()
+    else {
+        return;
+    };
+    if output.status.success() {
+        import_blkid_export(&String::from_utf8_lossy(&output.stdout), device);
+    }
+}
+
 fn udev_escape(value: &str) -> String {
     let mut escaped = String::new();
     for byte in value.bytes() {
