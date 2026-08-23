@@ -98,5 +98,5 @@ jobs:
           git config user.name 'Kenny Glowner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m "Record ReadWritePaths certification $status"
-          git push origin HEAD:main
+          bash scripts/push-certification-voucher.sh
           [ "$status" = pass ]
