@@ -4,15 +4,10 @@
 //! `UnitLoader` finds a `RustD` unit file on disk, applies drop-in overlays, and
 //! returns a fully parsed `LoadedUnit`.
 //!
-//! Native system unit search directory priority (highest first):
-//! 1. `/etc/rustd/system/`
-//! 2. `/etc/systemd/system/`
-//! 3. `/run/rustd/system/`
-//! 4. `/run/systemd/system/`
-//! 5. `/usr/local/lib/rustd/system/`
-//! 6. `/usr/local/lib/systemd/system/`
-//! 7. `/usr/lib/rustd/system/`
-//! 8. `/usr/lib/systemd/system/`
+//! Native system unit search directory priority follows the systemd-compatible
+//! generator precedence: early generator output, administrator configuration,
+//! runtime configuration, normal generator output, vendor units, then late
+//! generator output.
 
 use std::ffi::OsStr;
 use std::fmt::Write as _;
@@ -150,14 +145,17 @@ pub struct ParsedUnit<T> {
 
 fn standard_unit_search_dirs() -> Vec<PathBuf> {
     vec![
+        PathBuf::from("/run/rustd/generator.early"),
         PathBuf::from("/etc/rustd/system"),
         PathBuf::from("/etc/systemd/system"),
         PathBuf::from("/run/rustd/system"),
         PathBuf::from("/run/systemd/system"),
+        PathBuf::from("/run/rustd/generator"),
         PathBuf::from("/usr/local/lib/rustd/system"),
         PathBuf::from("/usr/local/lib/systemd/system"),
         PathBuf::from("/usr/lib/rustd/system"),
         PathBuf::from("/usr/lib/systemd/system"),
+        PathBuf::from("/run/rustd/generator.late"),
     ]
 }
 
@@ -1048,10 +1046,48 @@ mod tests {
                 .position(|item| item == Path::new(path))
                 .unwrap()
         };
+        assert!(position("/run/rustd/generator.early") < position("/etc/rustd/system"));
         assert!(position("/etc/rustd/system") < position("/etc/systemd/system"));
         assert!(position("/etc/systemd/system") < position("/usr/lib/rustd/system"));
         assert!(position("/run/systemd/system") < position("/usr/lib/rustd/system"));
+        assert!(position("/run/systemd/system") < position("/run/rustd/generator"));
+        assert!(position("/run/rustd/generator") < position("/usr/lib/rustd/system"));
         assert!(position("/usr/lib/rustd/system") < position("/usr/lib/systemd/system"));
+        assert!(position("/usr/lib/systemd/system") < position("/run/rustd/generator.late"));
+    }
+
+    #[test]
+    fn generated_target_dependencies_are_loaded_from_generator_directory() {
+        let root = tempfile::tempdir().unwrap();
+        let generator = root.path().join("run/rustd/generator");
+        let vendor = root.path().join("usr/lib/rustd/system");
+        std::fs::create_dir_all(generator.join("local-fs.target.requires")).unwrap();
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(
+            vendor.join("local-fs.target"),
+            "[Unit]\nDescription=Local FS\n",
+        )
+        .unwrap();
+        std::fs::write(
+            generator.join("var.mount"),
+            "[Mount]\nWhat=/dev/vda3\nWhere=/var\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(
+            "../var.mount",
+            generator.join("local-fs.target.requires/var.mount"),
+        )
+        .unwrap();
+
+        let loader = UnitLoader::with_dirs(vec![generator, vendor]);
+        let LoadedUnit::Target(target) = loader.load("local-fs.target").unwrap() else {
+            panic!("expected target");
+        };
+        assert_eq!(target.unit.requires, vec!["var.mount"]);
+        assert!(matches!(
+            loader.load("var.mount").unwrap(),
+            LoadedUnit::Mount(_)
+        ));
     }
 
     #[test]
