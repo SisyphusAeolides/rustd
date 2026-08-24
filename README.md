@@ -11,13 +11,22 @@ Linux kernel ABIs and useful freedesktop/Linux application protocols may be
 supported where they make sense, but another init system is not RustD's
 reference architecture and implementation parity is not a release gate.
 
-> **Safety status:** the source/build gates are extensive, but PID 1 production
-> certification still requires repeated installed-system boot, reboot, shutdown,
-> rescue, emergency, re-exec, crash/fault, recovery, and Fedora zero-systemd
-> cutover campaigns. Until the installed-system gates have passed for a release
-> candidate, keep a known-good recovery path and validate RustD in a
-> snapshot-backed VM or equivalent recoverable environment before making it the
-> only boot path.
+> **Current status (2026-08-24):** RustD's native, build, packaging, and
+> compatibility-library gates are passing, including 107 native targets and
+> complete validation of the 336-entry compatibility surface. The companion
+> resolver's source and packaging gates are also passing. The RustD Fedora live
+> image has been built and artifact-checked: `/usr/sbin/init` resolves to RustD
+> and the image contains no RPM named `systemd`, `systemd-libs`, `systemd-udev`,
+> or `systemd-resolved`.
+>
+> **Production boundary:** this is not a claim that RustD is a 100% certified,
+> drop-in replacement for systemd. Repeated installed-system VM campaigns as
+> sole PID 1—covering cold boot, reboot, shutdown, rescue/emergency paths,
+> re-exec, crash/fault recovery, networking, login, DNS, package management,
+> SELinux, and initramfs behavior—remain required for the exact release image.
+> Until those gates pass, retain a known-good recovery path and use a
+> snapshot-backed VM or equivalent recoverable environment before making RustD
+> the only boot path.
 
 ## Native architecture
 
