@@ -41,6 +41,7 @@ Provides:       systemd-standalone-tmpfiles = %{systemd_compat_evr}
 Provides:       systemd-standalone-tmpfiles%{?_isa} = %{systemd_compat_evr}
 Provides:       udev = %{systemd_compat_evr}
 Provides:       udev%{?_isa} = %{systemd_compat_evr}
+Provides:       u2f-hidraw-policy
 Obsoletes:      systemd <= %{systemd_compat_evr}
 Obsoletes:      systemd-udev <= %{systemd_compat_evr}
 Obsoletes:      systemd-pam <= %{systemd_compat_evr}
@@ -107,6 +108,7 @@ install -m0755 dist/fedora/compat/systemctl %{buildroot}%{_bindir}/systemctl
 install -m0755 dist/fedora/compat/systemd-tmpfiles %{buildroot}%{_bindir}/systemd-tmpfiles
 install -m0755 dist/fedora/compat/systemd-sysusers %{buildroot}%{_bindir}/systemd-sysusers
 install -m0755 dist/fedora/compat/udevadm %{buildroot}%{_bindir}/udevadm
+install -m0755 dist/fedora/compat/kernel-install %{buildroot}%{_bindir}/kernel-install
 install -m0755 dist/fedora/compat/systemd-update-helper %{buildroot}%{_prefix}/lib/systemd/systemd-update-helper
 install -m0755 dist/fedora/compat/systemd-sysctl %{buildroot}%{_prefix}/lib/systemd/systemd-sysctl
 install -m0755 dist/fedora/compat/systemd-binfmt %{buildroot}%{_prefix}/lib/systemd/systemd-binfmt
@@ -160,6 +162,7 @@ grep -R -Fq 'pam_rustd.so' /etc/pam.d \
 %{_bindir}/systemd-tmpfiles
 %{_bindir}/systemd-sysusers
 %{_bindir}/udevadm
+%{_bindir}/kernel-install
 %{_prefix}/lib/systemd/systemd-update-helper
 %{_prefix}/lib/systemd/systemd-sysctl
 %{_prefix}/lib/systemd/systemd-binfmt
