@@ -33,10 +33,14 @@ pub fn load_initial_policy() -> anyhow::Result<()> {
     if selinux_disabled_in_config(&config) || selinux_disabled_on_kernel_command_line()? {
         return Ok(());
     }
+    let desired_enforcing = selinux_mode(&config).map_or(true, |mode| mode == "enforcing");
     if !Path::new("/sys/fs/selinux").exists()
         // Dracut's SELinux module completed the handoff before switch-root.
         || Path::new("/sys/fs/selinux/enforce").exists()
     {
+        if Path::new("/sys/fs/selinux/enforce").exists() {
+            set_enforcing(desired_enforcing)?;
+        }
         return Ok(());
     }
 
@@ -72,14 +76,49 @@ pub fn load_initial_policy() -> anyhow::Result<()> {
     // Safety: `handle` was returned by `dlopen` above and no function pointer
     // from it is retained after this point.
     unsafe { libc::dlclose(handle) };
+    set_enforcing(desired_enforcing)?;
     eprintln!(
         "rustd: loaded initial SELinux policy ({})",
-        if enforcing != 0 {
+        if desired_enforcing && enforcing != 0 {
             "enforcing"
         } else {
             "permissive"
         }
     );
+    Ok(())
+}
+
+fn set_enforcing(enforcing: bool) -> anyhow::Result<()> {
+    let library = CString::new("libselinux.so.1")?;
+    let symbol = CString::new("security_setenforce")?;
+    // Safety: `library` is NUL-terminated and the returned handle is used only
+    // with `dlsym`/`dlclose` below.
+    let handle = unsafe { libc::dlopen(library.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        return Err(anyhow!(dl_error("open libselinux for enforcement")));
+    }
+    // Safety: the symbol name is NUL-terminated and libselinux documents this
+    // exact C ABI.  The library stays open until after the call returns.
+    let raw = unsafe { libc::dlsym(handle, symbol.as_ptr()) };
+    if raw.is_null() {
+        unsafe { libc::dlclose(handle) };
+        return Err(anyhow!(dl_error("resolve security_setenforce")));
+    }
+    type SetEnforce = unsafe extern "C" fn(libc::c_int) -> libc::c_int;
+    // Safety: `raw` is the documented `security_setenforce` symbol.
+    let security_setenforce: SetEnforce = unsafe { std::mem::transmute(raw) };
+    let result = unsafe { security_setenforce(i32::from(enforcing)) };
+    let error = if result < 0 {
+        Some(io::Error::last_os_error())
+    } else {
+        None
+    };
+    // Safety: `handle` was returned by `dlopen` above and no function pointer
+    // from it is retained after this point.
+    unsafe { libc::dlclose(handle) };
+    if let Some(error) = error {
+        return Err(error).context("set SELinux enforcement mode");
+    }
     Ok(())
 }
 
@@ -101,6 +140,17 @@ fn selinux_disabled_in_config(config: &str) -> bool {
             && line
                 .split_once('=')
                 .is_some_and(|(key, value)| key.trim() == "SELINUX" && value.trim() == "disabled")
+    })
+}
+
+fn selinux_mode(config: &str) -> Option<&str> {
+    config.lines().find_map(|line| {
+        let line = line.trim();
+        if line.starts_with('#') {
+            return None;
+        }
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "SELINUX").then_some(value.trim())
     })
 }
 
@@ -142,5 +192,14 @@ mod tests {
         assert!(!command_line_disables_selinux(
             "quiet selinux=1 enforcing=0"
         ));
+    }
+
+    #[test]
+    fn selinux_mode_ignores_comments_and_whitespace() {
+        assert_eq!(
+            selinux_mode("# SELINUX=permissive\n SELINUX = enforcing\n"),
+            Some("enforcing")
+        );
+        assert_eq!(selinux_mode("SELINUX=disabled\n"), Some("disabled"));
     }
 }
