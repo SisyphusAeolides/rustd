@@ -20,6 +20,7 @@ Requires:       rustd%{?_isa} = %{version}-%{release}
 Provides:       systemd-libs = %{systemd_compat_evr}
 Provides:       libsystemd = %{systemd_compat_evr}
 Provides:       libudev = %{systemd_compat_evr}
+Provides:       pkgconfig(libudev)
 Obsoletes:      systemd-libs <= %{systemd_compat_evr}
 
 %description
