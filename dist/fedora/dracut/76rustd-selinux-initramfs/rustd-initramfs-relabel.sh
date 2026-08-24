@@ -11,17 +11,24 @@ if getarg "selinux=0" > /dev/null; then
     exit 0
 fi
 
-if [ ! -s /etc/selinux/targeted/contexts/files/file_contexts ]; then
+contexts=/etc/selinux/targeted/contexts/files/file_contexts
+if [ ! -s "$contexts" ]; then
     warn "RustD initramfs SELinux file_contexts is missing"
     exit 1
 fi
 
-for path in \
-    /bin /etc /lib /lib64 /sbin /usr /usr/bin /usr/sbin /usr/lib \
-    /usr/lib/dracut /usr/lib/rustd /var /init /shutdown \
-    /bin/* /sbin/* /usr/bin/* /usr/sbin/* \
-    /usr/lib/dracut/dracut-util /usr/lib/rustd/rustd \
-    /usr/lib/rustd/rustd-udevd; do
+# restorecon defers when the kernel has not loaded a policy yet.  setfiles can
+# apply the policy's labels directly to cpio-created inodes.  Restrict the
+# input to files at the early-userspace directory level; passing a directory
+# to setfiles would recursively relabel the live root and stall the pivot.
+for directory in /bin /sbin /usr/bin /usr/sbin /lib /lib64 /usr/lib \
+    /usr/lib/dracut /usr/lib/rustd; do
+    [ -d "$directory" ] || continue
+    find "$directory" -mindepth 1 -maxdepth 1 -type f \
+        -exec /usr/bin/setfiles -F "$contexts" {} + || exit 1
+done
+
+for path in /init /shutdown; do
     [ -e "$path" ] || continue
-    /usr/sbin/restorecon -F "$path" || exit 1
+    /usr/bin/setfiles -F "$contexts" "$path" || exit 1
 done
