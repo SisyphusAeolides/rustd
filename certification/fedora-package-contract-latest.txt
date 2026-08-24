@@ -1,6 +1,6 @@
 schema=rustd-fedora-package-contract-v5
 status=failure
-tested_sha=73427cb634ee4a94e8972c7ba904cb7625c4d315
+tested_sha=9c8693a9383655d48a9af2bb8d8fb484e4432cec
 selinux_reference_policy=compiled
 rpm_specs=parsed
 capability.systemd=rustd-fedora-compat
@@ -17,11 +17,11 @@ owner.init=rustd-fedora-compat
 ==> dist/fedora/rustd-fedora-compat.spec
 ==> dist/fedora/rustd-selinux.spec
 ==> dist/fedora/rustd.spec
-make: Entering directory '/tmp/tmp.zeLvg8Dzp7/selinux'
+make: Entering directory '/tmp/tmp.xADanPPkeD/selinux'
 Compiling targeted rustd_fedora module
 Creating targeted rustd_fedora.pp policy package
 rm tmp/rustd_fedora.mod tmp/rustd_fedora.mod.fc
-make: Leaving directory '/tmp/tmp.zeLvg8Dzp7/selinux'
+make: Leaving directory '/tmp/tmp.xADanPPkeD/selinux'
 Traceback (most recent call last):
   File "<stdin>", line 33, in <module>
 AssertionError
