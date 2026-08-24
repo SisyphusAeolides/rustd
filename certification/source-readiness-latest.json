@@ -2,9 +2,9 @@
   "complete": true,
   "missing_source_definition": 0,
   "missing_symbols": [],
-  "required": 335,
+  "required": 336,
   "schema": "rustd-source-readiness-v1",
-  "supported": 335,
+  "supported": 336,
   "supported_symbols": [
     "sd_booted",
     "sd_bus_add_filter",
@@ -343,7 +343,7 @@
     "udev_ref",
     "udev_unref"
   ],
-  "tested_sha": "7e7204d69cc4c0a9c63f838d8febb9d69a3efd6b",
+  "tested_sha": "73427cb634ee4a94e8972c7ba904cb7625c4d315",
   "unsupported": 0,
   "unsupported_symbols": []
 }
