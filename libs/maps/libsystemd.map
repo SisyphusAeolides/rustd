@@ -341,6 +341,7 @@ LIBSYSTEMD_240 {
     sd_bus_set_method_call_timeout;
     sd_device_get_devname;
     sd_device_get_is_initialized;
+    sd_device_get_property_value;
     sd_device_get_property_first;
     sd_device_get_property_next;
     sd_device_monitor_filter_add_match_subsystem_devtype;

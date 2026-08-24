@@ -1795,6 +1795,18 @@ int sd_device_new_from_syspath(struct sd_device **ret, const char *syspath) {
     return 0;
 }
 
+int sd_device_get_property_value(struct sd_device *device, const char *property, const char **value) {
+    const char *property_value;
+
+    if (!device || !device->dev || !property || !value)
+        return -EINVAL;
+    property_value = rustd_device_get_property_value(device->dev, property);
+    if (!property_value)
+        return -ENOENT;
+    *value = property_value;
+    return 0;
+}
+
 const char *sd_device_get_property_first(struct sd_device *device, const char **value) {
     rustd_device_list_entry *entry;
     if (!device || !device->dev)

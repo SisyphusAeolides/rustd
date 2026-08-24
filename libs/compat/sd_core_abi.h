@@ -69,6 +69,7 @@ int sd_device_open(sd_device *device, int flags);
 int sd_device_get_action(sd_device *device, sd_device_action_t *ret);
 int sd_device_get_devname(sd_device *device, const char **ret);
 int sd_device_get_is_initialized(sd_device *device);
+int sd_device_get_property_value(sd_device *device, const char *property, const char **value);
 int sd_device_monitor_new(sd_device_monitor **ret);
 sd_device_monitor *sd_device_monitor_unref(sd_device_monitor *monitor);
 int sd_device_monitor_filter_add_match_subsystem_devtype(

@@ -130,6 +130,7 @@
     "sd_device_enumerator_unref",
     "sd_device_get_property_first",
     "sd_device_get_property_next",
+    "sd_device_get_property_value",
     "sd_device_new_from_syspath",
     "sd_device_unref",
     "sd_event_add_child",
