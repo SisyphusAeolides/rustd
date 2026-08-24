@@ -82,7 +82,6 @@ grep -Eq 'force_add_dracutmodules\+=".*[[:space:]]selinux([[:space:]]|$)' \
 grep -Eq 'force_add_dracutmodules\+=".*[[:space:]]rustd-selinux-initramfs([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
 test -x dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
-test -x dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-permissive.sh
 test -x dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
 grep -Fq 'install_items+=" /usr/bin/rustudevadm "' dist/fedora/90-rustd-dracut.conf
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
@@ -132,8 +131,6 @@ install -m0644 dist/fedora/90-rustd-dracut.conf \
     %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
 install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
     %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
-install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-permissive.sh \
-    %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/rustd-initramfs-permissive.sh
 install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh \
     %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
 
@@ -160,7 +157,6 @@ install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-rela
 %{_prefix}/lib/udev/rules.d/80-drivers.rules
 %{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
 %{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
-%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/rustd-initramfs-permissive.sh
 %{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
 
 %changelog
