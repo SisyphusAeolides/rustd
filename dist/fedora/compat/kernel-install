@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 set -euo pipefail
 
 # RustD owns initramfs generation during image assembly.  Kernel package

@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/bin/bash
 # SPDX-License-Identifier: LGPL-2.1-or-later
 # Migrate Fedora's authselect-managed PAM/NSS configuration to RustD while
 # preserving the selected identity profile and its enabled features.
