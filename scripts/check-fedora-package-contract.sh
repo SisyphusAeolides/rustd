@@ -135,9 +135,11 @@ assert "pam_rustd.so" not in main_files
 assert "%{_prefix}/sbin/rustd-fedora-cutover" in cutover_files
 assert "%{_libdir}/security/pam_rustd.so" in cutover_files
 
-assert "%pretrans -p /bin/bash" in compat
-assert "authselect check" in compat
-assert "pam_systemd(_home|_loadkey)?" in compat
+# Fresh-image PAM/NSS validation is intentionally deferred to the kickstart;
+# the compatibility RPM must remain installable before that migration exists.
+assert "%pretrans -p /bin/bash" not in compat
+assert "authselect check" not in compat
+assert "pam_systemd(_home|_loadkey)?" not in compat
 assert "%{_prefix}/sbin/init" in compat_files
 assert "%{_prefix}/lib/udev/rules.d/80-drivers.rules" in compat_files
 assert "%{_prefix}/sbin/rustd-fedora-cutover" not in compat_files

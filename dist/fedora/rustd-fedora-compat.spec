@@ -79,6 +79,10 @@ grep -Fq 'omit_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
 grep -Fq 'force_add_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
 grep -Eq 'force_add_dracutmodules\+=".*[[:space:]]selinux([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
+grep -Eq 'force_add_dracutmodules\+=".*[[:space:]]rustd-selinux-initramfs([[:space:]]|$)' \
+    dist/fedora/90-rustd-dracut.conf
+test -x dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
+test -x dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
 grep -Fq 'install_items+=" /usr/bin/rustudevadm "' dist/fedora/90-rustd-dracut.conf
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
@@ -103,7 +107,8 @@ install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_prefix}/lib/rustd \
            %{buildroot}%{_prefix}/lib/systemd \
            %{buildroot}%{_prefix}/lib/udev/rules.d \
-           %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d
+           %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d \
+           %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs
 install -m0755 dist/fedora/compat/systemctl %{buildroot}%{_bindir}/systemctl
 install -m0755 dist/fedora/compat/systemd-tmpfiles %{buildroot}%{_bindir}/systemd-tmpfiles
 install -m0755 dist/fedora/compat/systemd-sysusers %{buildroot}%{_bindir}/systemd-sysusers
@@ -124,6 +129,10 @@ for name in halt poweroff reboot shutdown telinit runlevel; do
 done
 install -m0644 dist/fedora/90-rustd-dracut.conf \
     %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
+install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
+    %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
+install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh \
+    %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
 
 %files
 %license LICENSE*
@@ -147,6 +156,8 @@ install -m0644 dist/fedora/90-rustd-dracut.conf \
 %{_prefix}/lib/udev/rules.d/50-rustd-default.rules
 %{_prefix}/lib/udev/rules.d/80-drivers.rules
 %{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
+%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
+%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
 
 %changelog
 * Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
