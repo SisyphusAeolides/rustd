@@ -18,8 +18,11 @@ BuildRequires:  pkgconfig(json-c)
 
 Requires:       rustd%{?_isa} = %{version}-%{release}
 Provides:       systemd-libs = %{systemd_compat_evr}
+Provides:       systemd-libs%{?_isa} = %{systemd_compat_evr}
 Provides:       libsystemd = %{systemd_compat_evr}
+Provides:       libsystemd%{?_isa} = %{systemd_compat_evr}
 Provides:       libudev = %{systemd_compat_evr}
+Provides:       libudev%{?_isa} = %{systemd_compat_evr}
 Provides:       pkgconfig(libudev)
 Obsoletes:      systemd-libs <= %{systemd_compat_evr}
 
