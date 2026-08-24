@@ -55,8 +55,8 @@ by RustD. The exact dependency on rustd-compat-libs makes the package-level
 systemd/systemd-udev capability replacement fail closed until RustD's measured
 Fedora ABI compatibility package can be built and installed. Legacy executable
 paths required by Fedora package scripts and dracut resolve to RustD code.
-The pre-transaction guard refuses the exclusive swap unless the separately
-staged RustD PAM/NSS migration is active and valid.
+The image kickstart validates the RustD PAM/NSS migration after installation;
+this avoids requiring a shell interpreter before a fresh target transaction.
 
 %prep
 %autosetup -n rustd-%{version}
@@ -124,29 +124,6 @@ for name in halt poweroff reboot shutdown telinit runlevel; do
 done
 install -m0644 dist/fedora/90-rustd-dracut.conf \
     %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
-
-%pretrans -p /bin/bash
-set -eu
-fail() {
-    echo "rustd-fedora-compat: $*" >&2
-    exit 1
-}
-command -v authselect >/dev/null 2>&1 \
-    || fail 'authselect is unavailable; install and run rustd-cutover-tools first'
-authselect check >/dev/null \
-    || fail 'authselect configuration is invalid; refusing the exclusive swap'
-[[ -e %{_libdir}/security/pam_rustd.so ]] \
-    || fail 'pam_rustd.so is not staged'
-[[ -e %{_libdir}/libnss_rustd_dns.so.2 ]] \
-    || fail 'libnss_rustd_dns.so.2 is not staged'
-grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf \
-    || fail 'hosts NSS is not migrated to rustd_dns'
-! grep -Eq '^[[:alpha:]_][[:alnum:]_-]*:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)' /etc/nsswitch.conf \
-    || fail 'NSS still references a systemd-owned backend'
-grep -R -Fq 'pam_rustd.so' /etc/pam.d \
-    || fail 'PAM is not migrated to pam_rustd.so'
-! grep -R -E -q 'pam_systemd(_home|_loadkey)?\.so' /etc/pam.d \
-    || fail 'PAM still references a systemd module'
 
 %files
 %license LICENSE*
