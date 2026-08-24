@@ -21,7 +21,7 @@ test "$(getenforce)" = Enforcing
 # with newer compatibility Provides can otherwise make DNF erase consumers
 # whose dependencies are locked to the older systemd build.
 dnf -y upgrade --refresh
-dnf -y install createrepo_c dracut authselect binutils
+dnf -y install createrepo_c dracut authselect binutils policycoreutils libselinux-utils
 createrepo_c "$RPM_REPO"
 /var/tmp/scripts/audit-systemd-elf-consumers.py \
     --output /var/tmp/rustd-precutover-elf-audit.json
@@ -173,9 +173,13 @@ grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf
 # the package-owned symlink to RustD required by dracut's shell init path.
 kernel="$(ls -1 /usr/lib/modules | sort -V | tail -1)"
 image="/boot/initramfs-${kernel}.img"
+command -v load_policy >/dev/null
+command -v restorecon >/dev/null
 dracut --force "$image" "$kernel"
 lsinitrd -m "$image" > /var/tmp/rustd-initrd-modules.txt
 lsinitrd "$image" > /var/tmp/rustd-lsinitrd.txt
+
+grep -Eq '^[[:space:]]*selinux([[:space:]]|$)' /var/tmp/rustd-initrd-modules.txt
 
 if grep -Eq '^[[:space:]]*(systemd|dracut-systemd|systemd-[^[:space:]]+)([[:space:]]|$)' /var/tmp/rustd-initrd-modules.txt; then
     echo 'systemd dracut module remains in converted initramfs:' >&2

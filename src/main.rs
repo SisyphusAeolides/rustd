@@ -113,6 +113,7 @@ fn main() -> anyhow::Result<()> {
         // bare metal PID 1 establishes them itself before anything reads them.
         if !running_in_container() {
             rustd::mount_setup::mount_api_filesystems()?;
+            rustd::selinux::load_initial_policy()?;
         }
         rustd::cgroup::CgroupManager::for_scope(ManagerScope::System)
             .setup_delegated_root()

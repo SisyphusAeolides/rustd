@@ -22,6 +22,8 @@ Requires:       rustd%{?_isa} = %{version}-%{release}
 Requires:       rustd-cutover-tools%{?_isa} = %{version}-%{release}
 Requires:       rustd-compat-libs%{?_isa} = %{version}-%{release}
 Requires:       dracut
+Requires:       policycoreutils
+Requires:       libselinux-utils
 Provides:       systemd = %{systemd_compat_evr}
 Provides:       systemd%{?_isa} = %{systemd_compat_evr}
 Provides:       systemd-udev = %{systemd_compat_evr}
@@ -74,6 +76,8 @@ done
 bash tests/fedora-transaction-compat.sh
 grep -Fq 'omit_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
 grep -Fq 'force_add_dracutmodules+=' dist/fedora/90-rustd-dracut.conf
+grep -Eq 'force_add_dracutmodules\+=".*[[:space:]]selinux([[:space:]]|$)' \
+    dist/fedora/90-rustd-dracut.conf
 grep -Fq 'install_items+=" /usr/bin/rustudevadm "' dist/fedora/90-rustd-dracut.conf
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf

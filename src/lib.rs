@@ -34,6 +34,7 @@ pub mod restart;
 pub mod sandbox;
 pub(crate) mod seccomp_groups;
 pub(crate) mod seccomp_policy;
+pub mod selinux;
 pub mod service;
 pub mod socket_unit;
 pub mod target;
