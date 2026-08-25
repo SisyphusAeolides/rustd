@@ -3,8 +3,8 @@
 /usr/lib/rustd/rustd-udevd                   --  gen_context(system_u:object_r:udev_exec_t,s0)
 /usr/lib/rustd/rustd-resolved                --  gen_context(system_u:object_r:systemd_resolved_exec_t,s0)
 # RustD invokes these compatibility generators directly from its kernel_t PID1
-# path, so they use the module's dedicated no-transition executable type.
-/usr/lib/rustd/rustd-.*-generator             --  gen_context(system_u:object_r:rustd_generator_exec_t,s0)
+# path, so they use Fedora's existing init executable type with no transition.
+/usr/lib/rustd/rustd-.*-generator             --  gen_context(system_u:object_r:init_exec_t,s0)
 
 /run/rustd(/.*)?                                 gen_context(system_u:object_r:init_var_run_t,s0)
 /run/rustd/sessions(/.*)?                        gen_context(system_u:object_r:systemd_logind_sessions_t,s0)

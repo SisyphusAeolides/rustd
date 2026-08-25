@@ -2,10 +2,11 @@ policy_module(rustd_fedora, 1.0.0)
 
 # RustD deliberately reuses Fedora's mature confinement domains for equivalent
 # system roles. This module introduces one new writable data type for the
-# resolver's RFC5011 state and one executable type for RustD's compatibility
-# generators; it does not make any RustD process permissive or unconfined.
+# resolver's RFC5011 state; it does not make any RustD process permissive or
+# unconfined.
 gen_require(`
     type init_var_lib_t;
+    type init_exec_t;
     type kernel_t;
     type systemd_resolved_t;
 ')
@@ -15,12 +16,11 @@ files_type(rustd_resolved_var_lib_t)
 
 # RustD remains Fedora's PID 1 implementation and therefore runs in kernel_t.
 # Its compatibility generators are invoked directly by that PID 1 path, so
-# they need a dedicated executable label with the same no-transition execute
-# permission. Reusing systemd_generic_generator_exec_t would rely on policy
-# intended for systemd's domain and is denied from kernel_t.
-type rustd_generator_exec_t;
-corecmd_executable_file(rustd_generator_exec_t)
-can_exec(kernel_t, rustd_generator_exec_t)
+# they need no-transition execute permission. Use Fedora's existing init
+# executable type here: the image builder can apply this standard label while
+# the target SELinux policy is not yet active. A newly introduced executable
+# type would otherwise be emitted as unlabeled_t in a live squashfs image.
+can_exec(kernel_t, init_exec_t)
 
 # /var/lib/rustd is init-owned; rustd-resolved only needs to traverse that
 # parent and manage its dedicated /var/lib/rustd/resolved subtree.
