@@ -11,6 +11,7 @@ gen_require(`
     type kernel_t;
     type systemd_resolved_t;
     attribute domain;
+    attribute device_type;
 ')
 
 type rustd_resolved_var_lib_t;
@@ -30,6 +31,13 @@ can_exec(kernel_t, init_exec_t)
 # transitions when that flag is set; this grants only the process2 transition
 # permissions and does not create any new domain transitions.
 allow init_t domain:process2 { nnp_transition nosuid_transition };
+
+# RustD is Fedora's PID 1 implementation and starts in kernel_t. Fedora's
+# device manager normally performs this relabeling from its confined udev
+# domain; RustD owns that path, so grant only device-node relabel operations.
+# This does not grant relabeling of regular files, directories, or arbitrary
+# SELinux types.
+allow kernel_t device_type:{ chr_file blk_file } { relabelfrom relabelto };
 
 # /var/lib/rustd is init-owned; rustd-resolved only needs to traverse that
 # parent and manage its dedicated /var/lib/rustd/resolved subtree.
