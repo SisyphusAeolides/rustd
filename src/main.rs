@@ -115,6 +115,11 @@ fn main() -> anyhow::Result<()> {
             rustd::mount_setup::mount_api_filesystems()?;
             rustd::selinux::load_initial_policy()?;
             rustd::selinux::restorecon_tree(std::path::Path::new("/dev"))?;
+            // `/run` is a fresh tmpfs on every boot. Relabel the mount before
+            // RustD starts tmpfiles or any third-party service; otherwise
+            // runtime directories created during early boot retain `tmpfs_t`
+            // and Fedora's enforcing policy rejects otherwise valid daemons.
+            rustd::selinux::restorecon_tree(std::path::Path::new("/run"))?;
         }
         rustd::cgroup::CgroupManager::for_scope(ManagerScope::System)
             .setup_delegated_root()
