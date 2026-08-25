@@ -34,7 +34,10 @@ fn run() -> Result<(), String> {
     }
 
     let (mut children, has_root) = remount_by_fstab()?;
-    if !has_root && env_bool("SYSTEMD_REMOUNT_ROOT_RW").unwrap_or(false) {
+    if !has_root
+        && env_bool("SYSTEMD_REMOUNT_ROOT_RW").unwrap_or(false)
+        && !root_is_overlay()
+    {
         children.push((String::from("/"), spawn_remount("/", true)?));
     }
 
@@ -80,12 +83,30 @@ fn remount_by_fstab() -> Result<(Vec<(String, Child)>, bool), String> {
         };
         if target == "/" {
             has_root = true;
+            if root_is_overlay() {
+                continue;
+            }
         } else if target != "/usr" && !mount_point_is_api(&target) {
             continue;
         }
         children.push((target.clone(), spawn_remount(&target, false)?));
     }
     Ok((children, has_root))
+}
+
+fn root_is_overlay() -> bool {
+    let Ok(mountinfo) = fs::read_to_string("/proc/self/mountinfo") else {
+        return false;
+    };
+    mountinfo.lines().any(|line| {
+        let Some((mount_fields, filesystem_fields)) = line.split_once(" - ") else {
+            return false;
+        };
+        let mut fields = mount_fields.split_whitespace();
+        let mountpoint = fields.nth(4);
+        let filesystem = filesystem_fields.split_whitespace().next();
+        mountpoint == Some("/") && filesystem == Some("overlay")
+    })
 }
 
 fn fstab_enabled() -> bool {
@@ -225,5 +246,14 @@ mod tests {
         assert_eq!(env_bool_value("yes"), Some(true));
         assert_eq!(env_bool_value("OFF"), Some(false));
         assert_eq!(env_bool_value("maybe"), None);
+    }
+
+    #[test]
+    fn recognizes_overlay_mountinfo() {
+        let line = "36 25 0:32 / / rw,relatime - overlay overlay rw";
+        let (mount_fields, filesystem_fields) = line.split_once(" - ").unwrap();
+        let mut fields = mount_fields.split_whitespace();
+        assert_eq!(fields.nth(4), Some("/"));
+        assert_eq!(filesystem_fields.split_whitespace().next(), Some("overlay"));
     }
 }
