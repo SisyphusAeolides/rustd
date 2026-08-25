@@ -2,9 +2,10 @@
 Description=D-Bus System Message Bus
 Documentation=man:dbus-daemon(1)
 DefaultDependencies=no
-After=sysinit.target rustd-journald.service
+After=sysinit.target rustd-tmpfiles-setup.service rustd-journald.service
 Before=basic.target multi-user.target shutdown.target
 Conflicts=shutdown.target
+Requires=rustd-tmpfiles-setup.service
 
 [Service]
 Type=exec
@@ -19,4 +20,4 @@ LimitNOFILE=16384
 Restart=on-failure
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=basic.target
