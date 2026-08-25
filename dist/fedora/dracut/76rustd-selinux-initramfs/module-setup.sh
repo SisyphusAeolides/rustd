@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 check() {
-    require_binaries setfiles find || return 1
     return 0
 }
 
@@ -12,8 +11,10 @@ depends() {
 }
 
 install() {
-    inst_multiple setfiles find
+    # RustD loads the installed policy after switch_root.  The cpio initramfs
+    # root is a ramfs and cannot carry security.selinux xattrs, so attempting
+    # to relabel it before pivot is both ineffective and fatal under enforcing
+    # mode.
     inst /etc/selinux/config
     inst /etc/selinux/targeted/contexts/files/file_contexts
-    inst_hook pre-pivot 40 "$moddir/rustd-initramfs-relabel.sh"
 }
