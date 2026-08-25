@@ -41,6 +41,11 @@ dbus_system_bus_client(init_t)
 # the conventional init_t label is established. Keep the manager's system-bus
 # client permission valid across that early handoff as well.
 dbus_system_bus_client(kernel_t)
+# RustD also owns its manager well-known name on the system bus. The generic
+# client interface intentionally grants messaging only; acquire the service
+# name explicitly for both labels used during the PID-1 handoff.
+dbus_connect_system_bus(init_t)
+dbus_connect_system_bus(kernel_t)
 
 # RustD journald publishes systemd-compatible links from its native runtime
 # directory. Keep that compatibility surface confined to the existing Fedora

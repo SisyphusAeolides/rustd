@@ -183,6 +183,7 @@ static void verify_event_semantics(void) {
 
 int main(void) {
     struct udev *udev;
+    struct udev_enumerate *enumerate;
 
     verify_function_types();
     verify_bus_error_semantics();
@@ -192,6 +193,11 @@ int main(void) {
     verify_event_semantics();
     udev = udev_new();
     assert(udev);
+    enumerate = udev_enumerate_new(udev);
+    assert(enumerate);
+    assert(udev_enumerate_ref(enumerate) == enumerate);
+    assert(udev_enumerate_unref(enumerate) == NULL);
+    assert(udev_enumerate_unref(enumerate) == NULL);
 
     {
         char directory[128];

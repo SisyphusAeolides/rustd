@@ -119,6 +119,17 @@ fn main() -> anyhow::Result<()> {
             // RustD starts tmpfiles or any third-party service; otherwise
             // runtime directories created during early boot retain `tmpfs_t`
             // and Fedora's enforcing policy rejects otherwise valid daemons.
+            // The manager resolves StandardOutput=journal while dispatching a
+            // unit, before that unit's ExecStartPre commands run. Establish
+            // the native journal, D-Bus, and Avahi parent directories first so
+            // early services can connect with their final SELinux labels.
+            for path in [
+                std::path::Path::new("/run/rustd/journal"),
+                std::path::Path::new("/run/dbus"),
+                std::path::Path::new("/run/avahi-daemon"),
+            ] {
+                std::fs::create_dir_all(path)?;
+            }
             rustd::selinux::restorecon_tree(std::path::Path::new("/run"))?;
         }
         rustd::cgroup::CgroupManager::for_scope(ManagerScope::System)

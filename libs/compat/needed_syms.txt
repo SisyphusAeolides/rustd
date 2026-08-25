@@ -310,6 +310,7 @@ udev_enumerate_add_syspath
 udev_enumerate_get_list_entry
 udev_enumerate_get_udev
 udev_enumerate_new
+udev_enumerate_ref
 udev_enumerate_scan_devices
 udev_enumerate_unref
 udev_hwdb_get_properties_list_entry

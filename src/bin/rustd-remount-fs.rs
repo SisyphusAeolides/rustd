@@ -34,10 +34,7 @@ fn run() -> Result<(), String> {
     }
 
     let (mut children, has_root) = remount_by_fstab()?;
-    if !has_root
-        && env_bool("SYSTEMD_REMOUNT_ROOT_RW").unwrap_or(false)
-        && !root_is_overlay()
-    {
+    if !has_root && env_bool("SYSTEMD_REMOUNT_ROOT_RW").unwrap_or(false) && !root_is_overlay() {
         children.push((String::from("/"), spawn_remount("/", true)?));
     }
 

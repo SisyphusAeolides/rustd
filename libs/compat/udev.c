@@ -24,6 +24,7 @@ struct udev_device {
 };
 
 struct udev_enumerate {
+    unsigned refs;
     struct udev *udev;
     rustd_device_enumerate *enumerate;
 };
@@ -282,6 +283,7 @@ struct udev_enumerate *udev_enumerate_new(struct udev *udev) {
     enumerate = calloc(1, sizeof(*enumerate));
     if (!enumerate)
         return NULL;
+    enumerate->refs = 1U;
     enumerate->udev = udev_ref(udev);
     enumerate->enumerate = rustd_device_enumerate_new(udev->ctx);
     if (!enumerate->enumerate) {
@@ -292,8 +294,16 @@ struct udev_enumerate *udev_enumerate_new(struct udev *udev) {
     return enumerate;
 }
 
+struct udev_enumerate *udev_enumerate_ref(struct udev_enumerate *enumerate) {
+    if (enumerate)
+        enumerate->refs++;
+    return enumerate;
+}
+
 struct udev_enumerate *udev_enumerate_unref(struct udev_enumerate *enumerate) {
     if (!enumerate)
+        return NULL;
+    if (--enumerate->refs > 0U)
         return NULL;
     rustd_device_enumerate_unref(enumerate->enumerate);
     udev_unref(enumerate->udev);
