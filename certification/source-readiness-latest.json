@@ -2,9 +2,9 @@
   "complete": true,
   "missing_source_definition": 0,
   "missing_symbols": [],
-  "required": 337,
+  "required": 338,
   "schema": "rustd-source-readiness-v1",
-  "supported": 337,
+  "supported": 338,
   "supported_symbols": [
     "sd_booted",
     "sd_bus_add_filter",
@@ -298,6 +298,7 @@
     "udev_device_get_tags_list_entry",
     "udev_device_get_udev",
     "udev_device_get_usec_since_initialized",
+    "udev_device_new_from_device_id",
     "udev_device_new_from_devnum",
     "udev_device_new_from_environment",
     "udev_device_new_from_subsystem_sysname",
@@ -344,7 +345,7 @@
     "udev_ref",
     "udev_unref"
   ],
-  "tested_sha": "7032976a4915c4bffb78d9fb9b082d6dcafaae4f",
+  "tested_sha": "2068564e3c9bb7a192a083fc095cf736af2bbe4c",
   "unsupported": 0,
   "unsupported_symbols": []
 }
