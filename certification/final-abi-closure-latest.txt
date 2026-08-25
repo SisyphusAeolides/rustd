@@ -1,8 +1,8 @@
 schema=rustd-final-abi-closure-v1
 status=failure
-tested_sha=7032976a4915c4bffb78d9fb9b082d6dcafaae4f
-required=337
-supported=337
+tested_sha=2068564e3c9bb7a192a083fc095cf736af2bbe4c
+required=338
+supported=338
 unsupported=0
 missing=0
 systemd_headers=unknown

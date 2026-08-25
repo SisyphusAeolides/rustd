@@ -2,10 +2,10 @@
   "missing_source_definition": 0,
   "no_libsystemd_dependency": false,
   "no_systemd_headers": false,
-  "required": 337,
+  "required": 338,
   "schema": "rustd-release-closure-v1",
   "status": "failure",
-  "supported": 337,
-  "tested_sha": "7032976a4915c4bffb78d9fb9b082d6dcafaae4f",
+  "supported": 338,
+  "tested_sha": "2068564e3c9bb7a192a083fc095cf736af2bbe4c",
   "unsupported": 0
 }
