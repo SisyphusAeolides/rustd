@@ -148,6 +148,13 @@ pub fn restorecon_tree(path: &Path) -> anyhow::Result<()> {
     }
     for entry in fs::read_dir(path).with_context(|| format!("read {}", path.display()))? {
         let entry = entry?;
+        // Live-media userspace exposes the immutable lower root under
+        // `/run/rootfsbase`.  Do not descend into nested mounts: relabeling
+        // their contents is both incorrect for the owning filesystem and can
+        // turn early boot into a multi-minute read-only tree walk.
+        if crate::mount_setup::is_mount_point(&entry.path()) {
+            continue;
+        }
         restorecon_tree(&entry.path())?;
     }
     Ok(())

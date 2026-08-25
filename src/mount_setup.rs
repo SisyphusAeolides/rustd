@@ -181,7 +181,7 @@ fn mount_one(entry: &ApiMount) -> io::Result<()> {
 /// `/proc` is not guaranteed to exist this early, so this compares the device
 /// ID of `path` with the device ID of its parent instead of parsing
 /// `/proc/self/mountinfo`.
-fn is_mount_point(path: &Path) -> bool {
+pub(crate) fn is_mount_point(path: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
 
     let Ok(metadata) = fs::metadata(path) else {
