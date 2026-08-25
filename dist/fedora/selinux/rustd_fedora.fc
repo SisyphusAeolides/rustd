@@ -12,6 +12,9 @@
 /run/rustd/seats(/.*)?                           gen_context(system_u:object_r:systemd_logind_var_run_t,s0)
 /run/rustd/resolve(/.*)?                         gen_context(system_u:object_r:systemd_resolved_var_run_t,s0)
 /run/dnssec-trust-anchors\.d(/.*)?                gen_context(system_u:object_r:systemd_resolved_var_run_t,s0)
+/run/dbus(/.*)?                                   gen_context(system_u:object_r:system_dbusd_var_run_t,s0)
+/run/avahi-daemon(/.*)?                           gen_context(system_u:object_r:avahi_var_run_t,s0)
+/run/systemd/journal(/.*)?                        gen_context(system_u:object_r:syslogd_var_run_t,s0)
 
 /var/lib/rustd(/.*)?                             gen_context(system_u:object_r:init_var_lib_t,s0)
 /var/lib/rustd/resolved(/.*)?                    gen_context(system_u:object_r:rustd_resolved_var_lib_t,s0)

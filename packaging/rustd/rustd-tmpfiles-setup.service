@@ -8,4 +8,5 @@ Before=sysinit.target
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/rustd-tmpfiles
+ExecStartPost=/usr/sbin/restorecon -F /run/rustd /run/dbus /run/avahi-daemon /run/systemd/journal
 RemainAfterExit=yes

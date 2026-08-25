@@ -9,6 +9,7 @@ gen_require(`
     type init_exec_t;
     type init_t;
     type kernel_t;
+    type syslogd_var_run_t;
     type systemd_resolved_t;
     attribute domain;
     attribute device_node;
@@ -31,6 +32,16 @@ can_exec(kernel_t, init_exec_t)
 # transitions when that flag is set; this grants only the process2 transition
 # permissions and does not create any new domain transitions.
 allow init_t domain:process2 { nnp_transition nosuid_transition };
+
+# RustD's PID-1 D-Bus worker is the system-bus client for the manager API. The
+# stock systemd policy grants this to systemd's init domain; RustD needs the
+# equivalent relationship when it owns PID 1 and starts the bus itself.
+dbus_system_bus_client(init_t)
+
+# RustD journald publishes systemd-compatible links from its native runtime
+# directory. Keep that compatibility surface confined to the existing Fedora
+# syslog runtime type.
+manage_lnk_files_pattern(init_t, syslogd_var_run_t, syslogd_var_run_t)
 
 # RustD is Fedora's PID 1 implementation and starts in kernel_t. Fedora's
 # device manager normally performs this relabeling from its confined udev
