@@ -11,6 +11,8 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use anyhow::Context;
+
 use crate::event::{EventLoop, LoopResult};
 use crate::journal::entry::EntryRing;
 use crate::journal::receiver::JournalReceiver;
@@ -182,6 +184,16 @@ fn install_compatibility_links(
     compatibility_directory: &Path,
 ) -> anyhow::Result<Vec<SymlinkGuard>> {
     prepare_directory(compatibility_directory)?;
+    // The compatibility directory is created on the fresh /run tmpfs after
+    // PID 1's initial relabel walk. Restore its Fedora syslog runtime type
+    // before creating the two systemd-compatible links; enforcing SELinux
+    // otherwise rejects link creation from RustD's init domain.
+    crate::selinux::restorecon_path(compatibility_directory).with_context(|| {
+        format!(
+            "restore journal compatibility directory label {}",
+            compatibility_directory.display()
+        )
+    })?;
     let mut guards = Vec::new();
     for name in ["socket", "stdout"] {
         let target = runtime_directory.join(name);

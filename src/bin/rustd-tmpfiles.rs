@@ -8,7 +8,6 @@ use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::SystemTime;
 
 use clap::Parser;
@@ -370,19 +369,9 @@ fn apply_ownership_and_mode(path: &Path, mode: Option<u32>, uid: Option<u32>, gi
 }
 
 fn restorecon_created_path(path: &Path) {
-    if !Path::new("/sys/fs/selinux/enforce").exists() {
-        return;
-    }
-    let Ok(status) = Command::new("/usr/sbin/restorecon")
-        .arg("-F")
-        .arg(path)
-        .status()
-    else {
-        return;
-    };
-    if !status.success() {
+    if let Err(error) = rustd::selinux::restorecon_path(path) {
         eprintln!(
-            "rustd-tmpfiles: restorecon failed for {} with {status}",
+            "rustd-tmpfiles: restorecon failed for {}: {error}",
             path.display()
         );
     }
