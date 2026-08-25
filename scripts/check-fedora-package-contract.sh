@@ -142,6 +142,9 @@ assert "authselect check" not in compat
 assert "pam_systemd(_home|_loadkey)?" not in compat
 assert "%{_prefix}/sbin/init" in compat_files
 assert "%{_prefix}/lib/udev/rules.d/80-drivers.rules" in compat_files
+assert "%{_sysconfdir}/rustd/system/auditd.service.d/10-rustd-tmpfiles.conf" in compat_files
+assert "%{_sysconfdir}/rustd/system/chronyd.service.d/10-rustd-tmpfiles.conf" in compat_files
+assert "%{_prefix}/lib/tmpfiles.d/rustd-fedora.conf" in compat_files
 assert "%{_prefix}/sbin/rustd-fedora-cutover" not in compat_files
 assert "Requires:       authselect" not in compat
 assert "Requires:       python3" not in compat

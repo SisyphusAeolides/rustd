@@ -875,10 +875,14 @@ fn read_pid_file(
         .parse::<libc::pid_t>()
         .map_err(|_| anyhow!("PIDFile '{}' contains an invalid PID", path.display()))?;
     if pid <= 0 || !pid_is_alive(pid) {
-        return Err(anyhow!(
-            "PIDFile '{}' refers to a process that is not running",
-            path.display()
-        ));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::WouldBlock,
+            format!(
+                "PIDFile '{}' refers to a process that is not running",
+                path.display()
+            ),
+        )
+        .into());
     }
     if pid == 1 || pid == libc::pid_t::try_from(std::process::id()).unwrap_or(-1) {
         return Err(anyhow!(

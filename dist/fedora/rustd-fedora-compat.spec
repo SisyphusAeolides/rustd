@@ -85,10 +85,19 @@ test -x dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
 test -x dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
 test -f dist/fedora/dropins/avahi-daemon.service.d/10-rustd-dbus.conf
 test -f dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf
+test -f dist/fedora/dropins/chronyd.service.d/10-rustd-tmpfiles.conf
+test -f dist/fedora/dropins/auditd.service.d/10-rustd-tmpfiles.conf
+test -f dist/fedora/tmpfiles/rustd-fedora.conf
 grep -Fq 'After=dbus.service' dist/fedora/dropins/avahi-daemon.service.d/10-rustd-dbus.conf
 grep -Fq 'After=dbus.service' dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf
 grep -Fq 'Wants=dbus.service' dist/fedora/dropins/avahi-daemon.service.d/10-rustd-dbus.conf
 grep -Fq 'Wants=dbus.service' dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf
+grep -Fq 'After=rustd-tmpfiles-setup.service' dist/fedora/dropins/chronyd.service.d/10-rustd-tmpfiles.conf
+grep -Fq 'Requires=rustd-tmpfiles-setup.service' dist/fedora/dropins/chronyd.service.d/10-rustd-tmpfiles.conf
+grep -Fq 'After=rustd-tmpfiles-setup.service' dist/fedora/dropins/auditd.service.d/10-rustd-tmpfiles.conf
+grep -Fq 'Requires=rustd-tmpfiles-setup.service' dist/fedora/dropins/auditd.service.d/10-rustd-tmpfiles.conf
+grep -Fq '/var/lib/chrony' dist/fedora/tmpfiles/rustd-fedora.conf
+grep -Fq '/var/log/chrony' dist/fedora/tmpfiles/rustd-fedora.conf
 ! grep -Fq 'inst_hook pre-pivot' dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
 grep -Fq 'init_exec_t' dist/fedora/selinux/rustd_fedora.fc
 grep -Fq 'install_items+=" /usr/bin/rustudevadm "' dist/fedora/90-rustd-dracut.conf
@@ -115,7 +124,10 @@ install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_prefix}/lib/rustd \
            %{buildroot}%{_prefix}/lib/systemd \
            %{buildroot}%{_sysconfdir}/rustd/system/avahi-daemon.service.d \
+           %{buildroot}%{_sysconfdir}/rustd/system/auditd.service.d \
+           %{buildroot}%{_sysconfdir}/rustd/system/chronyd.service.d \
            %{buildroot}%{_sysconfdir}/rustd/system/rtkit-daemon.service.d \
+           %{buildroot}%{_prefix}/lib/tmpfiles.d \
            %{buildroot}%{_prefix}/lib/udev/rules.d \
            %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d \
            %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs
@@ -133,8 +145,14 @@ install -m0644 dist/fedora/compat/80-drivers.rules \
     %{buildroot}%{_prefix}/lib/udev/rules.d/80-drivers.rules
 install -m0644 dist/fedora/dropins/avahi-daemon.service.d/10-rustd-dbus.conf \
     %{buildroot}%{_sysconfdir}/rustd/system/avahi-daemon.service.d/10-rustd-dbus.conf
+install -m0644 dist/fedora/dropins/auditd.service.d/10-rustd-tmpfiles.conf \
+    %{buildroot}%{_sysconfdir}/rustd/system/auditd.service.d/10-rustd-tmpfiles.conf
+install -m0644 dist/fedora/dropins/chronyd.service.d/10-rustd-tmpfiles.conf \
+    %{buildroot}%{_sysconfdir}/rustd/system/chronyd.service.d/10-rustd-tmpfiles.conf
 install -m0644 dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf \
     %{buildroot}%{_sysconfdir}/rustd/system/rtkit-daemon.service.d/10-rustd-dbus.conf
+install -m0644 dist/fedora/tmpfiles/rustd-fedora.conf \
+    %{buildroot}%{_prefix}/lib/tmpfiles.d/rustd-fedora.conf
 ln -s ../rustd/rustd-udevd %{buildroot}%{_prefix}/lib/systemd/systemd-udevd
 ln -s ../lib/rustd/rustd %{buildroot}%{_prefix}/sbin/init
 install -m0755 rustd-shutdown %{buildroot}%{_prefix}/lib/rustd/rustd-shutdown
@@ -157,7 +175,10 @@ install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
 %{_prefix}/sbin/telinit
 %{_prefix}/lib/rustd/rustd-shutdown
 %{_sysconfdir}/rustd/system/avahi-daemon.service.d/10-rustd-dbus.conf
+%{_sysconfdir}/rustd/system/auditd.service.d/10-rustd-tmpfiles.conf
+%{_sysconfdir}/rustd/system/chronyd.service.d/10-rustd-tmpfiles.conf
 %{_sysconfdir}/rustd/system/rtkit-daemon.service.d/10-rustd-dbus.conf
+%{_prefix}/lib/tmpfiles.d/rustd-fedora.conf
 %{_bindir}/systemctl
 %{_bindir}/systemd-tmpfiles
 %{_bindir}/systemd-sysusers
