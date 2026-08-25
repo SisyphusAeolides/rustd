@@ -37,6 +37,10 @@ allow init_t domain:process2 { nnp_transition nosuid_transition };
 # stock systemd policy grants this to systemd's init domain; RustD needs the
 # equivalent relationship when it owns PID 1 and starts the bus itself.
 dbus_system_bus_client(init_t)
+# Some Fedora boot paths enter RustD through the kernel/init transition before
+# the conventional init_t label is established. Keep the manager's system-bus
+# client permission valid across that early handoff as well.
+dbus_system_bus_client(kernel_t)
 
 # RustD journald publishes systemd-compatible links from its native runtime
 # directory. Keep that compatibility surface confined to the existing Fedora
