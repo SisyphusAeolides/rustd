@@ -83,6 +83,12 @@ grep -Eq 'omit_dracutmodules\+=".*[[:space:]]selinux([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
 test -x dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
 test -x dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
+test -f dist/fedora/dropins/avahi-daemon.service.d/10-rustd-dbus.conf
+test -f dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf
+grep -Fq 'After=dbus.service' dist/fedora/dropins/avahi-daemon.service.d/10-rustd-dbus.conf
+grep -Fq 'After=dbus.service' dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf
+grep -Fq 'Wants=dbus.service' dist/fedora/dropins/avahi-daemon.service.d/10-rustd-dbus.conf
+grep -Fq 'Wants=dbus.service' dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf
 ! grep -Fq 'inst_hook pre-pivot' dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
 grep -Fq 'init_exec_t' dist/fedora/selinux/rustd_fedora.fc
 grep -Fq 'install_items+=" /usr/bin/rustudevadm "' dist/fedora/90-rustd-dracut.conf
@@ -108,6 +114,8 @@ install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_prefix}/sbin \
            %{buildroot}%{_prefix}/lib/rustd \
            %{buildroot}%{_prefix}/lib/systemd \
+           %{buildroot}%{_sysconfdir}/rustd/system/avahi-daemon.service.d \
+           %{buildroot}%{_sysconfdir}/rustd/system/rtkit-daemon.service.d \
            %{buildroot}%{_prefix}/lib/udev/rules.d \
            %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d \
            %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs
@@ -123,6 +131,10 @@ install -m0644 dist/fedora/compat/50-rustd-default.rules \
     %{buildroot}%{_prefix}/lib/udev/rules.d/50-rustd-default.rules
 install -m0644 dist/fedora/compat/80-drivers.rules \
     %{buildroot}%{_prefix}/lib/udev/rules.d/80-drivers.rules
+install -m0644 dist/fedora/dropins/avahi-daemon.service.d/10-rustd-dbus.conf \
+    %{buildroot}%{_sysconfdir}/rustd/system/avahi-daemon.service.d/10-rustd-dbus.conf
+install -m0644 dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf \
+    %{buildroot}%{_sysconfdir}/rustd/system/rtkit-daemon.service.d/10-rustd-dbus.conf
 ln -s ../rustd/rustd-udevd %{buildroot}%{_prefix}/lib/systemd/systemd-udevd
 ln -s ../lib/rustd/rustd %{buildroot}%{_prefix}/sbin/init
 install -m0755 rustd-shutdown %{buildroot}%{_prefix}/lib/rustd/rustd-shutdown
@@ -144,6 +156,8 @@ install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
 %{_prefix}/sbin/shutdown
 %{_prefix}/sbin/telinit
 %{_prefix}/lib/rustd/rustd-shutdown
+%{_sysconfdir}/rustd/system/avahi-daemon.service.d/10-rustd-dbus.conf
+%{_sysconfdir}/rustd/system/rtkit-daemon.service.d/10-rustd-dbus.conf
 %{_bindir}/systemctl
 %{_bindir}/systemd-tmpfiles
 %{_bindir}/systemd-sysusers

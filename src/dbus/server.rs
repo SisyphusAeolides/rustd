@@ -732,7 +732,12 @@ async fn connect_bus(scope: ManagerScope) -> anyhow::Result<zbus::Connection> {
 
             const RUNTIME_BUS: &str = "/run/dbus/system_bus_socket";
             let mut last_error = None;
-            for attempt in 0..100 {
+            // Early-boot service activation can legitimately take longer on
+            // live media while the system bus and its SELinux labels settle.
+            // Keep retrying long enough to cover that startup window instead
+            // of turning a transient race into a manager error.
+            const MAX_ATTEMPTS: usize = 600;
+            for attempt in 0..MAX_ATTEMPTS {
                 if std::path::Path::new(RUNTIME_BUS).exists() {
                     match zbus::connection::Builder::address(
                         "unix:path=/run/dbus/system_bus_socket",
@@ -744,7 +749,7 @@ async fn connect_bus(scope: ManagerScope) -> anyhow::Result<zbus::Connection> {
                         Err(error) => last_error = Some(error),
                     }
                 }
-                if attempt + 1 < 100 {
+                if attempt + 1 < MAX_ATTEMPTS {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
