@@ -9,6 +9,7 @@
 use std::ffi::{CStr, CString};
 use std::fs;
 use std::io;
+use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 
 use anyhow::{anyhow, Context};
@@ -85,6 +86,70 @@ pub fn load_initial_policy() -> anyhow::Result<()> {
             "permissive"
         }
     );
+    Ok(())
+}
+
+/// Restore SELinux labels for one path using libselinux's policy-aware API.
+///
+/// RustD cannot rely on systemd-udevd's label restoration because RustD owns
+/// the udev daemon on a system-free Fedora installation. Resolve the symbol at
+/// runtime so the binary remains usable on non-SELinux systems.
+pub fn restorecon_path(path: &Path) -> anyhow::Result<()> {
+    if !Path::new("/sys/fs/selinux/enforce").exists() {
+        return Ok(());
+    }
+    let c_path = CString::new(path.as_os_str().as_bytes())
+        .with_context(|| format!("SELinux path contains NUL: {}", path.display()))?;
+    let library = CString::new("libselinux.so.1")?;
+    let symbol = CString::new("selinux_restorecon")?;
+    // Safety: the C strings are NUL-terminated and the returned handle is
+    // closed after the function pointer call completes.
+    let handle = unsafe { libc::dlopen(library.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+    if handle.is_null() {
+        return Err(anyhow!(dl_error("open libselinux for restorecon")));
+    }
+    // Safety: `handle` remains open while the resolved function is called.
+    let raw = unsafe { libc::dlsym(handle, symbol.as_ptr()) };
+    if raw.is_null() {
+        unsafe { libc::dlclose(handle) };
+        return Err(anyhow!(dl_error("resolve selinux_restorecon")));
+    }
+    type Restorecon = unsafe extern "C" fn(*const libc::c_char, libc::c_uint) -> libc::c_int;
+    // Safety: `raw` is the documented libselinux `selinux_restorecon` ABI;
+    // `c_path` remains alive for the duration of the call.
+    let restorecon: Restorecon = unsafe { std::mem::transmute(raw) };
+    let result = unsafe { restorecon(c_path.as_ptr(), 0) };
+    let error = if result < 0 {
+        Some(io::Error::last_os_error())
+    } else {
+        None
+    };
+    unsafe { libc::dlclose(handle) };
+    if let Some(error) = error {
+        return Err(error).with_context(|| format!("restore SELinux label on {}", path.display()));
+    }
+    Ok(())
+}
+
+/// Restore labels for a path and its descendants without following symlinks.
+///
+/// The recursive walk intentionally lives here instead of depending on the
+/// external `restorecon` command: RustD's PID 1 and udev daemon must be able to
+/// perform this operation during early boot with only libselinux available.
+pub fn restorecon_tree(path: &Path) -> anyhow::Result<()> {
+    restorecon_path(path)?;
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error).with_context(|| format!("stat {}", path.display())),
+    };
+    if !metadata.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path).with_context(|| format!("read {}", path.display()))? {
+        let entry = entry?;
+        restorecon_tree(&entry.path())?;
+    }
     Ok(())
 }
 

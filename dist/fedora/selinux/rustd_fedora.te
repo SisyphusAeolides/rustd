@@ -7,8 +7,10 @@ policy_module(rustd_fedora, 1.0.0)
 gen_require(`
     type init_var_lib_t;
     type init_exec_t;
+    type init_t;
     type kernel_t;
     type systemd_resolved_t;
+    attribute domain;
 ')
 
 type rustd_resolved_var_lib_t;
@@ -21,6 +23,13 @@ files_type(rustd_resolved_var_lib_t)
 # the target SELinux policy is not yet active. A newly introduced executable
 # type would otherwise be emitted as unlabeled_t in a live squashfs image.
 can_exec(kernel_t, init_exec_t)
+
+# RustD applies Fedora service hardening in the same child setup phase as
+# systemd, including PR_SET_NO_NEW_PRIVS for units with MemoryDenyWriteExecute,
+# RestrictRealtime, or related filters. Preserve the existing SELinux domain
+# transitions when that flag is set; this grants only the process2 transition
+# permissions and does not create any new domain transitions.
+allow init_t domain:process2 { nnp_transition nosuid_transition };
 
 # /var/lib/rustd is init-owned; rustd-resolved only needs to traverse that
 # parent and manage its dedicated /var/lib/rustd/resolved subtree.

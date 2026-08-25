@@ -717,6 +717,8 @@ fn create_node(device: &Device, node: &str) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     apply_node_permissions(path, device.mode, result == 0)?;
+    crate::selinux::restorecon_path(path)
+        .map_err(|error| io::Error::other(format!("restore SELinux label on {path:?}: {error}")))?;
     let uid = device
         .owner
         .as_deref()

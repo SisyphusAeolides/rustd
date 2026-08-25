@@ -114,6 +114,7 @@ fn main() -> anyhow::Result<()> {
         if !running_in_container() {
             rustd::mount_setup::mount_api_filesystems()?;
             rustd::selinux::load_initial_policy()?;
+            rustd::selinux::restorecon_tree(std::path::Path::new("/dev"))?;
         }
         rustd::cgroup::CgroupManager::for_scope(ManagerScope::System)
             .setup_delegated_root()
