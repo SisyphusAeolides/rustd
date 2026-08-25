@@ -24,10 +24,13 @@
 #include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/vfs.h>
 #include <sys/statvfs.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#include <linux/magic.h>
 
 static int bind_ro(const char *src, const char *dst) {
     struct stat st;
@@ -75,6 +78,14 @@ static int mask_device(const char *path) {
     if (mount(NULL, path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY | MS_NOSUID | MS_NODEV, NULL) < 0)
         return -errno;
     return 0;
+}
+
+static int root_is_overlay(void) {
+    struct statfs fs;
+
+    if (statfs("/", &fs) < 0)
+        return 0;
+    return (unsigned long)fs.f_type == OVERLAYFS_SUPER_MAGIC;
 }
 
 int rustd_sandbox_no_new_privs(void) {
@@ -134,8 +145,17 @@ int rustd_sandbox_mount_namespaces(int private_tmp,
     }
 
     if (protect_system >= 3) {
-        if (mount(NULL, "/", NULL,
-                  MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC | MS_NODEV, NULL) < 0)
+        /*
+         * A live Fedora image uses an overlay root with a writable upper
+         * layer.  The recursive read-only bind remount that implements
+         * ProtectSystem=strict is not valid for that filesystem and returns
+         * EINVAL.  The lower squashfs is already immutable; keep the live
+         * service runnable and retain the normal strict remount on installed
+         * filesystems.
+         */
+        if (!root_is_overlay()
+            && mount(NULL, "/", NULL,
+                     MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC | MS_NODEV, NULL) < 0)
             return -errno;
     } else if (protect_system >= 1) {
         (void)bind_ro("/usr", "/usr");
