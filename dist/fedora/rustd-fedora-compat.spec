@@ -84,6 +84,7 @@ grep -Eq 'omit_dracutmodules\+=".*[[:space:]]selinux([[:space:]]|$)' \
 test -x dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
 test -x dist/fedora/dracut/76rustd-selinux-initramfs/rustd-initramfs-relabel.sh
 ! grep -Fq 'inst_hook pre-pivot' dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
+grep -Fq '/usr/lib/rustd/rustd-.*-generator' dist/fedora/selinux/rustd_fedora.fc
 grep -Fq 'install_items+=" /usr/bin/rustudevadm "' dist/fedora/90-rustd-dracut.conf
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
