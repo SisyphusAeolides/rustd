@@ -11,7 +11,7 @@ gen_require(`
     type kernel_t;
     type systemd_resolved_t;
     attribute domain;
-    attribute device_type;
+    attribute dev_type;
 ')
 
 type rustd_resolved_var_lib_t;
@@ -37,7 +37,7 @@ allow init_t domain:process2 { nnp_transition nosuid_transition };
 # domain; RustD owns that path, so grant only device-node relabel operations.
 # This does not grant relabeling of regular files, directories, or arbitrary
 # SELinux types.
-allow kernel_t device_type:{ chr_file blk_file } { relabelfrom relabelto };
+allow kernel_t dev_type:{ chr_file blk_file } { relabelfrom relabelto };
 
 # /var/lib/rustd is init-owned; rustd-resolved only needs to traverse that
 # parent and manage its dedicated /var/lib/rustd/resolved subtree.
