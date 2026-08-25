@@ -8,6 +8,8 @@ ConditionPathIsReadWrite=/dev
 
 [Service]
 Type=oneshot
+StandardOutput=null
+StandardError=null
 RemainAfterExit=yes
 ExecStart=/usr/bin/rustd-tmpfiles --prefix=/dev --create --boot
 TimeoutSec=30s

@@ -72,6 +72,8 @@ LIBUDEV_183 {
 };
 
 LIBUDEV_189 {
+  global:
+    udev_device_new_from_device_id;
 } LIBUDEV_183;
 
 LIBUDEV_196 {

@@ -5,5 +5,7 @@ Before=rustd-tmpfiles-setup.service sysinit.target
 
 [Service]
 Type=oneshot
+StandardOutput=null
+StandardError=null
 ExecStart=/usr/bin/rustd-sysusers
 RemainAfterExit=yes

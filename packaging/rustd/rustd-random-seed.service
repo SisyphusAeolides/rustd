@@ -5,6 +5,8 @@ Before=sysinit.target shutdown.target
 
 [Service]
 Type=oneshot
+StandardOutput=null
+StandardError=null
 ExecStart=/usr/lib/rustd/rustd-random-seed load
 ExecStop=/usr/lib/rustd/rustd-random-seed save
 RemainAfterExit=yes

@@ -6,6 +6,8 @@ Before=sysinit.target
 
 [Service]
 Type=oneshot
+StandardOutput=null
+StandardError=null
 ExecStart=/usr/lib/rustd/rustd-vconsole-setup
 RemainAfterExit=yes
 

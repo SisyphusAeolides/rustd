@@ -7,6 +7,8 @@ Before=sysinit.target
 
 [Service]
 Type=oneshot
+StandardOutput=null
+StandardError=null
 ExecStartPre=/usr/bin/mkdir -p /run/rustd/journal /run/dbus /run/avahi-daemon
 ExecStart=/usr/bin/rustd-tmpfiles
 ExecStartPost=/usr/sbin/restorecon -F /run/rustd /run/dbus /run/avahi-daemon

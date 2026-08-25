@@ -35,6 +35,21 @@ struct udev_monitor {
     rustd_device_monitor *monitor;
 };
 
+static int parse_device_id(const char *id, char *type, dev_t *devnum) {
+    unsigned major_n;
+    unsigned minor_n;
+    char extra;
+
+    if (!id || (id[0] != 'b' && id[0] != 'c') ||
+        sscanf(id + 1, "%u:%u%c", &major_n, &minor_n, &extra) != 2) {
+        errno = EINVAL;
+        return -1;
+    }
+    *type = id[0];
+    *devnum = makedev(major_n, minor_n);
+    return 0;
+}
+
 /* Opaque alias of rustd_device_list_entry — never heap-wrapped. */
 struct udev_list_entry;
 
@@ -143,6 +158,15 @@ struct udev_device *udev_device_new_from_devnum(struct udev *udev, char type, de
     if (!udev)
         return NULL;
     return wrap_device(udev, rustd_device_new_from_devnum(udev->ctx, type, devnum));
+}
+
+struct udev_device *udev_device_new_from_device_id(struct udev *udev, const char *id) {
+    char type;
+    dev_t devnum;
+
+    if (!udev || parse_device_id(id, &type, &devnum) < 0)
+        return NULL;
+    return udev_device_new_from_devnum(udev, type, devnum);
 }
 
 struct udev_device *udev_device_new_from_subsystem_sysname(

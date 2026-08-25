@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <sys/sysmacros.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -27,6 +28,8 @@ static void verify_function_types(void) {
         udev_device_set_sysattr_value;
     struct udev_device *(*from_environment)(struct udev *) =
         udev_device_new_from_environment;
+    struct udev_device *(*from_device_id)(struct udev *, const char *) =
+        udev_device_new_from_device_id;
     struct udev_monitor *(*monitor_ref)(struct udev_monitor *) = udev_monitor_ref;
 
     assert(login_new);
@@ -38,6 +41,7 @@ static void verify_function_types(void) {
     assert(flush_matches);
     assert(set_sysattr);
     assert(from_environment);
+    assert(from_device_id);
     assert(monitor_ref);
 }
 
@@ -229,6 +233,19 @@ int main(void) {
     errno = 0;
     assert(udev_device_new_from_environment(udev) == NULL);
     assert(errno == ENODEV);
+
+    {
+        struct udev_device *device;
+
+        device = udev_device_new_from_device_id(udev, "c1:3");
+        assert(device);
+        assert(udev_device_get_devnum(device) == makedev(1, 3));
+        assert(udev_device_unref(device) == NULL);
+
+        errno = 0;
+        assert(udev_device_new_from_device_id(udev, "x1:3") == NULL);
+        assert(errno == EINVAL);
+    }
 
     assert(udev_ref(udev) == udev);
     assert(udev_unref(udev) == NULL);

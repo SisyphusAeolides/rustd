@@ -8,6 +8,8 @@ ConditionPathIsReadWrite=/sys
 
 [Service]
 Type=simple
+StandardOutput=null
+StandardError=null
 ExecStart=/usr/lib/rustd/rustd-udevd
 Restart=always
 RestartSec=1s
