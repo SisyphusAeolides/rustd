@@ -1366,6 +1366,43 @@ fn open_dev_null(flags: libc::c_int) -> anyhow::Result<std::fs::File> {
     Ok(unsafe { std::fs::File::from_raw_fd(fd) })
 }
 
+fn uses_service_tty(value: &str) -> bool {
+    value.eq_ignore_ascii_case("tty") || value.eq_ignore_ascii_case("tty-force")
+}
+
+fn open_service_tty(section: &ServiceSection) -> anyhow::Result<Option<std::fs::File>> {
+    let needs_tty = uses_service_tty(&section.standard_input)
+        || uses_service_tty(&section.standard_output)
+        || uses_service_tty(&section.standard_error);
+    if !needs_tty {
+        return Ok(None);
+    }
+
+    let configured_path = if section.tty_path.is_empty() {
+        "/dev/tty"
+    } else {
+        section.tty_path.as_str()
+    };
+    let path = CString::new(configured_path).map_err(|_| anyhow!("TTYPath contains a NUL byte"))?;
+    // Safety: `path` is a valid NUL-terminated C string and the returned
+    // descriptor is owned by the `File` below.
+    let fd = unsafe {
+        libc::open(
+            path.as_ptr(),
+            libc::O_RDWR | libc::O_CLOEXEC | libc::O_NOCTTY,
+        )
+    };
+    if fd < 0 {
+        return Err(anyhow!(
+            "failed to open service TTY '{}': {}",
+            configured_path,
+            std::io::Error::last_os_error()
+        ));
+    }
+    // Safety: `fd` is a newly opened descriptor owned by this function.
+    Ok(Some(unsafe { std::fs::File::from_raw_fd(fd) }))
+}
+
 fn is_journal_daemon(unit_name: &str) -> bool {
     unit_name == "rustd-journald.service" || unit_name.ends_with("-journald.service")
 }
@@ -1561,12 +1598,16 @@ fn spawn_command(
     };
     let journal_path = std::env::var_os("RUSTD_JOURNAL_STDOUT")
         .map_or_else(|| PathBuf::from(DEFAULT_STDOUT_PATH), PathBuf::from);
+    let service_tty = open_service_tty(section)?;
+    let service_tty_fd = service_tty.as_ref().map_or(-1, |file| file.as_raw_fd());
     let mut stdout_stream = None;
     let mut stderr_stream = None;
     let mut stdout_fallback = None;
     let mut stderr_fallback = None;
     let route_journal = !is_journal_daemon(unit_name);
-    let stdout_fd = if route_journal && wants_journal_stdio(&section.standard_output) {
+    let stdout_fd = if uses_service_tty(&section.standard_output) {
+        service_tty_fd
+    } else if route_journal && wants_journal_stdio(&section.standard_output) {
         match connect_service_stream_with_limits(
             &journal_path,
             identifier,
@@ -1601,7 +1642,9 @@ fn spawn_command(
     } else {
         section.standard_error.as_str()
     };
-    let stderr_fd = if route_journal && wants_journal_stdio(stderr_mode) {
+    let stderr_fd = if uses_service_tty(stderr_mode) {
+        service_tty_fd
+    } else if route_journal && wants_journal_stdio(stderr_mode) {
         match connect_service_stream_with_limits(
             &journal_path,
             identifier,
@@ -1658,7 +1701,11 @@ fn spawn_command(
             .as_ref()
             .map_or(std::ptr::null(), |value| value.as_ptr()),
         apparmor_profile_ignore,
-        stdin_fd: -1,
+        stdin_fd: if uses_service_tty(&section.standard_input) {
+            service_tty_fd
+        } else {
+            -1
+        },
         stdout_fd,
         stderr_fd,
         notify_fd,
@@ -2048,6 +2095,14 @@ mod tests {
 
     fn shell_command(script: &str) -> ExecCommand {
         ExecCommand::parse(&format!("/bin/sh -c '{script}'")).unwrap()
+    }
+
+    #[test]
+    fn service_tty_modes_are_recognized() {
+        assert!(uses_service_tty("tty"));
+        assert!(uses_service_tty("TTY-FORCE"));
+        assert!(!uses_service_tty("journal"));
+        assert!(!uses_service_tty("null"));
     }
 
     #[test]
@@ -2594,7 +2649,8 @@ mod tests {
             "/definitely/not/a/rustd-executable",
             ServiceType::Exec,
         );
-        assert!(activate(&mut record, &[]).is_err());
+        let result = activate(&mut record, &[]);
+        assert!(result.is_err());
         assert_eq!(record.state, UnitState::Failed);
         assert!(record.active_pid.is_none());
     }

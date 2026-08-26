@@ -28,6 +28,7 @@
 #include <string.h>
 #include <sys/prctl.h>
 #include <sys/resource.h>
+#include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -681,6 +682,16 @@ static void wait_for_idle_gate(int fd) {
     close(fd);
 }
 
+static void establish_controlling_tty(void) {
+    if (!isatty(STDIN_FILENO))
+        return;
+
+    if (setsid() < 0)
+        helper_fail(errno, 125);
+    if (ioctl(STDIN_FILENO, TIOCSCTTY, 0) < 0)
+        helper_fail(errno, 125);
+}
+
 static void apply_sandbox_mounts(const rustd_spawn_request *request) {
     if (!(request->header.flags & RUSTD_SPAWN_FLAG_HAS_SANDBOX))
         return;
@@ -914,6 +925,7 @@ _Noreturn void rustd_spawn_helper_main(void) {
     apply_service_environment(&request);
 
     wait_for_idle_gate(idle_fd);
+    establish_controlling_tty();
 
     if (request.header.flags & RUSTD_SPAWN_FLAG_HAS_SANDBOX) {
         if (request.sandbox.restrict_native_syscalls) {
