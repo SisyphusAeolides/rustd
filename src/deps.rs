@@ -84,7 +84,7 @@ where
             return Ok(());
         }
 
-        let (wants, requires, after) = deps_for(name, self.known, &self.extra);
+        let (wants, requires, _after) = deps_for(name, self.known, &self.extra);
 
         self.on_stack.insert(name.to_owned());
 
@@ -98,14 +98,6 @@ where
         for dep in &wants {
             let _ = self.ensure_loaded(dep, false);
             // Only recurse if the unit is present: load may have skipped it.
-            if self.is_loaded(dep) {
-                self.resolve(dep, Some(name))?;
-            }
-        }
-
-        // After= — ordering only; the dep may already be pulled in above.
-        for dep in &after {
-            let _ = self.ensure_loaded(dep, false);
             if self.is_loaded(dep) {
                 self.resolve(dep, Some(name))?;
             }
@@ -299,5 +291,21 @@ mod tests {
             .into_iter()
             .collect();
         assert!(resolve_start_order("a.target", &known, |_| None).is_err());
+    }
+
+    #[test]
+    fn after_does_not_pull_unit_into_transaction() {
+        let a = make_target("a.target", &[], &["b.target"]);
+        let known: HashMap<String, DepUnit<'_>> = [("a.target".to_string(), dep_unit(&a))]
+            .into_iter()
+            .collect();
+
+        // `After=` only orders units that are already part of the transaction.
+        // It must not load or start `b.target` by itself.
+        let order = resolve_start_order("a.target", &known, |_| {
+            panic!("After= unexpectedly pulled a unit into the transaction")
+        })
+        .unwrap();
+        assert_eq!(order, vec!["a.target"]);
     }
 }
