@@ -12,6 +12,8 @@
 #include <unistd.h>
 
 #define SESSION_KEY "rustd-logind-session"
+/* RustD owns the native bus/path while preserving the login1 wire interface. */
+#define LOGIN1_INTERFACE "org.freedesktop.login1.Manager"
 
 static void free_session(pam_handle_t *pamh, void *data, int status) {
     (void)pamh; (void)status;
@@ -31,7 +33,7 @@ static int call_terminate(const char *id) {
     if (!bus) return PAM_SESSION_ERR;
     DBusMessage *message = dbus_message_new_method_call(
         "io.rustd.Login1", "/io/rustd/Login1",
-        "io.rustd.Login1.Manager", "TerminateSession");
+        LOGIN1_INTERFACE, "TerminateSession");
     if (!message) return PAM_BUF_ERR;
     if (!dbus_message_append_args(message, DBUS_TYPE_STRING, &id, DBUS_TYPE_INVALID)) {
         dbus_message_unref(message);
@@ -61,7 +63,7 @@ static int create_session(pam_handle_t *pamh, const char *user, const struct pas
     if (!bus) return PAM_SESSION_ERR;
     DBusMessage *message = dbus_message_new_method_call(
         "io.rustd.Login1", "/io/rustd/Login1",
-        "io.rustd.Login1.Manager", "CreateSession");
+        LOGIN1_INTERFACE, "CreateSession");
     if (!message) return PAM_BUF_ERR;
     dbus_uint32_t uid = pwd->pw_uid, pid = getpid(), vtnr = 0;
     dbus_bool_t remote = FALSE;
