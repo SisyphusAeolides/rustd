@@ -11,10 +11,6 @@ StartLimitBurst=2
 # Settle devices via rustudevadm when available; ignore if still booting cold.
 ExecStartPre=-/usr/bin/rustudevadm settle --timeout=10
 ExecStart=/usr/bin/plasmalogin
-TTYPath=/dev/tty1
-StandardInput=tty
-StandardOutput=tty
-StandardError=tty
 Restart=always
 
 [Install]
