@@ -40,7 +40,7 @@ COMPAT_LIBS := \
 	$(LIBS_DIR)/libudev.so.1 \
 	$(LIBS_DIR)/libsystemd.so.0
 
-.PHONY: all build pam-module libs compat check-libs check-compat check-compat-closure test check-native check-rust check-formal check-packaging check-reproducible clean install release boot-smoke certify installed-certification performance-promotion
+.PHONY: all build pam-module libs compat check-libs check-compat check-compat-closure check-logind test check-native check-rust check-formal check-packaging check-reproducible clean install release boot-smoke certify installed-certification performance-promotion
 
 all: build libs
 
@@ -188,6 +188,9 @@ check-compat: compat
 		-o build/test_journal_filters
 	./build/test_journal_filters
 
+check-logind: pam-module
+	bash tests/pam_logind_integration.sh
+
 check-compat-closure: compat
 	@test -n "$(REPORT)" || (echo "REPORT=<systemd closure audit JSON> is required" >&2; exit 64)
 	python3 scripts/check-compat-closure.py \
@@ -239,7 +242,7 @@ check-formal:
 	agda -i formal/agda formal/agda/RustD/Job/Ordering.agda
 
 check-packaging:
-	bash -n scripts/boot-smoke.sh scripts/install-rustd-names.sh scripts/check-reproducible-release.sh scripts/installed-certification.sh scripts/performance-promotion.sh scripts/exclusive-cutover-gate.sh scripts/ci-pid1-initramfs.sh scripts/check-native-libs.sh
+	bash -n scripts/boot-smoke.sh scripts/install-rustd-names.sh scripts/check-reproducible-release.sh scripts/installed-certification.sh scripts/performance-promotion.sh scripts/exclusive-cutover-gate.sh scripts/ci-pid1-initramfs.sh scripts/check-native-libs.sh tests/pam_logind_integration.sh
 	python3 -m py_compile scripts/executable_contract.py scripts/check-executable-inventory.py scripts/install-executable-surfaces.py scripts/validate-resolver-certification-report.py
 	@set -eu; \
 	work=$$(mktemp -d); \

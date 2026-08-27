@@ -84,7 +84,10 @@ static int create_session(pam_handle_t *pamh, const char *user, const struct pas
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_BOOLEAN, &remote) ||
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &remote_user) ||
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &remote_host) ||
-        !dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "{sv}", &array) ||
+        /* login1's CreateSession properties are an array of (string, variant)
+         * structs, not a dictionary.  Keep this byte-for-byte compatible with
+         * pam_systemd and the org.freedesktop.login1 contract. */
+        !dbus_message_iter_open_container(&iter, DBUS_TYPE_ARRAY, "(sv)", &array) ||
         !dbus_message_iter_close_container(&iter, &array)) {
         dbus_message_unref(message);
         dbus_connection_unref(bus);

@@ -18,6 +18,7 @@ const NATIVE_BUS_NAME: &str = "io.rustd.Login1";
 const COMPAT_BUS_NAME: &str = "org.freedesktop.login1";
 const NATIVE_ROOT: &str = "/io/rustd/Login1";
 const COMPAT_ROOT: &str = "/org/freedesktop/login1";
+const CREATE_SESSION_SIGNATURE: &str = "uusssssussbssa(sv)";
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
 fn path(path: String) -> zbus::fdo::Result<OwnedObjectPath> {
@@ -439,6 +440,161 @@ impl Manager {
     }
 }
 
+/// Adapter for the login1 manager's one non-standard zbus dispatch case.
+///
+/// zbus represents a Rust method with multiple arguments as a tuple internally,
+/// but D-Bus puts those values directly in the message body.  Its checked
+/// dynamic deserializer therefore expects `(args...)` while a real login1
+/// client sends `args...`.  The standard login1 CreateSession call is emitted
+/// by PlasmaLogin/libsystemd in the latter form, so decode that one method with
+/// the unchecked deserializer and delegate every other method to the generated
+/// Manager implementation.  The generated introspection remains unchanged.
+struct Login1Manager(Manager);
+
+#[zbus::export::async_trait::async_trait]
+impl zbus::object_server::Interface for Login1Manager {
+    fn name() -> zbus::names::InterfaceName<'static> {
+        <Manager as zbus::object_server::Interface>::name()
+    }
+
+    async fn get(
+        &self,
+        property_name: &str,
+    ) -> Option<zbus::fdo::Result<zbus::zvariant::OwnedValue>> {
+        <Manager as zbus::object_server::Interface>::get(&self.0, property_name).await
+    }
+
+    async fn get_all(&self) -> zbus::fdo::Result<HashMap<String, zbus::zvariant::OwnedValue>> {
+        <Manager as zbus::object_server::Interface>::get_all(&self.0).await
+    }
+
+    fn set<'call>(
+        &'call self,
+        property_name: &'call str,
+        value: &'call zbus::zvariant::Value<'_>,
+        ctxt: &'call zbus::object_server::SignalContext<'_>,
+    ) -> zbus::DispatchResult<'call> {
+        <Manager as zbus::object_server::Interface>::set(&self.0, property_name, value, ctxt)
+    }
+
+    async fn set_mut(
+        &mut self,
+        property_name: &str,
+        value: &zbus::zvariant::Value<'_>,
+        ctxt: &zbus::object_server::SignalContext<'_>,
+    ) -> Option<zbus::fdo::Result<()>> {
+        <Manager as zbus::object_server::Interface>::set_mut(
+            &mut self.0,
+            property_name,
+            value,
+            ctxt,
+        )
+        .await
+    }
+
+    fn call<'call>(
+        &'call self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        msg: &'call zbus::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::DispatchResult<'call> {
+        if name.as_str() != "CreateSession" {
+            return <Manager as zbus::object_server::Interface>::call(
+                &self.0, server, connection, msg, name,
+            );
+        }
+
+        let body = msg.body();
+        let arguments = match body.signature() {
+            Some(signature) if signature.as_str() == CREATE_SESSION_SIGNATURE => body
+                .deserialize_unchecked::<(
+                    u32,
+                    u32,
+                    String,
+                    String,
+                    String,
+                    String,
+                    String,
+                    u32,
+                    String,
+                    String,
+                    bool,
+                    String,
+                    String,
+                    Vec<(String, zbus::zvariant::OwnedValue)>,
+                )>()
+                .map_err(|error| error.to_string()),
+            Some(signature) => Err(format!(
+                "CreateSession signature `{signature}` does not match `{CREATE_SESSION_SIGNATURE}`"
+            )),
+            None => Err("CreateSession has no D-Bus body signature".into()),
+        };
+        let future = async move {
+            match arguments {
+                Ok((
+                    uid,
+                    pid,
+                    service,
+                    type_,
+                    class,
+                    desktop,
+                    seat_id,
+                    vtnr,
+                    tty,
+                    display,
+                    remote,
+                    remote_user,
+                    remote_host,
+                    properties,
+                )) => {
+                    self.0
+                        .create_session(
+                            uid,
+                            pid,
+                            service,
+                            type_,
+                            class,
+                            desktop,
+                            seat_id,
+                            vtnr,
+                            tty,
+                            display,
+                            remote,
+                            remote_user,
+                            remote_host,
+                            properties,
+                            connection,
+                        )
+                        .await
+                }
+                Err(error) => Err(zbus::fdo::Error::InvalidArgs(error.to_string())),
+            }
+        };
+        zbus::DispatchResult::new_async(connection, msg, future)
+    }
+
+    fn call_mut<'call>(
+        &'call mut self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        msg: &'call zbus::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::DispatchResult<'call> {
+        <Manager as zbus::object_server::Interface>::call_mut(
+            &mut self.0,
+            server,
+            connection,
+            msg,
+            name,
+        )
+    }
+
+    fn introspect_to_writer(&self, writer: &mut dyn std::fmt::Write, level: usize) {
+        <Manager as zbus::object_server::Interface>::introspect_to_writer(&self.0, writer, level)
+    }
+}
+
 struct SessionObject {
     id: String,
 }
@@ -842,16 +998,16 @@ async fn main() -> anyhow::Result<()> {
     let connection = zbus::Connection::system().await?;
     let inhibitors = Arc::new(Mutex::new(HashMap::new()));
     let session_refs = Arc::new(Mutex::new(HashMap::new()));
-    let compat_manager = Manager {
+    let compat_manager = Login1Manager(Manager {
         next_inhibitor: AtomicU64::new(0),
         inhibitors: Arc::clone(&inhibitors),
         session_refs: Arc::clone(&session_refs),
-    };
-    let native_manager = Manager {
+    });
+    let native_manager = Login1Manager(Manager {
         next_inhibitor: AtomicU64::new(0),
         inhibitors,
         session_refs,
-    };
+    });
     connection
         .object_server()
         .at(COMPAT_ROOT, compat_manager)
