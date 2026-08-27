@@ -724,6 +724,15 @@ impl HostnameService {
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> anyhow::Result<()> {
+    // The native manager does not have systemd's early hostname setup path.
+    // Apply the configured hostname before services (including getty) can
+    // render a login prompt, so the live image cannot inherit the builder's
+    // hostname or distribution branding.
+    let configured_hostname = static_hostname();
+    if !configured_hostname.is_empty() {
+        set_kernel_hostname(&configured_hostname)?;
+    }
+
     let connection = zbus::Connection::system().await?;
     connection
         .object_server()
