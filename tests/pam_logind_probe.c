@@ -3,6 +3,7 @@
 
 #include <security/pam_appl.h>
 #include <stdio.h>
+#include <string.h>
 
 static int conversation(int count, const struct pam_message **messages,
                         struct pam_response **responses, void *data) {
@@ -29,6 +30,17 @@ int main(int argc, char **argv) {
     status = pam_open_session(pamh, 0);
     printf("pam_open_session=%d %s\n", status, pam_strerror(pamh, status));
     if (status == PAM_SUCCESS) {
+        const char *runtime = pam_getenv(pamh, "XDG_RUNTIME_DIR");
+        const char *session_id = pam_getenv(pamh, "XDG_SESSION_ID");
+        printf("XDG_RUNTIME_DIR=%s\n", runtime ? runtime : "");
+        printf("XDG_SESSION_ID=%s\n", session_id ? session_id : "");
+        if (!runtime || strncmp(runtime, "/run/user/", sizeof("/run/user/") - 1) != 0 ||
+            !session_id || session_id[0] == '\0') {
+            fprintf(stderr, "RustD PAM session environment is incomplete\n");
+            (void)pam_close_session(pamh, 0);
+            (void)pam_end(pamh, PAM_SESSION_ERR);
+            return PAM_SESSION_ERR;
+        }
         status = pam_close_session(pamh, 0);
         printf("pam_close_session=%d %s\n", status, pam_strerror(pamh, status));
     }

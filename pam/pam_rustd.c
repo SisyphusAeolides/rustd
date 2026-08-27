@@ -7,8 +7,10 @@
 #include <pwd.h>
 #include <security/pam_appl.h>
 #include <security/pam_modules.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #define SESSION_KEY "rustd-logind-session"
@@ -49,6 +51,30 @@ static int call_terminate(const char *id) {
         return PAM_SESSION_ERR;
     }
     dbus_message_unref(reply);
+    return PAM_SUCCESS;
+}
+
+/*
+ * pam_systemd exports the runtime directory it creates through the PAM
+ * environment.  Plasma Login Manager starts the desktop from that
+ * environment; without XDG_RUNTIME_DIR, startplasma-wayland cannot create
+ * its Wayland socket even though RustD has already created /run/user/<uid>.
+ */
+static int set_session_environment(pam_handle_t *pamh, const char *id, uid_t uid) {
+    char runtime[64];
+    char session_id[512];
+    int runtime_length = snprintf(runtime, sizeof(runtime),
+        "XDG_RUNTIME_DIR=/run/user/%u", (unsigned)uid);
+    int session_length = snprintf(session_id, sizeof(session_id),
+        "XDG_SESSION_ID=%s", id);
+    if (runtime_length < 0 || (size_t)runtime_length >= sizeof(runtime) ||
+        session_length < 0 || (size_t)session_length >= sizeof(session_id)) {
+        return PAM_BUF_ERR;
+    }
+    if (pam_putenv(pamh, runtime) != PAM_SUCCESS ||
+        pam_putenv(pamh, session_id) != PAM_SUCCESS) {
+        return PAM_SESSION_ERR;
+    }
     return PAM_SUCCESS;
 }
 
@@ -104,6 +130,7 @@ static int create_session(pam_handle_t *pamh, const char *user, const struct pas
     }
     const char *id = NULL;
     int ok = dbus_message_get_args(reply, &error, DBUS_TYPE_STRING, &id, DBUS_TYPE_INVALID);
+    int status = PAM_SESSION_ERR;
     if (ok && id) {
         size_t length = strlen(id) + 1;
         *out = malloc(length);
@@ -111,7 +138,14 @@ static int create_session(pam_handle_t *pamh, const char *user, const struct pas
     }
     dbus_message_unref(reply);
     dbus_error_free(&error);
-    return *out ? PAM_SUCCESS : PAM_SESSION_ERR;
+    if (!*out) return PAM_SESSION_ERR;
+    status = set_session_environment(pamh, *out, pwd->pw_uid);
+    if (status != PAM_SUCCESS) {
+        (void)call_terminate(*out);
+        free(*out);
+        *out = NULL;
+    }
+    return status;
 }
 
 PAM_EXTERN int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc, const char **argv) {
@@ -124,7 +158,10 @@ PAM_EXTERN int pam_sm_open_session(pam_handle_t *pamh, int flags, int argc, cons
     int status = create_session(pamh, user, pwd, &session);
     if (status != PAM_SUCCESS) return status;
     status = pam_set_data(pamh, SESSION_KEY, session, free_session);
-    if (status != PAM_SUCCESS) free(session);
+    if (status != PAM_SUCCESS) {
+        (void)call_terminate(session);
+        free(session);
+    }
     return status;
 }
 

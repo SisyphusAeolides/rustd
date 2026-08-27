@@ -204,6 +204,21 @@ fn unit_search_dirs(override_value: Option<&OsStr>) -> Vec<PathBuf> {
     search_dirs
 }
 
+/// Return true when a unit path is the systemd-compatible `/dev/null` mask.
+///
+/// `rustd-debug-generator` uses this representation for `rustd.mask=`.  A
+/// normal existence check follows the symlink and then parses `/dev/null` as
+/// an empty unit, which turns a deliberate mask into a misleading
+/// "no ExecStart" failure and can leave dependency jobs behind.
+#[must_use]
+fn is_masked_unit_path(path: &Path) -> bool {
+    let Ok(metadata) = std::fs::symlink_metadata(path) else {
+        return false;
+    };
+    metadata.file_type().is_symlink()
+        && std::fs::canonicalize(path).is_ok_and(|target| target == Path::new("/dev/null"))
+}
+
 fn user_home_dir() -> PathBuf {
     std::env::var_os("HOME").map_or_else(
         || PathBuf::from(format!("/home/{}", unsafe { libc::getuid() })),
@@ -458,6 +473,9 @@ impl UnitLoader {
     fn find_unit_file(&self, unit_name: &str) -> anyhow::Result<(PathBuf, Option<String>)> {
         for dir in &self.search_dirs {
             let p = dir.join(unit_name);
+            if is_masked_unit_path(&p) {
+                return Err(anyhow::anyhow!("unit is masked: {unit_name}"));
+            }
             if p.exists() {
                 return Ok((p, None));
             }
@@ -468,6 +486,9 @@ impl UnitLoader {
             let template = format!("{prefix}@.{suffix}");
             for dir in &self.search_dirs {
                 let p = dir.join(&template);
+                if is_masked_unit_path(&p) {
+                    return Err(anyhow::anyhow!("unit is masked: {unit_name}"));
+                }
                 if p.exists() {
                     return Ok((p, Some(instance)));
                 }
@@ -1088,6 +1109,25 @@ mod tests {
             loader.load("var.mount").unwrap(),
             LoadedUnit::Mount(_)
         ));
+    }
+
+    #[test]
+    fn generator_dev_null_mask_stops_lower_priority_unit_lookup() {
+        let root = tempfile::tempdir().unwrap();
+        let generator = root.path().join("run/rustd/generator.early");
+        let vendor = root.path().join("usr/lib/rustd/system");
+        std::fs::create_dir_all(&generator).unwrap();
+        std::fs::create_dir_all(&vendor).unwrap();
+        std::fs::write(
+            vendor.join("masked.service"),
+            "[Service]\nExecStart=/bin/true\n",
+        )
+        .unwrap();
+        std::os::unix::fs::symlink("/dev/null", generator.join("masked.service")).unwrap();
+
+        let loader = UnitLoader::with_dirs(vec![generator, vendor]);
+        let error = loader.load("masked.service").unwrap_err().to_string();
+        assert!(error.contains("unit is masked"));
     }
 
     #[test]
