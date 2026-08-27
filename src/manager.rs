@@ -1183,6 +1183,21 @@ impl Manager {
             .as_ref()
             .map_or_else(Vec::new, NotifyServer::drain_events);
         for event in events {
+            let state = self
+                .units
+                .get(&event.unit_name)
+                .map_or("missing", |record| match record.state {
+                    UnitState::Inactive => "inactive",
+                    UnitState::Activating => "activating",
+                    UnitState::Active => "active",
+                    UnitState::Deactivating => "deactivating",
+                    UnitState::Failed => "failed",
+                    UnitState::Maintenance => "maintenance",
+                });
+            eprintln!(
+                "rustd: applying notification pid={} unit='{}' ready={} state={state}",
+                event.sender_pid, event.unit_name, event.message.ready
+            );
             let now = clock_now(ClockId::Monotonic).ok();
             let now_realtime = clock_now(ClockId::Realtime).ok();
             let mut cancel_start_timeout = false;

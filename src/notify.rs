@@ -163,6 +163,7 @@ impl NotifyServer {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let unit_name = unit_name.into();
+        eprintln!("rustd: registering notify pid {pid} for '{unit_name}' access={access:?}");
         state.registrations.insert(
             pid,
             Registration {
@@ -257,12 +258,14 @@ impl IoHandler for NotifyIoHandler {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(unit_name) = authorized_unit(&state, sender_pid) {
+                eprintln!("rustd: authorized notification pid={sender_pid} for '{unit_name}'");
                 state.pending.push(NotifyEvent {
                     unit_name,
                     sender_pid,
                     message,
                 });
             } else {
+                eprintln!("rustd: deferring notification pid={sender_pid}; no registered unit yet");
                 if state.deferred.len() == DEFERRED_NOTIFY_LIMIT {
                     state.deferred.pop_front();
                 }
@@ -353,10 +356,15 @@ fn receive_datagram(
         .into());
     }
     let Some(sender_pid) = extract_sender_pid(&header) else {
+        eprintln!("rustd: dropping notification without SCM_CREDENTIALS");
         return Ok(None);
     };
     #[allow(clippy::cast_sign_loss)]
     let message = NotifyMessage::parse(&buffer[..length as usize]);
+    eprintln!(
+        "rustd: received notification pid={sender_pid} ready={} stopping={} watchdog={}",
+        message.ready, message.stopping, message.watchdog
+    );
     Ok(Some((sender_pid, message)))
 }
 
