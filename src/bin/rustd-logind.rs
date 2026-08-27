@@ -67,6 +67,19 @@ fn set_locked(id: &str, locked: bool) -> zbus::fdo::Result<()> {
     logind::save(&session).map_err(dbus_error)
 }
 
+/// Return every seat known to the login manager, including the local seat
+/// before its first session exists.  A display manager needs to discover the
+/// seat in order to create that first greeter session; deriving seats only
+/// from existing sessions leaves a freshly booted graphical system with no
+/// seat to activate.
+fn seat_names<'a>(sessions: impl IntoIterator<Item = &'a Session>) -> HashSet<String> {
+    let mut seats = HashSet::from(["seat0".to_owned()]);
+    for session in sessions {
+        seats.insert(session.seat.clone());
+    }
+    seats
+}
+
 impl Manager {
     fn ensure_shutdown_allowed(&self) -> zbus::fdo::Result<()> {
         let mut map = self
@@ -277,11 +290,8 @@ impl Manager {
     }
 
     fn list_seats(&self) -> Vec<(String, OwnedObjectPath)> {
-        let mut seats = HashSet::new();
-        for session in logind::sessions() {
-            seats.insert(session.seat.clone());
-        }
-        seats
+        let sessions = logind::sessions();
+        seat_names(sessions.iter())
             .into_iter()
             .filter_map(|seat| {
                 path(logind::seat_path(&seat))
@@ -850,7 +860,8 @@ async fn main() -> anyhow::Result<()> {
         .object_server()
         .at(NATIVE_ROOT, native_manager)
         .await?;
-    for session in logind::sessions() {
+    let sessions = logind::sessions();
+    for session in &sessions {
         connection
             .object_server()
             .at(
@@ -867,19 +878,40 @@ async fn main() -> anyhow::Result<()> {
                 UserObject { uid: session.uid },
             )
             .await;
-        let _ = connection
+    }
+    for seat in seat_names(sessions.iter()) {
+        connection
             .object_server()
-            .at(
-                logind::seat_path(&session.seat),
-                SeatObject {
-                    id: session.seat.clone(),
-                },
-            )
-            .await;
+            .at(logind::seat_path(&seat), SeatObject { id: seat })
+            .await?;
     }
     connection.request_name(COMPAT_BUS_NAME).await?;
     connection.request_name(NATIVE_BUS_NAME).await?;
     rustd::native::notify_ready()?;
     std::future::pending::<()>().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seat_names;
+    use rustd::logind::Session;
+
+    #[test]
+    fn local_seat_is_published_before_any_session_exists() {
+        let sessions = Vec::<Session>::new();
+        let seats = seat_names(sessions.iter());
+        assert!(seats.contains("seat0"));
+    }
+
+    #[test]
+    fn session_seats_are_retained_alongside_the_local_seat() {
+        let sessions = vec![Session {
+            seat: "seat1".into(),
+            ..Session::default()
+        }];
+        let seats = seat_names(sessions.iter());
+        assert!(seats.contains("seat0"));
+        assert!(seats.contains("seat1"));
+    }
 }
