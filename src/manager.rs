@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use anyhow::anyhow;
 
 use crate::cgroup::CgroupManager;
-use crate::config::ManagerConfig;
+use crate::config::{ManagerConfig, ManagerScope};
 use crate::dbus::manager_iface::{
     manager_environment_from_process, write_set_property_dropin, ManagerEnvironment, ManagerSignal,
     SetUnitPropertiesError, SetUnitPropertiesRequest, SetUnitPropertiesRequests, SetUnitProperty,
@@ -198,7 +198,8 @@ impl Manager {
     /// Create the manager with system defaults.
     ///
     /// # Errors
-    /// Returns an error if the event loop cannot be created.
+    /// Returns an error if the event loop cannot be created or a system PID 1
+    /// cannot create its mandatory `Type=notify` socket.
     #[allow(clippy::too_many_lines)]
     pub fn new(config: ManagerConfig) -> anyhow::Result<Self> {
         let scope = config.scope;
@@ -214,7 +215,24 @@ impl Manager {
             libc::EPOLLIN as u32,
             event_wake.io_handler(),
         )?;
-        let notify = NotifyServer::new().ok();
+        let notify = match NotifyServer::new() {
+            Ok(server) => Some(server),
+            Err(error) if scope == ManagerScope::System && std::process::id() == 1 => {
+                return Err(anyhow!(
+                    "rustd: cannot create the mandatory Type=notify socket: {error}"
+                ));
+            }
+            Err(error) => {
+                // Non-PID1 managers and test embeddings may intentionally run
+                // without a writable system runtime. Keep that compatibility,
+                // but make the resulting Type=notify readiness failure explicit
+                // instead of leaving units silently stuck in activating.
+                eprintln!(
+                    "rustd: notification socket unavailable: {error}; Type=notify services cannot report readiness"
+                );
+                None
+            }
+        };
         if let Some(server) = notify.as_ref() {
             event_loop.add_io(server.raw_fd(), libc::EPOLLIN as u32, server.io_handler())?;
         }

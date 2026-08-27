@@ -104,12 +104,24 @@ impl NotifyServer {
     /// with `@` use the Linux abstract namespace; other values are filesystem
     /// socket paths.
     ///
+    /// On success, publishes the selected path to the manager environment so
+    /// services launched through the native spawn path use the same endpoint.
+    ///
     /// # Errors
     /// Returns an error if the socket cannot be created, configured, or bound.
     pub fn new() -> anyhow::Result<Self> {
         let path = std::env::var("RUSTD_NOTIFY_SOCKET")
             .unwrap_or_else(|_| RUSTD_NOTIFY_SOCKET_PATH.to_owned());
-        Self::new_at(&path)
+        let server = Self::new_at(&path)?;
+
+        // Keep the manager's launch environment authoritative.  The native
+        // spawn path uses this value when it serializes a Type=notify request,
+        // and the manager itself uses it for its terminal STOPPING=1 message.
+        // Without publishing the selected path here, a manager created with a
+        // default or custom socket can successfully bind it while children
+        // receive no usable notification endpoint.
+        std::env::set_var("RUSTD_NOTIFY_SOCKET", &path);
+        Ok(server)
     }
 
     fn new_at(path: &str) -> anyhow::Result<Self> {
