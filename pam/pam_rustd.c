@@ -65,7 +65,7 @@ static int create_session(pam_handle_t *pamh, const char *user, const struct pas
     if (!message) return PAM_BUF_ERR;
     dbus_uint32_t uid = pwd->pw_uid, pid = getpid(), vtnr = 0;
     dbus_bool_t remote = FALSE;
-    const char *type = "unspecified", *class = "user", *seat = "seat0";
+    const char *type = "unspecified", *class = "user", *desktop = "KDE", *seat = "seat0";
     const char *display = "", *remote_user = "", *remote_host = "";
     DBusMessageIter iter, array;
     dbus_message_iter_init_append(message, &iter);
@@ -74,6 +74,7 @@ static int create_session(pam_handle_t *pamh, const char *user, const struct pas
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &service) ||
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &type) ||
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &class) ||
+        !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &desktop) ||
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &seat) ||
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_UINT32, &vtnr) ||
         !dbus_message_iter_append_basic(&iter, DBUS_TYPE_STRING, &tty) ||
