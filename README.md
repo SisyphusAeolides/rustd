@@ -14,7 +14,7 @@ reference architecture and implementation parity is not a release gate.
 > **Current status (2026-08-24):** RustD's native, build, packaging, and
 > compatibility-library gates are passing, including 107 native targets and
 > complete validation of the 336-entry compatibility surface. The companion
-> resolver's source and packaging gates are also passing. The RustD Fedora live
+> resolver's source and packaging gates are also passing. The ArachOS live
 > image has been built and artifact-checked: `/usr/sbin/init` resolves to RustD
 > and the image contains no RPM named `systemd`, `systemd-libs`, `systemd-udev`,
 > or `systemd-resolved`.
