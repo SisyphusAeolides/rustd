@@ -347,10 +347,26 @@ pub fn apply_rules(rules: &[Rule], device: &mut Device) {
 fn rule_matches(rule: &Rule, device: &mut Device) -> bool {
     rule.tokens.iter().all(|token| match token.op {
         Operator::Match => {
-            value_matches(&token_value(token, device), &expand(&token.value, device))
+            let pattern = expand(&token.value, device);
+            if token.key == "SYMLINK" {
+                device
+                    .symlinks
+                    .iter()
+                    .any(|link| value_matches(link, &pattern))
+            } else {
+                value_matches(&token_value(token, device), &pattern)
+            }
         }
         Operator::NoMatch => {
-            !value_matches(&token_value(token, device), &expand(&token.value, device))
+            let pattern = expand(&token.value, device);
+            if token.key == "SYMLINK" {
+                !device
+                    .symlinks
+                    .iter()
+                    .any(|link| value_matches(link, &pattern))
+            } else {
+                !value_matches(&token_value(token, device), &pattern)
+            }
         }
         _ => true,
     })
@@ -937,6 +953,24 @@ mod tests {
             device.property("ID_PATH"),
             "devices-pci0000:00-0000:00:04.0"
         );
+    }
+
+    #[test]
+    fn symlink_matches_can_trigger_late_live_root_rules() {
+        let rules = vec![Rule {
+            tokens: parse_rule_line(
+                r#"SYMLINK=="disk/by-label/ARACHOS", ENV{RUSTD_LIVE_ROOT}="ready""#,
+            )
+            .unwrap(),
+            source: PathBuf::from("99-live-root.rules"),
+            line: 1,
+        }];
+        let mut device = Device::default();
+        device.symlinks.insert("disk/by-label/ARACHOS".into());
+
+        apply_rules(&rules, &mut device);
+
+        assert_eq!(device.property("RUSTD_LIVE_ROOT"), "ready");
     }
 
     #[test]

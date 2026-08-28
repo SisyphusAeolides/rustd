@@ -10,11 +10,12 @@
 //!   `service_enter_reload()`, `service_sigchld_event()` (v261)
 
 use std::ffi::{CStr, CString};
+use std::fs;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::io::{AsRawFd, FromRawFd};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::anyhow;
 
@@ -29,7 +30,7 @@ use crate::journal::stdout::{
 };
 use crate::kill_context::{signal_primary, KillOperation, KillPolicy};
 use crate::restart::should_restart_result;
-use crate::sandbox::SecurityContext;
+use crate::sandbox::{resolve_group, resolve_user, SecurityContext};
 use crate::seccomp_policy::{compile_syscall_filter, restrict_native_architectures};
 use crate::unit::loader::{all_conditions_pass, LoadedUnit};
 use crate::unit::section_service::{
@@ -307,7 +308,7 @@ pub(crate) fn activate_with_notify_in_cgroup(
 
     let unit_name = service.name.clone();
     let section = service.specific.clone();
-    let environment = launch_environment(record);
+    let base_environment = launch_environment(record);
     record.service_result = "success".into();
     record.stop_requested = false;
     record.exec_main_code = 0;
@@ -334,6 +335,13 @@ pub(crate) fn activate_with_notify_in_cgroup(
         record.state = UnitState::Failed;
         error
     })?;
+
+    let directory_environment = prepare_service_directories(&section, dynamic_user.as_ref())
+        .map_err(|error| {
+            record.state = UnitState::Failed;
+            anyhow!("failed to prepare service directories for '{unit_name}': {error}")
+        })?;
+    let environment = merge_environment_entries(&base_environment, &directory_environment);
 
     for command in &section.exec_condition {
         let outcome = run_command(
@@ -1184,6 +1192,242 @@ fn allocate_dynamic_user(
     DynamicUser::allocate(unit_name)
         .map(Some)
         .map_err(|error| anyhow!("dynamic-user allocation failed for '{unit_name}': {error}"))
+}
+
+/// Create the directories requested by the service's exec context and return
+/// the corresponding automatic environment variables.
+///
+/// systemd creates these directories before running any ExecCondition= or
+/// ExecStartPre= command.  Keeping that ordering is important for services
+/// which put their first writable operation in a pre-start helper.  The
+/// manager also owns the path construction so a service cannot smuggle an
+/// absolute path or a parent traversal into one of the well-known directory
+/// roots.
+fn prepare_service_directories(
+    section: &ServiceSection,
+    dynamic_user: Option<&DynamicUser>,
+) -> anyhow::Result<Vec<String>> {
+    prepare_service_directories_at(Path::new("/"), section, dynamic_user)
+}
+
+fn prepare_service_directories_at(
+    root: &Path,
+    section: &ServiceSection,
+    dynamic_user: Option<&DynamicUser>,
+) -> anyhow::Result<Vec<String>> {
+    let (uid, gid) = service_directory_identity(section, dynamic_user)?;
+    let mut environment = Vec::new();
+
+    prepare_directory_class(
+        root,
+        "run",
+        &section.runtime_directory,
+        section.runtime_directory_mode,
+        uid,
+        gid,
+        true,
+        &mut environment,
+    )?;
+    prepare_directory_class(
+        root,
+        "var/lib",
+        &section.state_directory,
+        section.state_directory_mode,
+        uid,
+        gid,
+        true,
+        &mut environment,
+    )?;
+    prepare_directory_class(
+        root,
+        "var/cache",
+        &section.cache_directory,
+        section.cache_directory_mode,
+        uid,
+        gid,
+        true,
+        &mut environment,
+    )?;
+    prepare_directory_class(
+        root,
+        "var/log",
+        &section.logs_directory,
+        section.logs_directory_mode,
+        uid,
+        gid,
+        true,
+        &mut environment,
+    )?;
+    prepare_directory_class(
+        root,
+        "etc",
+        &section.configuration_directory,
+        section.configuration_directory_mode,
+        uid,
+        gid,
+        false,
+        &mut environment,
+    )?;
+
+    Ok(environment)
+}
+
+fn service_directory_identity(
+    section: &ServiceSection,
+    dynamic_user: Option<&DynamicUser>,
+) -> anyhow::Result<(libc::uid_t, libc::gid_t)> {
+    if let Some(identity) = dynamic_user {
+        return Ok((identity.uid, identity.gid()));
+    }
+
+    let uid = if section.user.is_empty() {
+        0
+    } else {
+        resolve_user(&section.user)?
+    };
+    let gid = if !section.group.is_empty() {
+        resolve_group(&section.group)?
+    } else if section.user.is_empty() {
+        0
+    } else {
+        let passwd = unsafe { libc::getpwuid(uid) };
+        if passwd.is_null() {
+            anyhow::bail!("primary group for user '{}' not found", section.user);
+        }
+        unsafe { (*passwd).pw_gid }
+    };
+    Ok((uid, gid))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn prepare_directory_class(
+    root: &Path,
+    base: &str,
+    names: &[String],
+    mode: Option<u32>,
+    uid: libc::uid_t,
+    gid: libc::gid_t,
+    chown_directory: bool,
+    environment: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let mode = mode.unwrap_or(0o755);
+    if mode & !0o7777 != 0 {
+        anyhow::bail!("directory mode {mode:o} contains unsupported bits");
+    }
+
+    let base_path = root.join(base);
+    ensure_directory(&base_path, 0o755)?;
+    let mut paths = Vec::with_capacity(names.len());
+    for name in names {
+        let relative = validate_directory_name(name)?;
+        let path = base_path.join(relative);
+        ensure_directory(&path, mode)?;
+        if chown_directory {
+            chown_service_directory(&path, uid, gid)?;
+        }
+        paths.push(path.to_string_lossy().into_owned());
+    }
+
+    let variable = match base {
+        "run" => "RUNTIME_DIRECTORY",
+        "var/lib" => "STATE_DIRECTORY",
+        "var/cache" => "CACHE_DIRECTORY",
+        "var/log" => "LOGS_DIRECTORY",
+        "etc" => "CONFIGURATION_DIRECTORY",
+        _ => unreachable!("all service directory roots are fixed above"),
+    };
+    environment.push(format!("{variable}={}", paths.join(":")));
+    Ok(())
+}
+
+fn validate_directory_name(name: &str) -> anyhow::Result<PathBuf> {
+    if name.is_empty() || name.as_bytes().contains(&0) {
+        anyhow::bail!("directory name is empty or contains a NUL byte");
+    }
+    if name.split('/').any(str::is_empty) {
+        anyhow::bail!("directory name '{name}' contains an empty component");
+    }
+    let path = Path::new(name);
+    for component in path.components() {
+        if !matches!(component, Component::Normal(_)) {
+            anyhow::bail!(
+                "directory name '{name}' must be relative and cannot contain '.' or '..'"
+            );
+        }
+    }
+    Ok(path.to_path_buf())
+}
+
+fn ensure_directory(path: &Path, mode: u32) -> anyhow::Result<()> {
+    let mut current = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => current.push(Path::new("/")),
+            Component::Normal(part) => current.push(part),
+            _ => anyhow::bail!(
+                "service directory path '{}' is not canonical",
+                path.display()
+            ),
+        }
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                anyhow::bail!(
+                    "service directory path '{}' contains a symlink",
+                    current.display()
+                );
+            }
+            Ok(metadata) if !metadata.is_dir() => {
+                anyhow::bail!(
+                    "service directory path '{}' is not a directory",
+                    current.display()
+                );
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir(&current).map_err(|error| {
+                    anyhow!("create service directory '{}': {error}", current.display())
+                })?;
+                fs::set_permissions(&current, fs::Permissions::from_mode(0o755)).map_err(
+                    |error| {
+                        anyhow!(
+                            "set service directory mode '{}': {error}",
+                            current.display()
+                        )
+                    },
+                )?;
+            }
+            Err(error) => {
+                anyhow::bail!("inspect service directory '{}': {error}", current.display());
+            }
+        }
+    }
+    fs::set_permissions(path, fs::Permissions::from_mode(mode))
+        .map_err(|error| anyhow!("set service directory mode '{}': {error}", path.display()))?;
+    Ok(())
+}
+
+fn chown_service_directory(path: &Path, uid: libc::uid_t, gid: libc::gid_t) -> anyhow::Result<()> {
+    // A non-root manager cannot change ownership.  This is harmless when the
+    // requested identity is already the manager's identity and keeps the
+    // unprivileged unit-test harness usable.
+    let euid = unsafe { libc::geteuid() };
+    let egid = unsafe { libc::getegid() };
+    if euid != 0 && (uid != euid || gid != egid) {
+        return Ok(());
+    }
+    let path = CString::new(path.as_os_str().as_bytes())
+        .map_err(|_| anyhow!("service directory path contains a NUL byte"))?;
+    if unsafe { libc::chown(path.as_ptr(), uid, gid) } != 0 {
+        return Err(anyhow!(
+            "chown service directory '{}': {}",
+            path.to_string_lossy(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
 }
 
 /// Finalize a timeout/watchdog failure when no tracked process will generate
@@ -2095,6 +2339,58 @@ mod tests {
 
     fn shell_command(script: &str) -> ExecCommand {
         ExecCommand::parse(&format!("/bin/sh -c '{script}'")).unwrap()
+    }
+
+    #[test]
+    fn service_directories_are_created_before_launch() {
+        let root = tempfile::tempdir().unwrap();
+        let section = ServiceSection {
+            runtime_directory: vec!["rustd/resolve".into()],
+            runtime_directory_mode: Some(0o750),
+            state_directory: vec!["rustd/resolved".into()],
+            state_directory_mode: Some(0o700),
+            configuration_directory: vec!["rustd".into()],
+            ..Default::default()
+        };
+
+        let environment = prepare_service_directories_at(root.path(), &section, None).unwrap();
+
+        assert!(root.path().join("run/rustd/resolve").is_dir());
+        assert!(root.path().join("var/lib/rustd/resolved").is_dir());
+        assert!(root.path().join("etc/rustd").is_dir());
+        assert_eq!(
+            fs::metadata(root.path().join("run/rustd/resolve"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o750
+        );
+        assert!(environment.iter().any(|entry| {
+            entry
+                == &format!(
+                    "RUNTIME_DIRECTORY={}",
+                    root.path().join("run/rustd/resolve").display()
+                )
+        }));
+        assert!(environment.iter().any(|entry| {
+            entry
+                == &format!(
+                    "STATE_DIRECTORY={}",
+                    root.path().join("var/lib/rustd/resolved").display()
+                )
+        }));
+    }
+
+    #[test]
+    fn service_directory_names_cannot_escape_root() {
+        let root = tempfile::tempdir().unwrap();
+        let section = ServiceSection {
+            runtime_directory: vec!["../outside".into()],
+            ..Default::default()
+        };
+        assert!(prepare_service_directories_at(root.path(), &section, None).is_err());
+        assert!(!root.path().parent().unwrap().join("outside").exists());
     }
 
     #[test]
