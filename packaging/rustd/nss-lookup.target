@@ -1,3 +1,4 @@
 [Unit]
 Description=RustD Host and Network Name Lookups
-After=network.target
+Documentation=man:systemd.special(7)
+RefuseManualStart=yes

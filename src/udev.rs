@@ -449,7 +449,9 @@ fn run_builtin(spec: &str, device: &mut Device) {
                 arguments
             };
             for module in modules {
-                let _ = Command::new("modprobe").args(["-b", module]).status();
+                let _ = Command::new("modprobe")
+                    .args(["-b", "-q", "--", module])
+                    .status();
             }
         }
         "blkid" => {
