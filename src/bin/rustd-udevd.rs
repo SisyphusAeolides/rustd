@@ -200,8 +200,12 @@ fn process_device(
         device.properties.insert(key.clone(), value.clone());
     }
     probe_block_metadata(device);
-    apply_rules(rules, device);
+    // Persistent links must be available while rules are evaluated. Dracut's
+    // live-root rule matches the by-label link and queues the squashfs mount
+    // from that event; adding the links after rule evaluation leaves a
+    // CDLABEL/USBLABEL root waiting forever in early userspace.
     add_persistent_storage_links(device);
+    apply_rules(rules, device);
     if !dry_run {
         if let Err(error) = persist_device(device) {
             eprintln!("rustd-udevd: failed to persist {}: {error}", device.devpath);
