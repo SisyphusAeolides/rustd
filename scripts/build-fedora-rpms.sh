@@ -88,8 +88,18 @@ systemd_udev_evr="$(rpm -q --qf '%{EVR}' systemd-udev 2>/dev/null || true)"
     || fail "Fedora systemd capability EVRs differ: manager=$systemd_evr libs=$systemd_libs_evr udev=$systemd_udev_evr"
 
 rpmbuild_common=(--define "_topdir $TOPDIR")
+# A downstream image build may target a different Fedora release from the
+# build host.  Keep every RustD subpackage on the same distribution tag so
+# exact-version dependencies (notably rustd-selinux -> rustd) remain solvable.
+if [[ -n "${RUSTD_RPM_DIST:-}" ]]; then
+    rpmbuild_common+=(--define "dist ${RUSTD_RPM_DIST}")
+fi
+selinux_rpmbuild=()
+if [[ -n "${RUSTD_SELINUX_POLICY_VERSION:-}" ]]; then
+    selinux_rpmbuild+=(--define "_selinux_policy_version ${RUSTD_SELINUX_POLICY_VERSION}")
+fi
 rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd.spec"
-rpmbuild -ba "${rpmbuild_common[@]}" "$TOPDIR/SPECS/rustd-selinux.spec"
+rpmbuild -ba "${rpmbuild_common[@]}" "${selinux_rpmbuild[@]}" "$TOPDIR/SPECS/rustd-selinux.spec"
 rpmbuild -ba "${rpmbuild_common[@]}" \
     --define "systemd_compat_evr $systemd_evr" \
     "$TOPDIR/SPECS/rustd-fedora-compat.spec"
