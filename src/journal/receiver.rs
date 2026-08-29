@@ -174,6 +174,9 @@ fn parse_datagram_with_peer(
         if let Some(eq) = line.iter().position(|&b| b == b'=') {
             let key = std::str::from_utf8(&line[..eq]).ok()?.to_ascii_uppercase();
             let val = line[eq + 1..].to_vec();
+            if !valid_field_name(&key) {
+                continue;
+            }
             // Reserved journal metadata always starts with `_` and is only
             // attached from trusted kernel/manager state below.
             if key.starts_with('_') {
@@ -193,6 +196,9 @@ fn parse_datagram_with_peer(
             }
             let val = data[pos..pos + len].to_vec();
             pos += len + 1;
+            if !valid_field_name(&key) {
+                continue;
+            }
             if key.starts_with('_') {
                 continue;
             }
@@ -210,6 +216,22 @@ fn parse_datagram_with_peer(
     }
     fields.insert("_TRANSPORT".into(), b"journal".to_vec());
     Some(JournalEntry::new(fields))
+}
+
+/// Return whether `key` satisfies the field-name grammar accepted by the
+/// native journal writer.  `sd_journal_sendv` callers are allowed to provide
+/// arbitrary extra fields, while the on-disk format accepts only ASCII
+/// uppercase letters, digits, and underscores (with a non-digit first byte).
+/// Normalize to uppercase before this check so callers using the historical
+/// Python logging names (`name`, `pathname`, ...) remain compatible.
+fn valid_field_name(key: &str) -> bool {
+    let bytes = key.as_bytes();
+    if bytes.is_empty() || bytes.len() > 64 || bytes[0].is_ascii_digit() {
+        return false;
+    }
+    bytes
+        .iter()
+        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || *byte == b'_')
 }
 
 #[cfg(test)]
@@ -250,6 +272,24 @@ mod tests {
         let entry = parse_datagram(&data).expect("should parse");
         assert_eq!(entry.message_str(), "hello");
         assert_eq!(entry.priority(), 6);
+    }
+
+    #[test]
+    fn invalid_field_names_are_ignored_without_rejecting_the_entry() {
+        let long_key = "A".repeat(65);
+        let data = make_text_datagram(&[
+            ("MESSAGE", "hello"),
+            ("bad-key", "discarded"),
+            ("1NOT_A_FIELD", "discarded"),
+        ])
+        .into_iter()
+        .chain(format!("{long_key}=discarded\n").into_bytes())
+        .collect::<Vec<_>>();
+        let entry = parse_datagram(&data).expect("valid fields should remain");
+        assert_eq!(entry.message_str(), "hello");
+        assert!(!entry.fields.contains_key("BAD-KEY"));
+        assert!(!entry.fields.contains_key("1NOT_A_FIELD"));
+        assert!(!entry.fields.contains_key(&long_key));
     }
 
     #[test]
