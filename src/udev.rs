@@ -605,10 +605,26 @@ fn run_command(command: &str, device: &Device) {
 }
 
 fn expand(value: &str, device: &Device) -> String {
+    let node = device_node(device).unwrap_or_default();
+    let number = device
+        .kernel
+        .trim_start_matches(|character: char| !character.is_ascii_digit());
     let mut result = value
+        .replace("$devnode", &node)
+        .replace("$kernel", &device.kernel)
+        .replace("$number", number)
+        .replace("$devpath", &device.devpath)
+        .replace("$name", node.trim_start_matches("/dev/"))
+        .replace("$sys", "/sys")
+        .replace("$root", "/dev")
+        .replace("%N", &node)
         .replace("%k", &device.kernel)
         .replace("%p", &device.devpath)
-        .replace("%n", &device.kernel);
+        .replace("%n", number)
+        .replace("%S", "/sys")
+        .replace("%r", "/dev")
+        .replace("%M", &device.property("MAJOR"))
+        .replace("%m", &device.property("MINOR"));
     while let Some(start) = result.find("$env{") {
         let Some(end) = result[start + 5..].find('}') else {
             break;
@@ -971,6 +987,24 @@ mod tests {
         apply_rules(&rules, &mut device);
 
         assert_eq!(device.property("RUSTD_LIVE_ROOT"), "ready");
+    }
+
+    #[test]
+    fn expands_standard_device_rule_substitutions() {
+        let mut device = Device {
+            devpath: "/devices/virtual/tty/tty0".into(),
+            kernel: "tty0".into(),
+            name: Some("tty0".into()),
+            ..Device::default()
+        };
+        device.properties.insert("MAJOR".into(), "4".into());
+        device.properties.insert("MINOR".into(), "0".into());
+
+        assert_eq!(expand("$root/$name", &device), "/dev/tty0");
+        assert_eq!(
+            expand("%N %S%p %M:%m %n", &device),
+            "/dev/tty0 /sys/devices/virtual/tty/tty0 4:0 0"
+        );
     }
 
     #[test]

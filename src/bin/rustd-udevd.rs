@@ -7,6 +7,7 @@ use rustd::udev::{
     Device, Rule,
 };
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::mem;
@@ -97,29 +98,16 @@ fn main() -> anyhow::Result<()> {
             }
         }
         if fds[0].revents & libc::POLLIN != 0 && !stopped.load(Ordering::Relaxed) {
-            let mut buffer = [0_u8; 8192];
-            let mut sender: libc::sockaddr_nl = unsafe { mem::zeroed() };
-            let mut sender_len = mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t;
-            let count = unsafe {
-                libc::recvfrom(
-                    netlink.as_raw_fd(),
-                    buffer.as_mut_ptr().cast(),
-                    buffer.len(),
-                    0,
-                    std::ptr::addr_of_mut!(sender).cast(),
-                    &mut sender_len,
-                )
-            };
-            // Kernel-originated uevents are sent by the netlink kernel peer.
-            // Do not let another process on the netlink bus manufacture /dev.
-            if count > 0 && sender.nl_pid == 0 {
-                let event = &buffer[..count as usize];
-                let sequence = uevent_sequence(event);
-                if let Some(mut device) = Device::from_uevent(event) {
+            let mut events = VecDeque::new();
+            receive_pending_events(netlink.as_raw_fd(), &mut events)?;
+            if !events.is_empty() {
+                let _ = fs::write(QUEUE_FILE, b"1\n");
+            }
+            while let Some(event) = events.pop_front() {
+                let sequence = uevent_sequence(&event);
+                if let Some(mut device) = Device::from_uevent(&event) {
                     process_device(&rules, &global_properties, &mut device, arguments.dry_run);
                 }
-                // Publish the watermark only after this event has either been
-                // fully processed or deliberately rejected by the parser.
                 if let Some(sequence) = sequence {
                     if let Err(error) = mark_processed_sequence(sequence) {
                         eprintln!(
@@ -127,7 +115,12 @@ fn main() -> anyhow::Result<()> {
                         );
                     }
                 }
+                // Coldplug can produce more events while a RUN rule is being
+                // handled. Keep the queue marker present until the socket and
+                // the userspace backlog are both empty.
+                receive_pending_events(netlink.as_raw_fd(), &mut events)?;
             }
+            let _ = fs::remove_file(QUEUE_FILE);
         }
     }
     let _ = fs::remove_file(CONTROL_SOCKET);
@@ -192,10 +185,6 @@ fn process_device(
     device: &mut Device,
     dry_run: bool,
 ) {
-    // Keep the traditional queue marker for compatibility/debugging, but
-    // udevadm settle uses sequence watermarks so a gap between two events
-    // cannot be mistaken for an empty queue.
-    let queue_written = fs::write(QUEUE_FILE, device.devpath.as_bytes()).is_ok();
     for (key, value) in global_properties {
         device.properties.insert(key.clone(), value.clone());
     }
@@ -211,8 +200,41 @@ fn process_device(
             eprintln!("rustd-udevd: failed to persist {}: {error}", device.devpath);
         }
     }
-    if queue_written {
-        let _ = fs::remove_file(QUEUE_FILE);
+}
+
+fn receive_pending_events(fd: libc::c_int, events: &mut VecDeque<Vec<u8>>) -> io::Result<()> {
+    loop {
+        let mut buffer = [0_u8; 8192];
+        let mut sender: libc::sockaddr_nl = unsafe { mem::zeroed() };
+        let mut sender_len = mem::size_of::<libc::sockaddr_nl>() as libc::socklen_t;
+        let count = unsafe {
+            libc::recvfrom(
+                fd,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                libc::MSG_DONTWAIT,
+                std::ptr::addr_of_mut!(sender).cast(),
+                &mut sender_len,
+            )
+        };
+        if count < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::WouldBlock {
+                return Ok(());
+            }
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if count == 0 {
+            return Ok(());
+        }
+        // Kernel-originated uevents are sent by the netlink kernel peer. Do
+        // not let another process on the netlink bus manufacture /dev.
+        if sender.nl_pid == 0 {
+            events.push_back(buffer[..count as usize].to_vec());
+        }
     }
 }
 
