@@ -1018,25 +1018,28 @@ fn handle_settle(args: &SettleArgs) -> anyhow::Result<()> {
 // -----------------------------------------------------------------------------
 
 fn handle_control(args: &ControlArgs) -> anyhow::Result<()> {
-    let mut commands = Vec::new();
+    let mut commands: Vec<String> = Vec::new();
     if args.reload {
-        commands.push("reload");
+        commands.push(String::from("reload"));
     }
     if args.stop_exec_queue {
-        commands.push("stop");
+        commands.push(String::from("stop"));
     }
     if args.start_exec_queue {
-        commands.push("start");
+        commands.push(String::from("start"));
     }
     if args.exit {
-        commands.push("exit");
+        commands.push(String::from("exit"));
     }
     if args.ping {
-        commands.push("ping");
+        commands.push(String::from("ping"));
+    }
+    for prop in &args.property {
+        commands.push(format!("property={prop}"));
     }
     if !commands.is_empty() {
         for command in commands {
-            send_udevd_control(command)?;
+            send_udevd_control(&command)?;
         }
     }
     if args.reload {
@@ -1061,7 +1064,7 @@ fn handle_control(args: &ControlArgs) -> anyhow::Result<()> {
         println!("udevadm: Set children-max to {max}.");
     }
     for prop in &args.property {
-        println!("udevadm: Set global property '{prop}'.");
+        println!("udevadm: Set global property '{}'.", prop);
     }
     Ok(())
 }
