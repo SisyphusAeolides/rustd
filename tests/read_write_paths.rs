@@ -153,6 +153,7 @@ fn production_spawn_strict_root_preserves_declared_writable_exception() {
         stdin_fd: -1,
         stdout_fd: -1,
         stderr_fd: -1,
+        tty_force: 0,
         notify_fd: -1,
         watchdog_usec: 0,
         sandbox: ptr::addr_of!(sandbox),

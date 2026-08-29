@@ -184,6 +184,7 @@ pub struct SdSpawnParams {
     pub stdin_fd: libc::c_int,
     pub stdout_fd: libc::c_int,
     pub stderr_fd: libc::c_int,
+    pub tty_force: libc::c_int,
     pub notify_fd: libc::c_int,
     pub watchdog_usec: u64,
     pub sandbox: *const SdSpawnSandbox,
@@ -214,6 +215,7 @@ struct NativeSpawnParams {
     stdin_fd: libc::c_int,
     stdout_fd: libc::c_int,
     stderr_fd: libc::c_int,
+    tty_force: libc::c_int,
     notify_fd: libc::c_int,
     watchdog_usec: u64,
     sandbox: *const NativeSpawnSandbox,
@@ -298,6 +300,7 @@ pub unsafe fn rustd_spawn(p: *const SdSpawnParams) -> pid_t {
         stdin_fd: params.stdin_fd,
         stdout_fd: params.stdout_fd,
         stderr_fd: params.stderr_fd,
+        tty_force: params.tty_force,
         notify_fd: params.notify_fd,
         watchdog_usec: params.watchdog_usec,
         sandbox: if sandbox_enabled {

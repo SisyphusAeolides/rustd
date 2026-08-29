@@ -1952,6 +1952,7 @@ fn spawn_command(
         },
         stdout_fd,
         stderr_fd,
+        tty_force: libc::c_int::from(section.standard_input.eq_ignore_ascii_case("tty-force")),
         notify_fd,
         watchdog_usec: watchdog_usec(section, notify_fd),
         sandbox: if sandbox_enabled {

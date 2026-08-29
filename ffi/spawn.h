@@ -67,6 +67,7 @@ typedef struct {
     int                 stdin_fd;   /* -1 = redirect to /dev/null              */
     int                 stdout_fd;  /* -1 = inherit parent stdout              */
     int                 stderr_fd;  /* -1 = inherit parent stderr              */
+    int                 tty_force;  /* non-zero = forcibly acquire service TTY */
     int                 notify_fd;  /* -1 = none; >=0 sets RUSTD_NOTIFY_SOCKET       */
     uint64_t            watchdog_usec; /* 0 = watchdog disabled                 */
     const rustd_spawn_sandbox *sandbox; /* NULL = no sandbox                      */

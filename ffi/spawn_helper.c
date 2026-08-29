@@ -682,13 +682,14 @@ static void wait_for_idle_gate(int fd) {
     close(fd);
 }
 
-static void establish_controlling_tty(void) {
+static void establish_controlling_tty(const rustd_spawn_request *request) {
     if (!isatty(STDIN_FILENO))
         return;
 
     if (setsid() < 0)
         helper_fail(errno, 125);
-    if (ioctl(STDIN_FILENO, TIOCSCTTY, 0) < 0)
+    int force = (request->header.flags & RUSTD_SPAWN_FLAG_TTY_FORCE) != 0;
+    if (ioctl(STDIN_FILENO, TIOCSCTTY, force ? 1 : 0) < 0)
         helper_fail(errno, 125);
 }
 
@@ -925,7 +926,7 @@ _Noreturn void rustd_spawn_helper_main(void) {
     apply_service_environment(&request);
 
     wait_for_idle_gate(idle_fd);
-    establish_controlling_tty();
+    establish_controlling_tty(&request);
 
     if (request.header.flags & RUSTD_SPAWN_FLAG_HAS_SANDBOX) {
         if (request.sandbox.restrict_native_syscalls) {

@@ -236,6 +236,8 @@ static void write_request(
         flags |= RUSTD_SPAWN_FLAG_APPARMOR_IGNORE;
     if (notify_socket)
         flags |= RUSTD_SPAWN_FLAG_HAS_NOTIFY_SOCKET;
+    if (p->tty_force)
+        flags |= RUSTD_SPAWN_FLAG_TTY_FORCE;
 
     rustd_spawn_wire_header header;
     memset(&header, 0, sizeof(header));
