@@ -75,6 +75,10 @@ fn compile_c(cc: &OsString, source: &str, output: &Path) {
             OsString::from("-Wall"),
             OsString::from("-Wextra"),
             OsString::from("-Werror"),
+            // glibc 2.34 (RLC 9 hosts) warns that FORTIFY_SOURCE=3 is
+            // treated as level 2; keep the warning while allowing the
+            // hardened build to work on both RLC 9 and RLC 10 toolchains.
+            OsString::from("-Wno-error=cpp"),
             // -iquote rather than -I: ffi/spawn.h must not shadow <spawn.h>.
             OsString::from("-iquote"),
             OsString::from("ffi"),

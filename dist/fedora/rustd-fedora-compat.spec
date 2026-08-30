@@ -73,7 +73,7 @@ for file in dist/fedora/compat/*; do
         *) bash -n "$file" ;;
     esac
 done
-%{__cc} %{build_cflags} %{build_ldflags} \
+%{__cc} %{build_cflags} -Wno-error=cpp %{build_ldflags} \
     dist/fedora/compat/rustd-shutdown.c -o rustd-shutdown
 
 %check
