@@ -1,0 +1,6 @@
+#!/bin/sh
+# SPDX-License-Identifier: LGPL-2.1-or-later
+# Keep Fedora's legacy pathname usable in initramfs without a symlink. Some
+# dracut versions rewrite compatibility symlinks while assembling the image,
+# which can turn a valid relative link into a self-referential one.
+exec /usr/lib/rustd/rustd-udevd "$@"

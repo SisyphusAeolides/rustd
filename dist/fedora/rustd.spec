@@ -5,7 +5,7 @@
 
 Name:           rustd
 Version:        0.1.2
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        RustD native Linux init and service manager
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -111,6 +111,9 @@ install -Dm0755 dist/fedora/compat/rustd-fedora-cutover \
 %{_libdir}/librustd_manager.so
 
 %changelog
+* Sun Aug 30 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-2
+- Bump the coordinated RustD package release for the initramfs udev fix
+
 * Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
 - Split nonconflicting PAM and authselect cutover tooling
 - Keep PID 1 and Fedora compatibility path ownership in the exclusive phase

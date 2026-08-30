@@ -4,7 +4,7 @@
 
 Name:           rustd-selinux
 Version:        0.1.2
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        SELinux policy labels and resolver state rules for RustD on Fedora
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -66,5 +66,8 @@ install -D -m0644 selinux-build/%{modulename}.pp.bz2 \
 %selinux_relabel_post -s %{selinuxtype}
 
 %changelog
+* Sun Aug 30 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-2
+- Bump the coordinated RustD package release for the initramfs udev fix
+
 * Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
 - Add Fedora enforcing-mode RustD SELinux policy extension

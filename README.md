@@ -159,7 +159,8 @@ The Fedora campaign performs a destructive conversion of a disposable Fedora
   `rustd-cutover-tools`, and the DNS NSS module to be owned by
   `rustd-resolved-nss`;
 - require `/usr/sbin/init` to resolve to `/usr/lib/rustd/rustd` and the legacy
-  udev daemon pathname to resolve to RustD's native `rustd-udevd`;
+  udev daemon pathname to be an executable wrapper for RustD's native
+  `rustd-udevd`;
 - rebuild the Fedora initramfs without systemd implementation modules or
   executables, while allowing only explicitly tested compatibility pathnames
   that resolve to RustD code;

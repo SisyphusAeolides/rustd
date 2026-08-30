@@ -159,7 +159,10 @@ test "$(rpm -qf --qf '%{NAME}\n' "$compat_udev")" = rustd-compat-libs
     --libsystemd "$compat_systemd" \
     --libudev "$compat_udev"
 test "$(rpm -qf --qf '%{NAME}\n' /usr/lib/systemd/systemd-udevd)" = rustd-fedora-compat
-test "$(readlink -f /usr/lib/systemd/systemd-udevd)" = /usr/lib/rustd/rustd-udevd
+test -f /usr/lib/systemd/systemd-udevd
+test ! -L /usr/lib/systemd/systemd-udevd
+test -x /usr/lib/systemd/systemd-udevd
+grep -Fq 'exec /usr/lib/rustd/rustd-udevd' /usr/lib/systemd/systemd-udevd
 
 authselect check
 grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf
@@ -170,7 +173,7 @@ grep -Eq '^hosts:.*[[:space:]]rustd_dns([[:space:]]|$)' /etc/nsswitch.conf
 
 # Rebuild the boot image after the package swap and prove that dracut selected
 # no systemd implementation module. A legacy udevd pathname is allowed only as
-# the package-owned symlink to RustD required by dracut's shell init path.
+# the package-owned wrapper to RustD required by dracut's shell init path.
 kernel="$(ls -1 /usr/lib/modules | sort -V | tail -1)"
 image="/boot/initramfs-${kernel}.img"
 command -v load_policy >/dev/null
@@ -188,7 +191,7 @@ if grep -Eq '^[[:space:]]*(systemd|dracut-systemd|systemd-[^[:space:]]+)([[:spac
 fi
 
 grep -Fq 'usr/lib/rustd/rustd-udevd' /var/tmp/rustd-lsinitrd.txt
-grep -Eq 'usr/lib/systemd/systemd-udevd -> \.\./rustd/rustd-udevd$' /var/tmp/rustd-lsinitrd.txt
+grep -Eq 'usr/lib/systemd/systemd-udevd$' /var/tmp/rustd-lsinitrd.txt
 grep -Fq 'usr/bin/rustudevadm' /var/tmp/rustd-lsinitrd.txt
 grep -Fq 'usr/lib/udev/rules.d/80-drivers.rules' /var/tmp/rustd-lsinitrd.txt
 grep -Fq 'RUN{builtin}+="kmod load"' /usr/lib/udev/rules.d/80-drivers.rules

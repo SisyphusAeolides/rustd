@@ -2,7 +2,7 @@
 # by Koji. A zero fallback keeps source-package inspection possible, while a
 # real RLC buildroot always supplies the exact capability being replaced.
 %{!?systemd_compat_evr:%global systemd_compat_evr %(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}' systemd 2>/dev/null || printf '0:0-0')}
-# This subpackage contains only shell frontends and symlinks.  Disable RPM's
+# This subpackage contains shell frontends and compatibility pathnames. Disable RPM's
 # automatic debuginfo split so platforms whose macros emit an empty
 # debugsource file list (Rocky/RHEL) do not reject the otherwise valid RPM.
 %global debug_package %{nil}
@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        1%{?dist}
+Release:        2%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -103,7 +103,11 @@ grep -Fq '/var/lib/chrony' dist/fedora/tmpfiles/rustd-fedora.conf
 grep -Fq '/var/log/chrony' dist/fedora/tmpfiles/rustd-fedora.conf
 ! grep -Fq 'inst_hook pre-pivot' dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
 grep -Fq 'init_exec_t' dist/fedora/selinux/rustd_fedora.fc
-grep -Fq 'install_items+=" /usr/bin/rustudevadm "' dist/fedora/90-rustd-dracut.conf
+grep -Fq 'install_items+=" /usr/bin/rustudevadm /usr/lib/rustd/rustd-udevd "' \
+    dist/fedora/90-rustd-dracut.conf
+grep -Fq '/usr/lib/rustd/rustd-udevd' dist/fedora/90-rustd-dracut.conf
+test -f dist/fedora/compat/systemd-udevd
+grep -Fq 'exec /usr/lib/rustd/rustd-udevd' dist/fedora/compat/systemd-udevd
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]memstrack([[:space:]]|$)' \
@@ -156,7 +160,8 @@ install -m0644 dist/fedora/dropins/rtkit-daemon.service.d/10-rustd-dbus.conf \
     %{buildroot}%{_sysconfdir}/rustd/system/rtkit-daemon.service.d/10-rustd-dbus.conf
 install -m0644 dist/fedora/tmpfiles/rustd-fedora.conf \
     %{buildroot}%{_prefix}/lib/tmpfiles.d/rustd-fedora.conf
-ln -s ../rustd/rustd-udevd %{buildroot}%{_prefix}/lib/systemd/systemd-udevd
+install -m0755 dist/fedora/compat/systemd-udevd \
+    %{buildroot}%{_prefix}/lib/systemd/systemd-udevd
 ln -s ../lib/rustd/rustd %{buildroot}%{_prefix}/sbin/init
 install -m0755 rustd-shutdown %{buildroot}%{_prefix}/lib/rustd/rustd-shutdown
 for name in halt poweroff reboot shutdown telinit runlevel; do
@@ -197,6 +202,10 @@ install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
 %{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
 
 %changelog
+* Sun Aug 30 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-2
+- Install a regular initramfs-safe udev compatibility wrapper
+- Explicitly include RustD's udev daemon in dracut images
+
 * Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
 - Require a validated staged PAM and NSS migration before the exclusive swap
 - Own the final /usr/sbin/init path in the conflicting compatibility package

@@ -131,7 +131,13 @@ for path in /usr/bin/systemctl /usr/lib/systemd/systemd-update-helper \
     owner_matches "$path" '^rustd-fedora-compat$'
 done
 symlink_target_matches /usr/sbin/init /usr/lib/rustd/rustd
-symlink_target_matches /usr/lib/systemd/systemd-udevd /usr/lib/rustd/rustd-udevd
+if [[ -f /usr/lib/systemd/systemd-udevd && ! -L /usr/lib/systemd/systemd-udevd && \
+      -x /usr/lib/systemd/systemd-udevd ]] &&
+   grep -Fq 'exec /usr/lib/rustd/rustd-udevd' /usr/lib/systemd/systemd-udevd; then
+    pass '/usr/lib/systemd/systemd-udevd is a RustD wrapper'
+else
+    fail '/usr/lib/systemd/systemd-udevd is not an executable RustD wrapper'
+fi
 
 # PID 1 must be RustD itself.
 pid1=$(readlink -f /proc/1/exe 2>/dev/null || true)
