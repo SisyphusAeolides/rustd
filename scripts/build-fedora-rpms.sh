@@ -79,9 +79,18 @@ cp "$SOURCE_ROOT/dist/fedora/rustd-compat-libs.spec" "$TOPDIR/SPECS/"
 cp "$SOURCE_ROOT/dist/fedora/rustd-selinux.spec" "$TOPDIR/SPECS/"
 cp "$RESOLVED_ROOT/dist/fedora/rustd-resolved.spec" "$TOPDIR/SPECS/"
 
-systemd_evr="$(rpm -q --qf '%{EVR}' systemd 2>/dev/null || true)"
-systemd_libs_evr="$(rpm -q --qf '%{EVR}' systemd-libs 2>/dev/null || true)"
-systemd_udev_evr="$(rpm -q --qf '%{EVR}' systemd-udev 2>/dev/null || true)"
+# A local image build may assemble against an install tree that is newer than
+# the host.  Allow the caller to supply the exact platform EVR; Koji rebuilds
+# derive it directly from the RLC buildroot through the spec macro.
+if [[ -n "${RUSTD_SYSTEMD_COMPAT_EVR:-}" ]]; then
+    systemd_evr="$RUSTD_SYSTEMD_COMPAT_EVR"
+    systemd_libs_evr="$RUSTD_SYSTEMD_COMPAT_EVR"
+    systemd_udev_evr="$RUSTD_SYSTEMD_COMPAT_EVR"
+else
+    systemd_evr="$(rpm -q --qf '%{EVR}' systemd 2>/dev/null || true)"
+    systemd_libs_evr="$(rpm -q --qf '%{EVR}' systemd-libs 2>/dev/null || true)"
+    systemd_udev_evr="$(rpm -q --qf '%{EVR}' systemd-udev 2>/dev/null || true)"
+fi
 [[ -n "$systemd_evr" && -n "$systemd_libs_evr" && -n "$systemd_udev_evr" ]] \
     || fail "systemd, systemd-libs, and systemd-udev must be installed while building replacement RPM metadata"
 [[ "$systemd_evr" == "$systemd_libs_evr" && "$systemd_evr" == "$systemd_udev_evr" ]] \

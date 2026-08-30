@@ -1,4 +1,7 @@
-%{!?systemd_compat_evr:%global systemd_compat_evr 0:0-0}
+# Resolve the platform systemd EVR in the buildroot when this SRPM is rebuilt
+# by Koji. A zero fallback keeps source-package inspection possible, while a
+# real RLC buildroot always supplies the exact capability being replaced.
+%{!?systemd_compat_evr:%global systemd_compat_evr %(rpm -q --qf '%{EPOCHNUM}:%{VERSION}-%{RELEASE}' systemd 2>/dev/null || printf '0:0-0')}
 # This subpackage contains only shell frontends and symlinks.  Disable RPM's
 # automatic debuginfo split so platforms whose macros emit an empty
 # debugsource file list (Rocky/RHEL) do not reject the otherwise valid RPM.
