@@ -1,6 +1,6 @@
 schema=rustd-fedora-package-contract-v5
-status=success
-tested_sha=6ee6b50e7c5c7c90918ad2ffb1656e6210d90f92
+status=failure
+tested_sha=657a9af3ca58119f28360f90ce5b4e84f997246f
 selinux_reference_policy=compiled
 rpm_specs=parsed
 capability.systemd=rustd-fedora-compat
@@ -12,3 +12,8 @@ stage.nss=rustd-resolved-nss
 stage.systemd_erasure=forbidden
 exclusive.pretrans_auth_guard=required
 owner.init=rustd-fedora-compat
+--- tail ---
+==> dist/fedora/rustd-compat-libs.spec
+==> dist/fedora/rustd-fedora-compat.spec
+==> dist/fedora/rustd-selinux.spec
+==> dist/fedora/rustd.spec
