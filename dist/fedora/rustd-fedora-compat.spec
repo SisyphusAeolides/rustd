@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        6%{?dist}
+Release:        7%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -244,6 +244,9 @@ done
 %{_prefix}/lib/dracut/modules.d/99img-lib/*
 
 %changelog
+* Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-7
+- Coordinate the enforcing-mode logind runtime and D-Bus activation policy
+
 * Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-6
 - Coordinate the SELinux logind activation transition
 

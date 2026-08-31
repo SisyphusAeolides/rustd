@@ -258,6 +258,7 @@ check-packaging:
 	! grep -E -q 'systemctl|systemd-journald|/run/systemd' scripts/boot-smoke.sh; \
 	test -f packaging/tmpfiles/rustd.conf; \
 	grep -Fq '/run/rustd' packaging/tmpfiles/rustd.conf; \
+	grep -Fq '/run/user' packaging/tmpfiles/rustd.conf; \
 	! grep -Fq '/run/systemd' packaging/tmpfiles/rustd.conf; \
 	test -d packaging/rustd; \
 	test ! -e packaging/systemd; \

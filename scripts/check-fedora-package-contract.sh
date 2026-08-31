@@ -50,6 +50,9 @@ test -s "$WORK/selinux/rustd_fedora.pp"
 grep -Fq \
     'domtrans_pattern(system_dbusd_t, systemd_logind_exec_t, systemd_logind_t)' \
     dist/fedora/selinux/rustd_fedora.te
+grep -Fq 'allow system_dbusd_t systemd_logind_t:fifo_file write;' \
+    dist/fedora/selinux/rustd_fedora.te
+grep -Fq '/run/user(/.*)?' dist/fedora/selinux/rustd_fedora.fc
 
 grep -Fq 'Obsoletes:      systemd-libs <= %{systemd_compat_evr}' \
     dist/fedora/rustd-compat-libs.spec

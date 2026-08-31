@@ -7,6 +7,7 @@
 /usr/lib/rustd/rustd-.*-generator             --  gen_context(system_u:object_r:init_exec_t,s0)
 
 /run/rustd(/.*)?                                 gen_context(system_u:object_r:init_var_run_t,s0)
+/run/user(/.*)?                                  gen_context(system_u:object_r:user_tmp_t,s0)
 /run/rustd/sessions(/.*)?                        gen_context(system_u:object_r:systemd_logind_sessions_t,s0)
 /run/rustd/users(/.*)?                           gen_context(system_u:object_r:systemd_logind_var_run_t,s0)
 /run/rustd/seats(/.*)?                           gen_context(system_u:object_r:systemd_logind_var_run_t,s0)

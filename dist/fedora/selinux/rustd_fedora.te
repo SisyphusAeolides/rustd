@@ -57,6 +57,14 @@ dbus_connect_system_bus(kernel_t)
 # though the service file and executable are present.
 domtrans_pattern(system_dbusd_t, systemd_logind_exec_t, systemd_logind_t)
 
+# Direct D-Bus activation is retained for deployments whose bus is not
+# configured for system-manager activation. dbus-daemon writes the inherited
+# activation pipe while the logind service is coming up; Fedora's stock
+# systemd-logind is normally started by systemd and therefore does not need
+# this permission in the base policy. Restrict it to the existing logind
+# domain and FIFO object class.
+allow system_dbusd_t systemd_logind_t:fifo_file write;
+
 # RustD journald publishes systemd-compatible links from its native runtime
 # directory. Keep that compatibility surface confined to the existing Fedora
 # syslog runtime type.
