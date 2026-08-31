@@ -477,7 +477,7 @@ clap_lex = "=0.7.6"
 anstream = "=0.6.21"
 
 [features]
-default = ["supremacy"]
+default = ["supremacy", "ml-weave"]
 chaos = []
 ml-weave = []
 fortran-sched = []

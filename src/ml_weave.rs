@@ -1807,12 +1807,70 @@ pub fn bootstrap_priors(brain: &mut WeaveBrain, rounds: usize) {
     }
 }
 
+/// Bounded controller that turns six nonlinear systems into a small scheduling
+/// signal. It never changes dependency correctness or configured unit policy.
+#[derive(Clone, Debug)]
+pub struct ChaosDynamics {
+    rossler: Vec3,
+    logistic: f64,
+    duffing_x: f64,
+    duffing_v: f64,
+    lyapunov: f64,
+}
+
+impl Default for ChaosDynamics {
+    fn default() -> Self {
+        Self {
+            rossler: Vec3::new(0.1, 0.0, 0.0),
+            logistic: 0.417,
+            duffing_x: 0.1,
+            duffing_v: 0.0,
+            lyapunov: 0.0,
+        }
+    }
+}
+
+impl ChaosDynamics {
+    fn step(&mut self, pressure: f64) -> f64 {
+        let pressure = clamp01(pressure);
+        let dt = 0.01;
+
+        // Rössler flow.
+        let dx = -self.rossler.y - self.rossler.z;
+        let dy = self.rossler.x + 0.2 * self.rossler.y;
+        let dz = 0.2 + self.rossler.z * (self.rossler.x - 5.7);
+        self.rossler.x = finite(self.rossler.x + dt * dx).clamp(-20.0, 20.0);
+        self.rossler.y = finite(self.rossler.y + dt * dy).clamp(-20.0, 20.0);
+        self.rossler.z = finite(self.rossler.z + dt * dz).clamp(0.0, 40.0);
+
+        // Logistic map and its finite-time Lyapunov exponent.
+        let r = 3.72 + 0.22 * pressure;
+        self.logistic = clamp01(r * self.logistic * (1.0 - self.logistic));
+        let local = (r * (1.0 - 2.0 * self.logistic)).abs().max(1.0e-9).ln();
+        self.lyapunov = finite(0.98 * self.lyapunov + 0.02 * local).clamp(-4.0, 4.0);
+
+        // Forced Duffing oscillator.
+        let force = 0.3 * (self.logistic * std::f64::consts::TAU).sin();
+        let acceleration = self.duffing_x - self.duffing_x.powi(3) - 0.25 * self.duffing_v + force;
+        self.duffing_v = finite(self.duffing_v + dt * acceleration).clamp(-4.0, 4.0);
+        self.duffing_x = finite(self.duffing_x + dt * self.duffing_v).clamp(-3.0, 3.0);
+
+        let rossler_signal = tanh_approx((self.rossler.x + self.rossler.y) / 20.0);
+        let logistic_signal = 2.0 * self.logistic - 1.0;
+        let duffing_signal = tanh_approx(self.duffing_x);
+        let lyapunov_signal = tanh_approx(self.lyapunov);
+        (0.25 * (rossler_signal + logistic_signal + duffing_signal + lyapunov_signal))
+            .clamp(-1.0, 1.0)
+    }
+}
+
 /// Field on `Manager`:
 /// `pub weave: ManagerWeave`
 #[derive(Debug)]
 pub struct ManagerWeave {
     pub brain: WeaveBrain,
     pub tick_every: Duration,
+    dynamics: ChaosDynamics,
     last_auto_tick: Instant,
 }
 
@@ -1829,14 +1887,19 @@ impl ManagerWeave {
         Self {
             brain,
             tick_every: Duration::from_millis(250),
+            dynamics: ChaosDynamics::default(),
             last_auto_tick: Instant::now(),
         }
     }
 
     pub fn maybe_tick(&mut self, load: f64, jobs: usize, fail_rate: f64, log_rate: f64) {
         if self.last_auto_tick.elapsed() >= self.tick_every {
+            let pressure = clamp01(load / 16.0 + fail_rate * 0.5);
+            let signal = self.dynamics.step(pressure);
+            let shaped_load = (load * (1.0 + 0.03 * signal)).max(0.0);
+            let shaped_fail = clamp01(fail_rate + 0.01 * signal.max(0.0));
             self.brain
-                .observe_rates(load, jobs as f64, fail_rate, log_rate);
+                .observe_rates(shaped_load, jobs as f64, shaped_fail, log_rate);
             self.last_auto_tick = Instant::now();
         }
     }
@@ -2170,5 +2233,15 @@ mod tests {
             100,
         );
         assert_eq!(t.len(), 100);
+    }
+
+    #[test]
+    fn nonlinear_controller_remains_bounded() {
+        let mut dynamics = ChaosDynamics::default();
+        for index in 0..100_000 {
+            let signal = dynamics.step(f64::from(index % 101) / 100.0);
+            assert!(signal.is_finite());
+            assert!((-1.0..=1.0).contains(&signal));
+        }
     }
 }

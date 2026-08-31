@@ -509,6 +509,42 @@ impl JobQueue {
         self.pending.remove(pos)
     }
 
+    /// Return the highest-scoring ready job while preserving dependency and
+    /// transaction ordering constraints.
+    pub fn pop_ready_by<F>(
+        &mut self,
+        states: &HashMap<String, UnitState>,
+        afters: &HashMap<String, Vec<String>>,
+        mut score: F,
+    ) -> Option<Job>
+    where
+        F: FnMut(&Job) -> f64,
+    {
+        self.pending
+            .retain(|job| job.id == 0 || self.registry.is_live(job.id));
+        let mut best: Option<(usize, f64)> = None;
+        for (index, job) in self.pending.iter().enumerate().filter(|(_, job)| {
+            (job.id == 0 || self.registry.get_before(job.id).is_empty())
+                && job_is_ready(job, states, afters)
+        }) {
+            let candidate = score(job);
+            let improves = match best {
+                Some((_, current)) => candidate > current,
+                None => true,
+            };
+            if candidate.is_finite() && improves {
+                best = Some((index, candidate));
+            }
+        }
+        let pos = best.map(|(index, _)| index).or_else(|| {
+            self.pending.iter().position(|job| {
+                (job.id == 0 || self.registry.get_before(job.id).is_empty())
+                    && job_is_ready(job, states, afters)
+            })
+        })?;
+        self.pending.remove(pos)
+    }
+
     /// Drain all currently-ready jobs, returning them in order.
     pub fn drain_ready(
         &mut self,
@@ -810,6 +846,36 @@ mod tests {
         let ready = queue.drain_ready(&states(&[]), &af);
         assert_eq!(ready.len(), 1);
         assert_eq!(ready[0].id, later_start.id);
+    }
+
+    #[test]
+    fn scored_dispatch_never_bypasses_ordering() {
+        let mut queue = JobQueue::default();
+        let later = queue.enqueue(JobKind::Start, "later.service");
+        let earlier = queue.enqueue(JobKind::Start, "earlier.service");
+        let registry = queue.registry();
+        let af = afters(&[("later.service", &["earlier.service"])]);
+        queue.refresh_ordering(&af);
+
+        let selected = queue
+            .pop_ready_by(&states(&[]), &af, |job| {
+                if job.id == later.id {
+                    100.0
+                } else {
+                    0.0
+                }
+            })
+            .expect("one ordered job must be ready");
+        assert_eq!(selected.id, earlier.id);
+        registry.finish(earlier.id, JobResult::Done);
+        let selected = queue
+            .pop_ready_by(
+                &states(&[("earlier.service", UnitState::Active)]),
+                &af,
+                |_| 0.0,
+            )
+            .expect("successor must become ready");
+        assert_eq!(selected.id, later.id);
     }
 
     #[test]

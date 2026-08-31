@@ -61,6 +61,8 @@ use crate::unit::UnitState;
 
 /// The central service manager.
 pub struct Manager {
+    #[cfg(feature = "ml-weave")]
+    weave: crate::ml_weave::ManagerWeave,
     /// All loaded units, keyed by name.
     pub units: HashMap<String, UnitRecord>,
     /// Runtime state for active socket units (fds + bookkeeping).
@@ -323,6 +325,8 @@ impl Manager {
         };
 
         Ok(Self {
+            #[cfg(feature = "ml-weave")]
+            weave: crate::ml_weave::ManagerWeave::new(),
             units: HashMap::new(),
             socket_records: HashMap::new(),
             path_sources: HashMap::new(),
@@ -569,6 +573,23 @@ impl Manager {
             // whole ready set against a single pre-dispatch snapshot lets an
             // `After=` successor appear ready while its predecessor is still
             // merely Inactive with a queued start job.
+            #[cfg(feature = "ml-weave")]
+            let ready = {
+                self.weave
+                    .maybe_tick(system_load_average(), self.job_queue.len(), 0.0, 0.0);
+                let weave = &mut self.weave;
+                self.job_queue
+                    .pop_ready_by(&states, &afters, |job| {
+                        let critical = matches!(
+                            job.kind,
+                            JobKind::Stop | JobKind::Restart | JobKind::Isolate
+                        ) || job.unit_name.ends_with(".target");
+                        weave.brain.score_job(&job.unit_name, critical)
+                    })
+                    .into_iter()
+                    .collect::<Vec<_>>()
+            };
+            #[cfg(not(feature = "ml-weave"))]
             let ready = self
                 .job_queue
                 .pop_ready(&states, &afters)
@@ -2716,6 +2737,17 @@ fn unit_cgroup_must_remain_realized(record: &UnitRecord) -> bool {
             | UnitState::Maintenance
     ) || record.active_pid.is_some()
         || record.control_pid.is_some()
+}
+
+#[cfg(feature = "ml-weave")]
+fn system_load_average() -> f64 {
+    let mut loads = [0.0_f64; 1];
+    // SAFETY: `loads` points to one writable f64 and the requested count is one.
+    if unsafe { libc::getloadavg(loads.as_mut_ptr(), 1) } == 1 {
+        loads[0].max(0.0)
+    } else {
+        0.0
+    }
 }
 
 fn automatic_restart_delay(
