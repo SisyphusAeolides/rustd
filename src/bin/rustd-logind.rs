@@ -4,9 +4,12 @@
 
 #![allow(clippy::unused_self, clippy::needless_pass_by_value)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ffi::CStr;
-use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::fs::{self, OpenOptions};
+use std::os::fd::{AsRawFd, FromRawFd, IntoRawFd, OwnedFd};
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +23,39 @@ const NATIVE_ROOT: &str = "/io/rustd/Login1";
 const COMPAT_ROOT: &str = "/org/freedesktop/login1";
 const CREATE_SESSION_SIGNATURE: &str = "uusssssussbssa(sv)";
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ObjectNamespace {
+    Native,
+    Compatibility,
+}
+
+impl ObjectNamespace {
+    const ALL: [Self; 2] = [Self::Native, Self::Compatibility];
+
+    fn session_path(self, id: &str) -> String {
+        match self {
+            Self::Native => logind::session_path(id),
+            Self::Compatibility => {
+                format!("{COMPAT_ROOT}/session/{}", logind::object_component(id))
+            }
+        }
+    }
+
+    fn user_path(self, uid: u32) -> String {
+        match self {
+            Self::Native => logind::user_path(uid),
+            Self::Compatibility => format!("{COMPAT_ROOT}/user/{uid}"),
+        }
+    }
+
+    fn seat_path(self, id: &str) -> String {
+        match self {
+            Self::Native => logind::seat_path(id),
+            Self::Compatibility => format!("{COMPAT_ROOT}/seat/{}", logind::object_component(id)),
+        }
+    }
+}
 
 fn path(path: String) -> zbus::fdo::Result<OwnedObjectPath> {
     OwnedObjectPath::try_from(path).map_err(|error| zbus::fdo::Error::Failed(error.to_string()))
@@ -43,6 +79,135 @@ struct Manager {
     next_inhibitor: AtomicU64,
     inhibitors: Arc<Mutex<HashMap<u64, InhibitorEntry>>>,
     session_refs: Arc<Mutex<HashMap<String, OwnedFd>>>,
+    enable_wall_messages: bool,
+    wall_message: String,
+    namespace: ObjectNamespace,
+}
+
+struct SessionState {
+    control_acquired: bool,
+    devices: HashMap<(u32, u32), OwnedFd>,
+}
+
+impl SessionState {
+    fn new() -> Self {
+        Self {
+            control_acquired: false,
+            devices: HashMap::new(),
+        }
+    }
+}
+
+fn no_such_session() -> zbus::fdo::Error {
+    zbus::fdo::Error::Failed("No such session".into())
+}
+
+fn no_such_user() -> zbus::fdo::Error {
+    zbus::fdo::Error::Failed("No such user".into())
+}
+
+fn no_such_seat() -> zbus::fdo::Error {
+    zbus::fdo::Error::Failed("No such seat".into())
+}
+
+fn valid_session_id(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn session_id_from_environment(pid: u32) -> Option<String> {
+    let environ = fs::read(format!("/proc/{pid}/environ")).ok()?;
+    environ.split(|byte| *byte == 0).find_map(|entry| {
+        let value = entry.strip_prefix(b"XDG_SESSION_ID=")?;
+        let value = std::str::from_utf8(value).ok()?;
+        valid_session_id(value).then_some(value.to_owned())
+    })
+}
+
+fn session_id_for_pid(pid: u32) -> Option<String> {
+    if pid == 0 {
+        return None;
+    }
+
+    let sessions = logind::sessions();
+    if let Some(session) = sessions.iter().find(|session| session.leader == pid) {
+        return Some(session.id.clone());
+    }
+
+    // RustD keeps the session leader in the record, but a desktop normally
+    // asks for a child process.  The standard service resolves those through
+    // the session scope cgroup.  Accept the same naming convention when a
+    // caller is launched by a compatible service manager.
+    if let Ok(cgroup) = fs::read_to_string(format!("/proc/{pid}/cgroup")) {
+        if let Some(session) = sessions.iter().find(|session| {
+            let scope = format!("session-{}.scope", session.id);
+            cgroup.contains(&scope)
+        }) {
+            return Some(session.id.clone());
+        }
+    }
+
+    session_id_from_environment(pid).filter(|id| sessions.iter().any(|session| session.id == *id))
+}
+
+fn device_node_path(major: u32, minor: u32) -> Option<PathBuf> {
+    let canonical = PathBuf::from(format!("/dev/char/{major}:{minor}"));
+    if canonical.exists() {
+        return Some(canonical);
+    }
+
+    // /dev/char is created by devtmpfs, but retain a bounded fallback for
+    // initramfs and container environments that expose only named nodes.
+    for directory in ["/dev/dri", "/dev/input", "/dev/vc", "/dev"] {
+        let Ok(entries) = fs::read_dir(directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let candidate = entry.path();
+            let Ok(metadata) = fs::metadata(&candidate) else {
+                continue;
+            };
+            if metadata.rdev() == libc::makedev(major, minor) {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn open_device(major: u32, minor: u32) -> std::io::Result<OwnedFd> {
+    let path = device_node_path(major, minor).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("device node {major}:{minor} does not exist"),
+        )
+    })?;
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK)
+        .open(&path)
+        .or_else(|_| {
+            OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_CLOEXEC | libc::O_NONBLOCK)
+                .open(&path)
+        })?;
+    let raw = file.into_raw_fd();
+    // Safety: `into_raw_fd` transfers ownership of this newly opened fd.
+    Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+}
+
+fn duplicate_fd(fd: &OwnedFd) -> std::io::Result<OwnedFd> {
+    let raw = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 3) };
+    if raw < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        // Safety: fcntl returned a new descriptor owned by this call.
+        Ok(unsafe { OwnedFd::from_raw_fd(raw) })
+    }
 }
 
 fn reap_inhibitors(map: &mut HashMap<u64, InhibitorEntry>) {
@@ -109,7 +274,11 @@ impl Manager {
         }
     }
 
-    async fn call_manager_method(&self, method: &str) -> zbus::fdo::Result<()> {
+    async fn call_manager_method_bool(
+        &self,
+        method: &str,
+        interactive: bool,
+    ) -> zbus::fdo::Result<()> {
         let connection = zbus::Connection::system()
             .await
             .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
@@ -119,7 +288,7 @@ impl Manager {
                 "/io/rustd/Manager1",
                 Some("io.rustd.Manager1.Manager"),
                 method,
-                &(),
+                &interactive,
             )
             .await
             .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
@@ -200,20 +369,36 @@ impl Manager {
             locked: false,
         };
         logind::save(&session).map_err(dbus_error)?;
-        let object_path = path(logind::session_path(&id))?;
-        connection
-            .object_server()
-            .at(logind::session_path(&id), SessionObject { id: id.clone() })
-            .await
-            .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
-        let _ = connection
-            .object_server()
-            .at(logind::user_path(uid), UserObject { uid })
-            .await;
-        let _ = connection
-            .object_server()
-            .at(logind::seat_path(&seat), SeatObject { id: seat.clone() })
-            .await;
+        let object_path = path(self.namespace.session_path(&id))?;
+        let session_state = Arc::new(Mutex::new(SessionState::new()));
+        for namespace in ObjectNamespace::ALL {
+            connection
+                .object_server()
+                .at(
+                    namespace.session_path(&id),
+                    SessionObject {
+                        id: id.clone(),
+                        namespace,
+                        state: Arc::clone(&session_state),
+                    },
+                )
+                .await
+                .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
+            let _ = connection
+                .object_server()
+                .at(namespace.user_path(uid), UserObject { uid, namespace })
+                .await;
+            let _ = connection
+                .object_server()
+                .at(
+                    namespace.seat_path(&seat),
+                    SeatObject {
+                        id: seat.clone(),
+                        namespace,
+                    },
+                )
+                .await;
+        }
 
         let mut fds = [0i32; 2];
         if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC) } != 0 {
@@ -247,14 +432,59 @@ impl Manager {
     }
 
     fn terminate_session(&self, id: String) -> zbus::fdo::Result<()> {
+        if let Some(session) = logind::session(&id) {
+            if session.leader > 0 {
+                let _ = unsafe { libc::kill(session.leader as libc::pid_t, libc::SIGTERM) };
+            }
+        }
         self.release_session(id)
     }
 
     fn get_session(&self, id: String) -> zbus::fdo::Result<OwnedObjectPath> {
         if logind::session(&id).is_some() {
-            path(logind::session_path(&id))
+            path(self.namespace.session_path(&id))
         } else {
-            Err(zbus::fdo::Error::Failed("No such session".into()))
+            Err(no_such_session())
+        }
+    }
+
+    #[zbus(name = "GetSessionByPID")]
+    fn get_session_by_pid(&self, pid: u32) -> zbus::fdo::Result<OwnedObjectPath> {
+        session_id_for_pid(pid)
+            .map(|id| path(self.namespace.session_path(&id)))
+            .transpose()?
+            .ok_or_else(no_such_session)
+    }
+
+    fn get_user(&self, uid: u32) -> zbus::fdo::Result<OwnedObjectPath> {
+        if passwd_record(uid).is_some()
+            || logind::sessions()
+                .into_iter()
+                .any(|session| session.uid == uid)
+        {
+            path(self.namespace.user_path(uid))
+        } else {
+            Err(no_such_user())
+        }
+    }
+
+    #[zbus(name = "GetUserByPID")]
+    fn get_user_by_pid(&self, pid: u32) -> zbus::fdo::Result<OwnedObjectPath> {
+        let uid = session_id_for_pid(pid)
+            .and_then(|id| logind::session(&id).map(|session| session.uid))
+            .or_else(|| {
+                let metadata = fs::metadata(format!("/proc/{pid}")).ok()?;
+                Some(metadata.uid())
+            })
+            .ok_or_else(no_such_user)?;
+        self.get_user(uid)
+    }
+
+    fn get_seat(&self, id: String) -> zbus::fdo::Result<OwnedObjectPath> {
+        if seat_names(logind::sessions().iter()).contains(&id) {
+            path(self.namespace.seat_path(&id))
+        } else {
+            Err(no_such_seat())
         }
     }
 
@@ -262,28 +492,30 @@ impl Manager {
         logind::sessions()
             .into_iter()
             .filter_map(|session| {
-                path(logind::session_path(&session.id)).ok().map(|object| {
-                    (
-                        session.id.clone(),
-                        session.uid,
-                        session.user.clone(),
-                        session.seat.clone(),
-                        object,
-                    )
-                })
+                path(self.namespace.session_path(&session.id))
+                    .ok()
+                    .map(|object| {
+                        (
+                            session.id.clone(),
+                            session.uid,
+                            session.user.clone(),
+                            session.seat.clone(),
+                            object,
+                        )
+                    })
             })
             .collect()
     }
 
     fn list_users(&self) -> Vec<(u32, String, OwnedObjectPath)> {
-        let mut seen = HashMap::new();
+        let mut seen = BTreeMap::new();
         for session in logind::sessions() {
             seen.entry(session.uid)
                 .or_insert_with(|| session.user.clone());
         }
         seen.into_iter()
             .filter_map(|(uid, user)| {
-                path(logind::user_path(uid))
+                path(self.namespace.user_path(uid))
                     .ok()
                     .map(|object| (uid, user, object))
             })
@@ -295,7 +527,7 @@ impl Manager {
         seat_names(sessions.iter())
             .into_iter()
             .filter_map(|seat| {
-                path(logind::seat_path(&seat))
+                path(self.namespace.seat_path(&seat))
                     .ok()
                     .map(|object| (seat, object))
             })
@@ -306,8 +538,368 @@ impl Manager {
         if logind::session(&id).is_some() {
             Ok(())
         } else {
-            Err(zbus::fdo::Error::Failed("No such session".into()))
+            Err(no_such_session())
         }
+    }
+
+    fn activate_session_on_seat(&self, seat: String, id: String) -> zbus::fdo::Result<()> {
+        let session = logind::session(&id).ok_or_else(no_such_session)?;
+        if session.seat == seat {
+            Ok(())
+        } else {
+            Err(zbus::fdo::Error::Failed(format!(
+                "session {id} does not belong to seat {seat}"
+            )))
+        }
+    }
+
+    fn kill_session(&self, id: String, who: String, signal: i32) -> zbus::fdo::Result<()> {
+        let session = logind::session(&id).ok_or_else(no_such_session)?;
+        if who != "leader" && who != "all" {
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "who must be 'leader' or 'all'".into(),
+            ));
+        }
+        if session.leader > 0 && unsafe { libc::kill(session.leader as libc::pid_t, signal) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(dbus_error(error));
+            }
+        }
+        Ok(())
+    }
+
+    fn kill_user(&self, uid: u32, signal: i32) -> zbus::fdo::Result<()> {
+        if passwd_record(uid).is_none()
+            && !logind::sessions().iter().any(|session| session.uid == uid)
+        {
+            return Err(no_such_user());
+        }
+        for session in logind::sessions()
+            .into_iter()
+            .filter(|session| session.uid == uid && session.leader > 0)
+        {
+            if unsafe { libc::kill(session.leader as libc::pid_t, signal) } != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(dbus_error(error));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn terminate_user(&self, uid: u32) -> zbus::fdo::Result<()> {
+        self.kill_user(uid, libc::SIGTERM)?;
+        for session in logind::sessions()
+            .into_iter()
+            .filter(|session| session.uid == uid)
+        {
+            logind::remove(&session.id).map_err(dbus_error)?;
+        }
+        Ok(())
+    }
+
+    fn terminate_seat(&self, seat: String) -> zbus::fdo::Result<()> {
+        if !seat_names(logind::sessions().iter()).contains(&seat) {
+            return Err(no_such_seat());
+        }
+        for session in logind::sessions()
+            .into_iter()
+            .filter(|session| session.seat == seat)
+        {
+            if session.leader > 0 {
+                let _ = unsafe { libc::kill(session.leader as libc::pid_t, libc::SIGTERM) };
+            }
+            logind::remove(&session.id).map_err(dbus_error)?;
+        }
+        Ok(())
+    }
+
+    fn lock_sessions(&self) -> zbus::fdo::Result<()> {
+        for session in logind::sessions() {
+            set_locked(&session.id, true)?;
+        }
+        Ok(())
+    }
+
+    fn unlock_sessions(&self) -> zbus::fdo::Result<()> {
+        for session in logind::sessions() {
+            set_locked(&session.id, false)?;
+        }
+        Ok(())
+    }
+
+    fn attach_device(
+        &self,
+        seat: String,
+        _sysfs: String,
+        _interactive: bool,
+    ) -> zbus::fdo::Result<()> {
+        if seat_names(logind::sessions().iter()).contains(&seat) {
+            Ok(())
+        } else {
+            Err(no_such_seat())
+        }
+    }
+
+    fn flush_devices(&self, _reexecute: bool) {}
+
+    fn set_user_linger(
+        &self,
+        uid: u32,
+        _enable: bool,
+        _interactive: bool,
+    ) -> zbus::fdo::Result<()> {
+        self.get_user(uid).map(|_| ())
+    }
+
+    #[zbus(name = "SetWallMessage")]
+    fn set_wall_message_method(&self, _message: String, _enable: bool) {}
+
+    #[zbus(property)]
+    fn n_current_inhibitors(&self) -> u64 {
+        self.inhibitors
+            .lock()
+            .map(|map| map.len() as u64)
+            .unwrap_or(0)
+    }
+
+    #[zbus(property)]
+    fn n_current_sessions(&self) -> u64 {
+        logind::sessions().len() as u64
+    }
+
+    #[zbus(name = "NAutoVTs", property(emits_changed_signal = "const"))]
+    fn n_auto_vts(&self) -> u32 {
+        6
+    }
+
+    #[zbus(property)]
+    fn sessions_max(&self) -> u64 {
+        8192
+    }
+
+    #[zbus(property)]
+    fn inhibitors_max(&self) -> u64 {
+        8192
+    }
+
+    #[zbus(property)]
+    fn kill_user_processes(&self) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    fn kill_exclude_users(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    #[zbus(property)]
+    fn kill_only_users(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    #[zbus(name = "RemoveIPC", property(emits_changed_signal = "const"))]
+    fn remove_ipc(&self) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    fn enable_wall_messages(&self) -> bool {
+        self.enable_wall_messages
+    }
+
+    #[zbus(property)]
+    fn set_enable_wall_messages(&mut self, value: bool) -> zbus::fdo::Result<()> {
+        self.enable_wall_messages = value;
+        Ok(())
+    }
+
+    #[zbus(property)]
+    fn wall_message(&self) -> String {
+        self.wall_message.clone()
+    }
+
+    #[zbus(property)]
+    fn set_wall_message(&mut self, value: String) -> zbus::fdo::Result<()> {
+        self.wall_message = value;
+        Ok(())
+    }
+
+    #[zbus(property)]
+    fn block_inhibited(&self) -> String {
+        "shutdown:handle-power-key".into()
+    }
+
+    #[zbus(property)]
+    fn delay_inhibited(&self) -> String {
+        "sleep".into()
+    }
+
+    #[zbus(property)]
+    fn handle_power_key(&self) -> &'static str {
+        "poweroff"
+    }
+
+    #[zbus(property)]
+    fn handle_power_key_long_press(&self) -> &'static str {
+        "ignore"
+    }
+
+    #[zbus(property)]
+    fn handle_reboot_key(&self) -> &'static str {
+        "reboot"
+    }
+
+    #[zbus(property)]
+    fn handle_reboot_key_long_press(&self) -> &'static str {
+        "poweroff"
+    }
+
+    #[zbus(property)]
+    fn handle_suspend_key(&self) -> &'static str {
+        "suspend"
+    }
+
+    #[zbus(property)]
+    fn handle_suspend_key_long_press(&self) -> &'static str {
+        "hibernate"
+    }
+
+    #[zbus(property)]
+    fn handle_hibernate_key(&self) -> &'static str {
+        "hibernate"
+    }
+
+    #[zbus(property)]
+    fn handle_hibernate_key_long_press(&self) -> &'static str {
+        "ignore"
+    }
+
+    #[zbus(property)]
+    fn handle_lid_switch(&self) -> &'static str {
+        "suspend"
+    }
+
+    #[zbus(property)]
+    fn handle_lid_switch_docked(&self) -> &'static str {
+        "ignore"
+    }
+
+    #[zbus(property)]
+    fn handle_lid_switch_external_power(&self) -> &'static str {
+        ""
+    }
+
+    #[zbus(property)]
+    fn idle_action(&self) -> &'static str {
+        "ignore"
+    }
+
+    #[zbus(name = "IdleActionUSec", property(emits_changed_signal = "const"))]
+    fn idle_action_usec(&self) -> u64 {
+        1_800_000_000
+    }
+
+    #[zbus(property)]
+    fn idle_hint(&self) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    fn idle_since_hint(&self) -> u64 {
+        0
+    }
+
+    #[zbus(property)]
+    fn idle_since_hint_monotonic(&self) -> u64 {
+        0
+    }
+
+    #[zbus(name = "HoldoffTimeoutUSec", property(emits_changed_signal = "const"))]
+    fn holdoff_timeout_usec(&self) -> u64 {
+        30_000_000
+    }
+
+    #[zbus(name = "InhibitDelayMaxUSec", property(emits_changed_signal = "const"))]
+    fn inhibit_delay_max_usec(&self) -> u64 {
+        5_000_000
+    }
+
+    #[zbus(property)]
+    fn runtime_directory_size(&self) -> u64 {
+        0
+    }
+
+    #[zbus(property)]
+    fn runtime_directory_inodes_max(&self) -> u64 {
+        0
+    }
+
+    #[zbus(name = "StopIdleSessionUSec", property(emits_changed_signal = "const"))]
+    fn stop_idle_session_usec(&self) -> u64 {
+        u64::MAX
+    }
+
+    #[zbus(name = "UserStopDelayUSec", property(emits_changed_signal = "const"))]
+    fn user_stop_delay_usec(&self) -> u64 {
+        10_000_000
+    }
+
+    #[zbus(property)]
+    fn boot_loader_entries(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    #[zbus(property)]
+    fn reboot_parameter(&self) -> String {
+        String::new()
+    }
+
+    #[zbus(property)]
+    fn reboot_to_boot_loader_entry(&self) -> String {
+        String::new()
+    }
+
+    #[zbus(property)]
+    fn reboot_to_boot_loader_menu(&self) -> u64 {
+        u64::MAX
+    }
+
+    #[zbus(property)]
+    fn reboot_to_firmware_setup(&self) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    fn scheduled_shutdown(&self) -> (String, u64) {
+        (String::new(), u64::MAX)
+    }
+
+    #[zbus(property)]
+    fn docked(&self) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    fn lid_closed(&self) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    fn on_external_power(&self) -> bool {
+        true
+    }
+
+    #[zbus(property)]
+    fn preparing_for_shutdown(&self) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    fn preparing_for_sleep(&self) -> bool {
+        false
     }
 
     fn lock_session(&self, id: String) -> zbus::fdo::Result<()> {
@@ -407,6 +999,10 @@ impl Manager {
         "yes"
     }
 
+    fn can_halt(&self) -> &'static str {
+        "yes"
+    }
+
     fn can_reboot(&self) -> &'static str {
         "yes"
     }
@@ -419,25 +1015,152 @@ impl Manager {
         "na"
     }
 
+    fn can_hybrid_sleep(&self) -> &'static str {
+        "na"
+    }
+
+    fn can_suspend_then_hibernate(&self) -> &'static str {
+        "na"
+    }
+
+    fn can_reboot_parameter(&self) -> &'static str {
+        "na"
+    }
+
+    fn can_reboot_to_boot_loader_entry(&self) -> &'static str {
+        "na"
+    }
+
+    fn can_reboot_to_boot_loader_menu(&self) -> &'static str {
+        "na"
+    }
+
+    fn can_reboot_to_firmware_setup(&self) -> &'static str {
+        "na"
+    }
+
     async fn power_off(&self, interactive: bool) -> zbus::fdo::Result<()> {
-        let _ = interactive;
         self.ensure_shutdown_allowed()?;
-        self.call_manager_method("PowerOff").await
+        self.call_manager_method_bool("PowerOff", interactive).await
     }
 
     async fn reboot(&self, interactive: bool) -> zbus::fdo::Result<()> {
-        let _ = interactive;
         self.ensure_shutdown_allowed()?;
-        self.call_manager_method("Reboot").await
+        self.call_manager_method_bool("Reboot", interactive).await
     }
 
-    fn prepare_for_shutdown(&self, active: bool) {
-        let _ = active;
+    async fn halt(&self, interactive: bool) -> zbus::fdo::Result<()> {
+        self.ensure_shutdown_allowed()?;
+        self.call_manager_method_bool("Halt", interactive).await
     }
 
-    fn prepare_for_sleep(&self, active: bool) {
-        let _ = active;
+    async fn suspend(&self, interactive: bool) -> zbus::fdo::Result<()> {
+        self.call_manager_method_bool("Suspend", interactive).await
     }
+
+    async fn hibernate(&self, interactive: bool) -> zbus::fdo::Result<()> {
+        self.call_manager_method_bool("Hibernate", interactive)
+            .await
+    }
+
+    async fn hybrid_sleep(&self, interactive: bool) -> zbus::fdo::Result<()> {
+        self.call_manager_method_bool("HybridSleep", interactive)
+            .await
+    }
+
+    async fn suspend_then_hibernate(&self, interactive: bool) -> zbus::fdo::Result<()> {
+        self.call_manager_method_bool("SuspendThenHibernate", interactive)
+            .await
+    }
+
+    async fn power_off_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+        self.power_off(false).await
+    }
+
+    async fn reboot_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+        self.reboot(false).await
+    }
+
+    async fn halt_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+        self.halt(false).await
+    }
+
+    async fn suspend_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+        self.suspend(false).await
+    }
+
+    async fn hibernate_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+        self.hibernate(false).await
+    }
+
+    async fn hybrid_sleep_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+        self.hybrid_sleep(false).await
+    }
+
+    async fn suspend_then_hibernate_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+        self.suspend_then_hibernate(false).await
+    }
+
+    fn cancel_scheduled_shutdown(&self) -> bool {
+        false
+    }
+
+    fn set_reboot_parameter(&self, _parameter: String) {}
+
+    fn set_reboot_to_boot_loader_entry(&self, _entry: String) {}
+
+    fn set_reboot_to_boot_loader_menu(&self, _timeout: u64) {}
+
+    fn set_reboot_to_firmware_setup(&self, _enable: bool) {}
+
+    #[zbus(signal)]
+    async fn prepare_for_shutdown(ctxt: &zbus::SignalContext<'_>, active: bool)
+        -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn prepare_for_sleep(ctxt: &zbus::SignalContext<'_>, active: bool) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn seat_new(
+        ctxt: &zbus::SignalContext<'_>,
+        id: &str,
+        seat: zbus::zvariant::ObjectPath<'_>,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn seat_removed(
+        ctxt: &zbus::SignalContext<'_>,
+        id: &str,
+        seat: zbus::zvariant::ObjectPath<'_>,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn session_new(
+        ctxt: &zbus::SignalContext<'_>,
+        id: &str,
+        session: zbus::zvariant::ObjectPath<'_>,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn session_removed(
+        ctxt: &zbus::SignalContext<'_>,
+        id: &str,
+        session: zbus::zvariant::ObjectPath<'_>,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn user_new(
+        ctxt: &zbus::SignalContext<'_>,
+        uid: u32,
+        user: zbus::zvariant::ObjectPath<'_>,
+    ) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn user_removed(
+        ctxt: &zbus::SignalContext<'_>,
+        uid: u32,
+        user: zbus::zvariant::ObjectPath<'_>,
+    ) -> zbus::Result<()>;
 }
 
 /// Adapter for the login1 manager's one non-standard zbus dispatch case.
@@ -597,6 +1320,8 @@ impl zbus::object_server::Interface for Login1Manager {
 
 struct SessionObject {
     id: String,
+    namespace: ObjectNamespace,
+    state: Arc<Mutex<SessionState>>,
 }
 
 #[interface(name = "org.freedesktop.login1.Session")]
@@ -611,7 +1336,7 @@ impl SessionObject {
         match logind::session(&self.id) {
             Some(Session { uid, .. }) => (
                 uid,
-                path(logind::user_path(uid)).unwrap_or_else(|_| OwnedObjectPath::default()),
+                path(self.namespace.user_path(uid)).unwrap_or_else(|_| OwnedObjectPath::default()),
             ),
             None => (0, OwnedObjectPath::default()),
         }
@@ -634,7 +1359,7 @@ impl SessionObject {
         0
     }
 
-    #[zbus(property)]
+    #[zbus(name = "VTNr", property(emits_changed_signal = "const"))]
     fn vt_nr(&self) -> u32 {
         logind::session(&self.id)
             .and_then(|session| {
@@ -651,7 +1376,7 @@ impl SessionObject {
         let seat = logind::session(&self.id).map_or_else(|| "seat0".into(), |session| session.seat);
         (
             seat.clone(),
-            path(logind::seat_path(&seat)).unwrap_or_else(|_| OwnedObjectPath::default()),
+            path(self.namespace.seat_path(&seat)).unwrap_or_else(|_| OwnedObjectPath::default()),
         )
     }
 
@@ -767,7 +1492,7 @@ impl SessionObject {
         if logind::session(&self.id).is_some() {
             Ok(())
         } else {
-            Err(zbus::fdo::Error::Failed("No such session".into()))
+            Err(no_such_session())
         }
     }
 
@@ -780,17 +1505,132 @@ impl SessionObject {
     }
 
     fn terminate(&self) -> zbus::fdo::Result<()> {
+        if let Some(session) = logind::session(&self.id) {
+            if session.leader > 0 {
+                let _ = unsafe { libc::kill(session.leader as libc::pid_t, libc::SIGTERM) };
+            }
+        }
         logind::remove(&self.id).map_err(dbus_error)
+    }
+
+    fn kill(&self, who: String, signal: i32) -> zbus::fdo::Result<()> {
+        let session = logind::session(&self.id).ok_or_else(no_such_session)?;
+        if who != "leader" && who != "all" {
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "who must be 'leader' or 'all'".into(),
+            ));
+        }
+        if session.leader > 0 && unsafe { libc::kill(session.leader as libc::pid_t, signal) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ESRCH) {
+                return Err(dbus_error(error));
+            }
+        }
+        Ok(())
+    }
+
+    fn take_control(&self, _force: bool) -> zbus::fdo::Result<()> {
+        if logind::session(&self.id).is_none() {
+            return Err(no_such_session());
+        }
+        self.state
+            .lock()
+            .map_err(|_| zbus::fdo::Error::Failed("session state lock poisoned".into()))?
+            .control_acquired = true;
+        Ok(())
+    }
+
+    fn release_control(&self) -> zbus::fdo::Result<()> {
+        self.state
+            .lock()
+            .map_err(|_| zbus::fdo::Error::Failed("session state lock poisoned".into()))?
+            .control_acquired = false;
+        Ok(())
+    }
+
+    fn take_device(
+        &self,
+        major: u32,
+        minor: u32,
+    ) -> zbus::fdo::Result<(zbus::zvariant::OwnedFd, bool)> {
+        if logind::session(&self.id).is_none() {
+            return Err(no_such_session());
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| zbus::fdo::Error::Failed("session state lock poisoned".into()))?;
+        if !state.devices.contains_key(&(major, minor)) {
+            state.devices.insert(
+                (major, minor),
+                open_device(major, minor).map_err(dbus_error)?,
+            );
+        }
+        let fd = state
+            .devices
+            .get(&(major, minor))
+            .ok_or_else(|| zbus::fdo::Error::Failed("device disappeared".into()))?;
+        Ok((
+            zbus::zvariant::OwnedFd::from(duplicate_fd(fd).map_err(dbus_error)?),
+            false,
+        ))
+    }
+
+    fn release_device(&self, major: u32, minor: u32) -> zbus::fdo::Result<()> {
+        self.state
+            .lock()
+            .map_err(|_| zbus::fdo::Error::Failed("session state lock poisoned".into()))?
+            .devices
+            .remove(&(major, minor));
+        Ok(())
+    }
+
+    fn pause_device_complete(&self, _major: u32, _minor: u32) {}
+
+    fn set_idle_hint(&self, _idle: bool) {}
+
+    fn set_locked_hint(&self, locked: bool) -> zbus::fdo::Result<()> {
+        set_locked(&self.id, locked)
+    }
+
+    fn set_type(&self, type_: String) -> zbus::fdo::Result<()> {
+        let mut session = logind::session(&self.id).ok_or_else(no_such_session)?;
+        if type_.is_empty() {
+            return Err(zbus::fdo::Error::InvalidArgs(
+                "session type must not be empty".into(),
+            ));
+        }
+        session.session_type = type_;
+        logind::save(&session).map_err(dbus_error)
+    }
+
+    fn set_display(&self, display: String) -> zbus::fdo::Result<()> {
+        let mut session = logind::session(&self.id).ok_or_else(no_such_session)?;
+        session.display = display;
+        logind::save(&session).map_err(dbus_error)
+    }
+
+    fn set_brightness(
+        &self,
+        _subsystem: String,
+        _device: String,
+        _brightness: u32,
+    ) -> zbus::fdo::Result<()> {
+        // Brightness is hardware-specific and is intentionally handled by
+        // the desktop's backlight service.  Accept the standard call so a
+        // desktop does not fail its session setup on RustD-only systems.
+        Ok(())
     }
 }
 
 struct UserObject {
     uid: u32,
+    namespace: ObjectNamespace,
 }
 
 #[interface(name = "org.freedesktop.login1.User")]
 impl UserObject {
-    #[zbus(property)]
+    #[zbus(name = "UID", property(emits_changed_signal = "const"))]
     fn uid(&self) -> u32 {
         self.uid
     }
@@ -826,7 +1666,7 @@ impl UserObject {
         match session {
             Some(session) => (
                 session.id.clone(),
-                path(logind::session_path(&session.id))
+                path(self.namespace.session_path(&session.id))
                     .unwrap_or_else(|_| OwnedObjectPath::default()),
             ),
             None => (
@@ -847,7 +1687,7 @@ impl UserObject {
             .into_iter()
             .filter(|session| session.uid == self.uid)
             .filter_map(|session| {
-                path(logind::session_path(&session.id))
+                path(self.namespace.session_path(&session.id))
                     .ok()
                     .map(|object| (session.id, object))
             })
@@ -872,6 +1712,21 @@ impl UserObject {
     #[zbus(property)]
     fn linger(&self) -> bool {
         false
+    }
+
+    #[zbus(name = "GID", property(emits_changed_signal = "const"))]
+    fn gid(&self) -> u32 {
+        passwd_record(self.uid).map_or(self.uid, |(_, gid)| gid)
+    }
+
+    #[zbus(property)]
+    fn timestamp(&self) -> u64 {
+        0
+    }
+
+    #[zbus(property)]
+    fn timestamp_monotonic(&self) -> u64 {
+        0
     }
 
     fn terminate(&self) -> zbus::fdo::Result<()> {
@@ -902,6 +1757,7 @@ impl UserObject {
 
 struct SeatObject {
     id: String,
+    namespace: ObjectNamespace,
 }
 
 #[interface(name = "org.freedesktop.login1.Seat")]
@@ -919,7 +1775,7 @@ impl SeatObject {
         match session {
             Some(session) => (
                 session.id.clone(),
-                path(logind::session_path(&session.id))
+                path(self.namespace.session_path(&session.id))
                     .unwrap_or_else(|_| OwnedObjectPath::default()),
             ),
             None => (
@@ -929,7 +1785,7 @@ impl SeatObject {
         }
     }
 
-    #[zbus(property)]
+    #[zbus(name = "CanTTY", property(emits_changed_signal = "const"))]
     fn can_tty(&self) -> bool {
         true
     }
@@ -940,16 +1796,68 @@ impl SeatObject {
     }
 
     #[zbus(property)]
+    fn idle_hint(&self) -> bool {
+        false
+    }
+
+    #[zbus(property)]
+    fn idle_since_hint(&self) -> u64 {
+        0
+    }
+
+    #[zbus(property)]
+    fn idle_since_hint_monotonic(&self) -> u64 {
+        0
+    }
+
+    #[zbus(property)]
     fn sessions(&self) -> Vec<(String, OwnedObjectPath)> {
         logind::sessions()
             .into_iter()
             .filter(|session| session.seat == self.id)
             .filter_map(|session| {
-                path(logind::session_path(&session.id))
+                path(self.namespace.session_path(&session.id))
                     .ok()
                     .map(|object| (session.id, object))
             })
             .collect()
+    }
+
+    fn activate_session(&self, session: String) -> zbus::fdo::Result<()> {
+        let record = logind::session(&session).ok_or_else(no_such_session)?;
+        if record.seat == self.id {
+            Ok(())
+        } else {
+            Err(zbus::fdo::Error::Failed(format!(
+                "session {session} does not belong to seat {}",
+                self.id
+            )))
+        }
+    }
+
+    fn switch_to(&self, _vtnr: u32) -> zbus::fdo::Result<()> {
+        Ok(())
+    }
+
+    fn switch_to_next(&self) -> zbus::fdo::Result<()> {
+        Ok(())
+    }
+
+    fn switch_to_previous(&self) -> zbus::fdo::Result<()> {
+        Ok(())
+    }
+
+    fn terminate(&self) -> zbus::fdo::Result<()> {
+        for session in logind::sessions()
+            .into_iter()
+            .filter(|session| session.seat == self.id)
+        {
+            if session.leader > 0 {
+                let _ = unsafe { libc::kill(session.leader as libc::pid_t, libc::SIGTERM) };
+            }
+            logind::remove(&session.id).map_err(dbus_error)?;
+        }
+        Ok(())
     }
 }
 
@@ -1002,11 +1910,17 @@ async fn main() -> anyhow::Result<()> {
         next_inhibitor: AtomicU64::new(0),
         inhibitors: Arc::clone(&inhibitors),
         session_refs: Arc::clone(&session_refs),
+        enable_wall_messages: true,
+        wall_message: String::new(),
+        namespace: ObjectNamespace::Compatibility,
     });
     let native_manager = Login1Manager(Manager {
         next_inhibitor: AtomicU64::new(0),
         inhibitors,
         session_refs,
+        enable_wall_messages: true,
+        wall_message: String::new(),
+        namespace: ObjectNamespace::Native,
     });
     connection
         .object_server()
@@ -1018,28 +1932,54 @@ async fn main() -> anyhow::Result<()> {
         .await?;
     let sessions = logind::sessions();
     for session in &sessions {
-        connection
-            .object_server()
-            .at(
-                logind::session_path(&session.id),
-                SessionObject {
-                    id: session.id.clone(),
-                },
-            )
-            .await?;
-        let _ = connection
-            .object_server()
-            .at(
-                logind::user_path(session.uid),
-                UserObject { uid: session.uid },
-            )
-            .await;
+        let session_state = Arc::new(Mutex::new(SessionState::new()));
+        for namespace in ObjectNamespace::ALL {
+            connection
+                .object_server()
+                .at(
+                    namespace.session_path(&session.id),
+                    SessionObject {
+                        id: session.id.clone(),
+                        namespace,
+                        state: Arc::clone(&session_state),
+                    },
+                )
+                .await?;
+            let _ = connection
+                .object_server()
+                .at(
+                    namespace.user_path(session.uid),
+                    UserObject {
+                        uid: session.uid,
+                        namespace,
+                    },
+                )
+                .await;
+            let _ = connection
+                .object_server()
+                .at(
+                    namespace.seat_path(&session.seat),
+                    SeatObject {
+                        id: session.seat.clone(),
+                        namespace,
+                    },
+                )
+                .await;
+        }
     }
     for seat in seat_names(sessions.iter()) {
-        connection
-            .object_server()
-            .at(logind::seat_path(&seat), SeatObject { id: seat })
-            .await?;
+        for namespace in ObjectNamespace::ALL {
+            connection
+                .object_server()
+                .at(
+                    namespace.seat_path(&seat),
+                    SeatObject {
+                        id: seat.clone(),
+                        namespace,
+                    },
+                )
+                .await?;
+        }
     }
     connection.request_name(COMPAT_BUS_NAME).await?;
     connection.request_name(NATIVE_BUS_NAME).await?;

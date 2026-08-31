@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 #define _GNU_SOURCE
 #include <dirent.h>
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -26,6 +27,15 @@ struct rustd_login_monitor {
     int fd;
     int wd;
 };
+
+static void free_string_vector(char **values, int count) {
+    int index;
+    if (!values)
+        return;
+    for (index = 0; index < count; index++)
+        free(values[index]);
+    free(values);
+}
 
 static char *session_path(const char *session) {
     char path[PATH_MAX];
@@ -293,21 +303,118 @@ static int read_cgroup_field(pid_t pid, const char *prefix, char **out) {
     return -ENOENT;
 }
 
+static int valid_session_id(const char *value) {
+    size_t index;
+    if (!value || value[0] == '\0')
+        return 0;
+    for (index = 0; value[index] != '\0'; index++) {
+        unsigned char byte = (unsigned char)value[index];
+        if (!(isalnum(byte) || byte == '_' || byte == '-'))
+            return 0;
+    }
+    return 1;
+}
+
+/* RustD records the session ID in the environment for PAM and service
+ * launchers.  This is the same fallback used by the native D-Bus service when
+ * a process is not yet in a dedicated session scope cgroup. */
+static int read_process_session(pid_t pid, char **session) {
+    char path[64];
+    FILE *stream;
+    char *buffer;
+    size_t length;
+    size_t offset;
+    int read_error;
+
+    if (!session)
+        return -EINVAL;
+    *session = NULL;
+    if (snprintf(path, sizeof(path), "/proc/%d/environ", pid) >= (int)sizeof(path))
+        return -EOVERFLOW;
+    stream = fopen(path, "re");
+    if (!stream)
+        return -errno;
+    buffer = calloc(1U, 1024U * 1024U + 1U);
+    if (!buffer) {
+        fclose(stream);
+        return -ENOMEM;
+    }
+    length = fread(buffer, 1U, 1024U * 1024U, stream);
+    read_error = ferror(stream);
+    fclose(stream);
+    if (read_error) {
+        free(buffer);
+        return -EIO;
+    }
+    buffer[length] = '\0';
+    offset = 0U;
+    while (offset < length) {
+        const char *entry = buffer + offset;
+        size_t entry_length = strlen(entry);
+        if (strncmp(entry, "XDG_SESSION_ID=", 16U) == 0 &&
+            valid_session_id(entry + 16U)) {
+            *session = strdup(entry + 16U);
+            free(buffer);
+            return *session ? 0 : -ENOMEM;
+        }
+        offset += entry_length + 1U;
+    }
+    free(buffer);
+    return -ENOENT;
+}
+
+static int find_leader_session(pid_t pid, char **session) {
+    char **all = NULL;
+    int total;
+    int index;
+
+    if (!session)
+        return -EINVAL;
+    *session = NULL;
+    total = rustd_get_sessions(&all);
+    if (total < 0)
+        return total;
+    for (index = 0; index < total; index++) {
+        pid_t leader = 0;
+        int result = rustd_session_get_leader(all[index], &leader);
+        if (result == 0 && leader == pid) {
+            *session = strdup(all[index]);
+            free_string_vector(all, total);
+            return *session ? 0 : -ENOMEM;
+        }
+        free(all[index]);
+    }
+    free(all);
+    return -ENOENT;
+}
+
 int rustd_pid_get_session(pid_t pid, char **session) {
     char *cgroup = NULL;
-    int result = read_cgroup_field(pid, "session-", &cgroup);
+    int result;
     char *end;
-    if (result < 0)
-        return result;
-    end = strchr(cgroup, '.');
-    if (end)
-        *end = '\0';
-    if (strncmp(cgroup, "session-", 8) == 0)
-        *session = strdup(cgroup + 8);
-    else
-        *session = strdup(cgroup);
-    free(cgroup);
-    return *session ? 0 : -ENOMEM;
+
+    if (!session || pid <= 0)
+        return -EINVAL;
+    *session = NULL;
+
+    result = read_cgroup_field(pid, "session-", &cgroup);
+    if (result == 0) {
+        end = strchr(cgroup, '.');
+        if (end)
+            *end = '\0';
+        if (strncmp(cgroup, "session-", 8U) == 0)
+            *session = strdup(cgroup + 8U);
+        else
+            *session = strdup(cgroup);
+        free(cgroup);
+        return *session ? 0 : -ENOMEM;
+    }
+
+    result = read_process_session(pid, session);
+    if (result == 0)
+        return 0;
+
+    return find_leader_session(pid, session);
 }
 
 int rustd_pid_get_owner_uid(pid_t pid, uid_t *uid) {
