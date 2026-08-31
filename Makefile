@@ -40,12 +40,15 @@ COMPAT_LIBS := \
 	$(LIBS_DIR)/libudev.so.1 \
 	$(LIBS_DIR)/libsystemd.so.0
 
-.PHONY: all build pam-module libs compat check-libs check-compat check-compat-closure check-logind test check-native check-rust check-formal check-packaging check-reproducible clean install release boot-smoke certify installed-certification performance-promotion
+.PHONY: all build build-static pam-module libs compat check-libs check-compat check-compat-closure check-logind test check-native check-rust check-formal check-packaging check-reproducible clean install release boot-smoke certify installed-certification performance-promotion
 
 all: build libs
 
 build:
 	CARGO_TARGET_DIR=$(TARGET_DIR) cargo build --release --all-features --locked
+
+build-static:
+	bash scripts/build-static-rustd.sh
 
 pam-module:
 	mkdir -p build
