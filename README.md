@@ -12,7 +12,8 @@ supported where they make sense, but another init system is not RustD's
 reference architecture and implementation parity is not a release gate.
 
 For ArachOS, RustD is the measured PID 1 payload loaded by GRUB into Arach
-Kernel. CIQ RLC 10.2 supplies the userspace and RPM ecosystem. That path is
+Kernel. ArachOS owns the release, repository, and installer while using an
+EL10-compatible RPM ecosystem for package interoperability. That path is
 release-qualified only when Arach Kernel provides the complete Linux process,
 filesystem, cgroup, device, IPC, and networking contracts exercised by the
 packaged RustD service graph.
@@ -101,7 +102,7 @@ The repository now uses RustD identity through its compiled and packaged core:
 - the installer ships native RustD executable names as the authoritative
   interfaces;
 - the supported build surface is native RustD targets;
-- Fedora compatibility RPM capabilities, selected legacy executable pathnames,
+- RPM compatibility capabilities, selected legacy executable pathnames,
   and compatibility SONAMEs are isolated external boundaries backed by RustD
   code; they are not a second implementation and do not permit systemd RPMs or
   systemd executable code in a certified cutover;
@@ -128,31 +129,31 @@ The repository now uses RustD identity through its compiled and packaged core:
 
 Remaining work is release hardening, not an internal crate-name migration. The
 largest unresolved production boundary is repeated sole-PID1 installed-system
-certification on the exact ArachOS RLC image together with Arach Kernel ABI
-closure and the paired RustD-Resolved release certificate.
+certification on the exact ArachOS image together with Arach Kernel ABI closure
+and the paired RustD-Resolved release certificate.
 
 ## Supported platform
 
-ArachOS on CIQ RLC 10.2 is the current integration and release-certification
-target. Its final gate uses Arach Kernel, GRUB, RustD PID 1, RustD-resolved, and
-the RLC userspace selected by graphical Anaconda. Fedora 44 remains a separate
+ArachOS is the current integration and release-certification target. Its final
+gate uses Arach Kernel, GRUB, RustD PID 1, RustD-resolved, and the RPM/DNF
+userspace selected by graphical Anaconda. Fedora 44 remains a separate
 zero-systemd compatibility campaign, while Arch Linux and compatible
 Arch-based distributions remain supported build and native-install targets;
 neither substitutes for the ArachOS installed-system gate.
 
-## Fedora zero-systemd cutover
+## ArachOS zero-systemd cutover
 
-The Fedora target is deliberately stronger than an installroot dependency
-solver. A release candidate is not Fedora-certified until
+The ArachOS target is deliberately stronger than an installroot dependency
+solver. A release candidate is not certified until
 `certification/fedora-full-vm-latest.txt` records `status=pass` for the exact
 RustD SHA and its pinned RustD-Resolved SHA.
 
-The Fedora campaign performs a destructive conversion of a disposable Fedora
-44 VM and requires all of the following:
+The campaign performs a destructive conversion of a disposable ArachOS EL10
+VM and requires all of the following:
 
-- build RustD, RustD-Resolved, compatibility libraries, Fedora transaction
+- build RustD, RustD-Resolved, compatibility libraries, RPM transaction
   frontends, and SELinux policy from one pinned source pair;
-- bind the replacement RPM capabilities to the exact Fedora `systemd`,
+- bind the replacement RPM capabilities to the exact bootstrap `systemd`,
   `systemd-libs`, and `systemd-udev` EVR measured in the build environment;
 - stage only `rustd-cutover-tools` and `rustd-resolved-nss` first, with no
   `--allowerasing`, and prove that no pre-existing package was removed or
@@ -167,7 +168,7 @@ The Fedora campaign performs a destructive conversion of a disposable Fedora
   before the destructive phase rather than silently dropping their semantics;
 - remove every installed RPM whose name is `systemd` or begins `systemd-` and
   pass `dnf check` afterward;
-- require `/usr/sbin/init` and the legacy Fedora transaction entry points to be
+- require `/usr/sbin/init` and the legacy transaction entry points to be
   owned by `rustd-fedora-compat`, compatibility SONAMEs to be owned by
   `rustd-compat-libs`, the PAM migration helper and module to be owned by
   `rustd-cutover-tools`, and the DNS NSS module to be owned by
@@ -175,7 +176,7 @@ The Fedora campaign performs a destructive conversion of a disposable Fedora
 - require `/usr/sbin/init` to resolve to `/usr/lib/rustd/rustd` and the legacy
   udev daemon pathname to be an executable wrapper for RustD's native
   `rustd-udevd`;
-- rebuild the Fedora initramfs without systemd implementation modules or
+- rebuild the ArachOS initramfs without systemd implementation modules or
   executables, while allowing only explicitly tested compatibility pathnames
   that resolve to RustD code;
 - cold-boot the converted filesystem three times with RustD as PID 1;
@@ -299,7 +300,7 @@ ultimately demonstrate all of the following:
 8. reproduce release artifacts from the locked source tree and pass long-running
    soak/fault-injection tests;
 9. pass `make certify` on the installed candidate while RustD is PID 1;
-10. pass the Fedora 44 full-VM zero-systemd certificate with zero `systemd*`
+10. pass the ArachOS full-VM zero-systemd certificate with zero `systemd*`
     RPMs, no systemd implementation code in the rebuilt initramfs, SELinux
     enforcing, and the required networking/login/DNS/package-management stack
     operational.
