@@ -4,7 +4,7 @@
 
 Name:           rustd-selinux
 Version:        0.1.2
-Release:        5%{?dist}
+Release:        6%{?dist}
 Summary:        SELinux policy labels and resolver state rules for RustD on Fedora
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -66,6 +66,9 @@ install -D -m0644 selinux-build/%{modulename}.pp.bz2 \
 %selinux_relabel_post -s %{selinuxtype}
 
 %changelog
+* Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-6
+- Add the confined D-Bus to logind domain transition
+
 * Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-5
 - Coordinate the standard D-Bus logind activation fix
 

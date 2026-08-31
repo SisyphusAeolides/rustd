@@ -30,7 +30,12 @@ for frontend in dist/fedora/compat/*; do
     case "$frontend" in
         *.c|*.rules) continue ;;
     esac
-    test "$(head -n1 "$frontend")" = '#!/bin/bash'
+    first_line="$(head -n1 "$frontend")"
+    if [[ $frontend == dist/fedora/compat/systemd-udevd ]]; then
+        test "$first_line" = '#!/bin/sh'
+    else
+        test "$first_line" = '#!/bin/bash'
+    fi
 done
 ! grep -R -n -F '#!/usr/bin/bash' dist/fedora/compat
 grep -Fq '%global __brp_mangle_shebangs %{nil}' dist/fedora/rustd.spec
@@ -42,6 +47,9 @@ cp dist/fedora/selinux/rustd_fedora.fc "$WORK/selinux/"
 make -C "$WORK/selinux" \
     -f /usr/share/selinux/devel/Makefile rustd_fedora.pp
 test -s "$WORK/selinux/rustd_fedora.pp"
+grep -Fq \
+    'domtrans_pattern(system_dbusd_t, systemd_logind_exec_t, systemd_logind_t)' \
+    dist/fedora/selinux/rustd_fedora.te
 
 grep -Fq 'Obsoletes:      systemd-libs <= %{systemd_compat_evr}' \
     dist/fedora/rustd-compat-libs.spec
@@ -103,6 +111,8 @@ grep -Eq "^Provides:[[:space:]]+systemd-libs = ${REFERENCE_EVR//./\\.}$" \
     "$WORK/rustd-compat-libs.spec.expanded"
 
 python3 - "$ROOT" <<'PY'
+from __future__ import annotations
+
 from pathlib import Path
 import re
 import sys
