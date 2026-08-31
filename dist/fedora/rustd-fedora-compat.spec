@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        3%{?dist}
+Release:        4%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -119,6 +119,19 @@ bash -n dist/fedora/dracut/00systemd-initrd/module-setup.sh
 grep -Fq 'echo base' dist/fedora/dracut/00systemd-initrd/module-setup.sh
 grep -Fq '/usr/lib/systemd/systemd-udevd' dist/fedora/dracut/00systemd-initrd/module-setup.sh
 grep -Fq '/usr/lib/rustd/rustd-udevd' dist/fedora/dracut/00systemd-initrd/module-setup.sh
+for file in \
+    dist/fedora/dracut/00dmsquash-live/*.sh \
+    dist/fedora/dracut/00livenet/*.sh \
+    dist/fedora/dracut/99img-lib/*.sh; do
+    test -x "$file"
+    bash -n "$file"
+done
+grep -Fq 'echo dm rootfs-block img-lib overlayfs bash' \
+    dist/fedora/dracut/00dmsquash-live/module-setup.sh
+grep -Fq 'root=live:' dist/fedora/dracut/00dmsquash-live/parse-dmsquash-live.sh
+grep -Fq 'echo network url-lib dmsquash-live img-lib bash' \
+    dist/fedora/dracut/00livenet/module-setup.sh
+! grep -Fq 'eval "$decompr"' dist/fedora/dracut/99img-lib/img-lib.sh
 for name in halt poweroff reboot shutdown telinit runlevel; do
     ln -s rustd-shutdown "$name"
 done
@@ -145,7 +158,10 @@ install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_prefix}/lib/udev/rules.d \
            %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d \
            %{buildroot}%{_prefix}/lib/dracut/modules.d/00systemd-initrd \
-           %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs
+           %{buildroot}%{_prefix}/lib/dracut/modules.d/00dmsquash-live \
+           %{buildroot}%{_prefix}/lib/dracut/modules.d/00livenet \
+           %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs \
+           %{buildroot}%{_prefix}/lib/dracut/modules.d/99img-lib
 install -m0755 dist/fedora/compat/systemctl %{buildroot}%{_bindir}/systemctl
 install -m0755 dist/fedora/compat/systemd-tmpfiles %{buildroot}%{_bindir}/systemd-tmpfiles
 install -m0755 dist/fedora/compat/systemd-sysusers %{buildroot}%{_bindir}/systemd-sysusers
@@ -181,6 +197,18 @@ install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
     %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
 install -m0755 dist/fedora/dracut/00systemd-initrd/module-setup.sh \
     %{buildroot}%{_prefix}/lib/dracut/modules.d/00systemd-initrd/module-setup.sh
+for file in dist/fedora/dracut/00dmsquash-live/*.sh; do
+    install -m0755 "$file" \
+        %{buildroot}%{_prefix}/lib/dracut/modules.d/00dmsquash-live/"$(basename "$file")"
+done
+for file in dist/fedora/dracut/00livenet/*.sh; do
+    install -m0755 "$file" \
+        %{buildroot}%{_prefix}/lib/dracut/modules.d/00livenet/"$(basename "$file")"
+done
+for file in dist/fedora/dracut/99img-lib/*.sh; do
+    install -m0755 "$file" \
+        %{buildroot}%{_prefix}/lib/dracut/modules.d/99img-lib/"$(basename "$file")"
+done
 
 %files
 %license LICENSE*
@@ -210,9 +238,16 @@ install -m0755 dist/fedora/dracut/00systemd-initrd/module-setup.sh \
 %{_prefix}/lib/udev/rules.d/80-drivers.rules
 %{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
 %{_prefix}/lib/dracut/modules.d/00systemd-initrd/module-setup.sh
+%{_prefix}/lib/dracut/modules.d/00dmsquash-live/*
+%{_prefix}/lib/dracut/modules.d/00livenet/*
 %{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
+%{_prefix}/lib/dracut/modules.d/99img-lib/*
 
 %changelog
+* Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-4
+- Provide RustD-owned dmsquash-live and network-live dracut contracts
+- Keep standard Anaconda live boot compatible without systemd generators
+
 * Sun Aug 30 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-3
 - Provide RustD's systemd-initrd dracut compatibility contract
 - Keep RLC live-image squash support free of systemd implementation modules
