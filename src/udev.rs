@@ -356,7 +356,9 @@ fn rule_matches(rule: &Rule, device: &mut Device) -> bool {
     rule.tokens.iter().all(|token| match token.op {
         Operator::Match => {
             let pattern = expand(&token.value, device);
-            if token.key == "SYMLINK" {
+            if token.key == "TEST" {
+                test_path_matches(device, &pattern)
+            } else if token.key == "SYMLINK" {
                 device
                     .symlinks
                     .iter()
@@ -367,7 +369,9 @@ fn rule_matches(rule: &Rule, device: &mut Device) -> bool {
         }
         Operator::NoMatch => {
             let pattern = expand(&token.value, device);
-            if token.key == "SYMLINK" {
+            if token.key == "TEST" {
+                !test_path_matches(device, &pattern)
+            } else if token.key == "SYMLINK" {
                 !device
                     .symlinks
                     .iter()
@@ -378,6 +382,39 @@ fn rule_matches(rule: &Rule, device: &mut Device) -> bool {
         }
         _ => true,
     })
+}
+
+/// Implement udev's `TEST` match against a path relative to the device's
+/// sysfs directory.  A few distribution rules use an absolute path, so that
+/// form is accepted as well.  Globs are matched against the final path
+/// component, which covers the standard udev rule form without allowing a
+/// rule to escape its intended parent directory.
+fn test_path_matches(device: &Device, pattern: &str) -> bool {
+    let path = Path::new(pattern);
+    let path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        device.syspath.join(path)
+    };
+    if !pattern
+        .as_bytes()
+        .iter()
+        .any(|byte| matches!(byte, b'*' | b'?' | b'['))
+    {
+        return path.exists() || path.is_symlink();
+    }
+    let Some(file_pattern) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    fs::read_dir(parent)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .any(|name| matches_no_escape(file_pattern, &name))
 }
 
 fn value_matches(value: &str, pattern: &str) -> bool {
@@ -446,7 +483,9 @@ fn import_value(kind: Option<&str>, value: &str, device: &mut Device) {
             if let Ok(output) = command_output(value, device) {
                 for line in String::from_utf8_lossy(&output.stdout).lines() {
                     if let Some((key, value)) = line.split_once('=') {
-                        device.properties.insert(key.to_string(), value.to_string());
+                        device
+                            .properties
+                            .insert(key.to_string(), unquote_import_value(value));
                     }
                 }
             }
@@ -641,6 +680,15 @@ fn expand(value: &str, device: &Device) -> String {
         let key = &result[start + 5..end];
         result.replace_range(start..=end, &device.property(key));
     }
+    while let Some(start) = result.find("$attr{") {
+        let Some(end) = result[start + 6..].find('}') else {
+            break;
+        };
+        let end = start + 6 + end;
+        let name = &result[start + 6..end];
+        let replacement = read_attr(&device.syspath, name).unwrap_or_default();
+        result.replace_range(start..=end, &replacement);
+    }
     while let Some(start) = result.find("%E{") {
         let Some(end) = result[start + 3..].find('}') else {
             break;
@@ -650,6 +698,23 @@ fn expand(value: &str, device: &Device) -> String {
         result.replace_range(start..=end, &device.property(key));
     }
     result
+}
+
+/// `IMPORT{program}` commonly consumes tools that emit shell-style values,
+/// for example `DM_NAME='live-rw'` from `dmsetup --nameprefixes`.  udev stores
+/// the value, not the presentation quotes; accepting both quote styles keeps
+/// the compatibility path faithful when a `TEST` fallback is unavoidable.
+fn unquote_import_value(value: &str) -> String {
+    let value = value.trim();
+    if value.len() >= 2 {
+        let bytes = value.as_bytes();
+        if (bytes[0] == b'\'' && bytes[value.len() - 1] == b'\'')
+            || (bytes[0] == b'"' && bytes[value.len() - 1] == b'"')
+        {
+            return value[1..value.len() - 1].to_string();
+        }
+    }
+    value.to_string()
 }
 
 /// Create device nodes/symlinks and write the `/run/udev/data` record.
@@ -901,6 +966,39 @@ mod tests {
         assert_eq!(rule[0].key, "ATTRS");
         assert_eq!(rule[0].attr.as_deref(), Some("idVendor"));
         assert_eq!(rule[1].key, "GOTO");
+    }
+
+    #[test]
+    fn test_match_and_attr_substitution_support_device_mapper_rules() {
+        let sysfs = tempfile::tempdir().unwrap();
+        fs::create_dir(sysfs.path().join("dm")).unwrap();
+        fs::write(sysfs.path().join("dm/name"), "live-rw\n").unwrap();
+
+        let rules = vec![Rule {
+            tokens: parse_rule_line(
+                r#"TEST=="dm", ENV{DM_NAME}="$attr{dm/name}", SYMLINK+="mapper/$env{DM_NAME}""#,
+            )
+            .unwrap(),
+            source: PathBuf::from("10-dm.rules"),
+            line: 1,
+        }];
+        let mut device = Device {
+            syspath: sysfs.path().to_path_buf(),
+            ..Device::default()
+        };
+
+        apply_rules(&rules, &mut device);
+
+        assert_eq!(device.property("DM_NAME"), "live-rw");
+        assert!(device.symlinks.contains("mapper/live-rw"));
+    }
+
+    #[test]
+    fn imported_shell_values_are_stored_without_presentation_quotes() {
+        assert_eq!(unquote_import_value("'live-rw'"), "live-rw");
+        assert_eq!(unquote_import_value("\"live-rw\""), "live-rw");
+        assert_eq!(unquote_import_value("''"), "");
+        assert_eq!(unquote_import_value("plain"), "plain");
     }
 
     #[test]
