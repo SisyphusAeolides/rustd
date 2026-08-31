@@ -284,7 +284,11 @@ check-packaging:
 	test -f include/rustd/manager.h; \
 	test -f packaging/pkgconfig/rustd-service.pc; \
 	test -f packaging/pkgconfig/rustd-device.pc; \
-	if grep -R -E -q 'org\.freedesktop\.systemd1|/usr/lib/systemd|/run/systemd|systemd-udevd|systemd-libs' packaging; then exit 1; fi; \
+	# The standard systemd manager name is intentionally provided by RustD for \
+	# drop-in D-Bus compatibility; keep the compatibility policy allowlisted \
+	# while rejecting systemd paths, libraries, and udev implementation files. \
+	if grep -R -E -q 'org\.freedesktop\.systemd1' packaging --exclude='io.rustd.Manager1.conf'; then exit 1; fi; \
+	if grep -R -E -q '/usr/lib/systemd|/run/systemd|systemd-udevd|systemd-libs' packaging; then exit 1; fi; \
 	if find packaging -type f -o -type l | grep -E '/(systemd|systemctl|journalctl|udevadm)([^/]*$$|/)'; then exit 1; fi; \
 	if grep -R -E -q 'libsystemd\.so|libudev\.so|Provides:.*systemd-libs' packaging include; then exit 1; fi; \
 	if grep -R -E -q 'libsystemd\.so|libudev\.so' libs --exclude-dir=compat --exclude='libudev.map' --exclude='libsystemd.map'; then exit 1; fi

@@ -20,14 +20,15 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use crate::cgroup::CgroupManager;
 use crate::config::{ManagerScope, UnitDefaults};
-use crate::dbus::job_iface::JobInterface;
+use crate::dbus::job_iface::{JobInterface, SystemdJobInterface};
 use crate::dbus::manager_iface::{
-    clear_unit_references_for_sender, invocation_id_path, job_path, manager_log_from_config,
-    unit_path, ManagerEnvironment, ManagerInterface, ManagerInterfaceApi, ManagerSignal,
-    SetUnitPropertiesRequests, UnitLoadRequests, UnitReferences,
+    clear_unit_references_for_sender, invocation_id_path_for, job_path_for,
+    manager_log_from_config, unit_path_for, DbusObjectNamespace, ManagerEnvironment,
+    ManagerInterface, ManagerInterfaceApi, ManagerSignal, SetUnitPropertiesRequests,
+    SystemdManagerInterfaceApi, UnitLoadRequests, UnitReferences,
 };
-use crate::dbus::service_iface::ServiceInterface;
-use crate::dbus::unit_iface::UnitInterface;
+use crate::dbus::service_iface::{ServiceInterface, SystemdServiceInterface};
+use crate::dbus::unit_iface::{SystemdUnitInterface, UnitInterface};
 use crate::event::EventLoopWake;
 use crate::ipc::UnitInfo;
 use crate::ipc_server::ResetFailedRequests;
@@ -37,6 +38,10 @@ use crate::job::{JobInfo, JobQueue, JobRegistry};
 pub const RUSTD_BUS_NAME: &str = "io.rustd.Manager1";
 /// Root object path.
 pub const RUSTD_OBJECT_PATH: &str = "/io/rustd/Manager1";
+/// Standard systemd-compatible manager bus name.
+pub const SYSTEMD_BUS_NAME: &str = "org.freedesktop.systemd1";
+/// Standard systemd-compatible manager object path.
+pub const SYSTEMD_OBJECT_PATH: &str = "/org/freedesktop/systemd1";
 
 // ── DbusServer ────────────────────────────────────────────────────────────
 
@@ -270,11 +275,21 @@ async fn run_server(
         subscribers,
         unit_references: Arc::clone(&unit_references),
         signal_tx,
+        namespace: DbusObjectNamespace::Native,
     };
+    let mut compat_manager = manager.clone();
+    compat_manager.namespace = DbusObjectNamespace::Compatibility;
     conn.object_server()
         .at(RUSTD_OBJECT_PATH, ManagerInterfaceApi::new(manager))
         .await
         .map_err(|e| anyhow!("dbus: failed to register manager object: {e}"))?;
+    conn.object_server()
+        .at(
+            SYSTEMD_OBJECT_PATH,
+            SystemdManagerInterfaceApi::new(compat_manager),
+        )
+        .await
+        .map_err(|e| anyhow!("dbus: failed to register systemd compatibility object: {e}"))?;
 
     // Register per-unit and per-job interfaces for current state.
     register_unit_objects(scope, &unit_defaults, &conn, &snapshot, &queue, &wake).await;
@@ -284,6 +299,9 @@ async fn run_server(
     conn.request_name(RUSTD_BUS_NAME)
         .await
         .map_err(|e| anyhow!("dbus: failed to request bus name '{RUSTD_BUS_NAME}': {e}"))?;
+    conn.request_name(SYSTEMD_BUS_NAME)
+        .await
+        .map_err(|e| anyhow!("dbus: failed to request bus name '{SYSTEMD_BUS_NAME}': {e}"))?;
 
     // Get the signal context for the Manager object.
     let signal_ctxt = conn
@@ -438,8 +456,13 @@ async fn poll_dbus_service_readiness(
     }
 }
 
-/// Register the native `RustD` unit and service interfaces
-/// objects for the current snapshot.
+const OBJECT_NAMESPACES: [DbusObjectNamespace; 2] = [
+    DbusObjectNamespace::Native,
+    DbusObjectNamespace::Compatibility,
+];
+
+/// Register both the native RustD and standard systemd-compatible unit and
+/// service objects for the current snapshot.
 async fn register_unit_objects(
     scope: ManagerScope,
     unit_defaults: &Arc<RwLock<UnitDefaults>>,
@@ -466,33 +489,37 @@ async fn register_unit_object(
     wake: &EventLoopWake,
     info: &UnitInfo,
 ) {
-    let Ok(path) = unit_path(&info.name) else {
-        return;
-    };
-    register_unit_object_at(
-        scope,
-        unit_defaults,
-        conn,
-        snapshot,
-        queue,
-        wake,
-        info,
-        path,
-    )
-    .await;
-    if let Some(invocation_id) = info.service_runtime.invocation_id {
-        if let Ok(path) = invocation_id_path(&invocation_id) {
-            register_unit_object_at(
-                scope,
-                unit_defaults,
-                conn,
-                snapshot,
-                queue,
-                wake,
-                info,
-                path,
-            )
-            .await;
+    for namespace in OBJECT_NAMESPACES {
+        let Ok(path) = unit_path_for(namespace, &info.name) else {
+            continue;
+        };
+        register_unit_object_at(
+            scope,
+            unit_defaults,
+            conn,
+            snapshot,
+            queue,
+            wake,
+            info,
+            path,
+            namespace,
+        )
+        .await;
+        if let Some(invocation_id) = info.service_runtime.invocation_id {
+            if let Ok(path) = invocation_id_path_for(namespace, &invocation_id) {
+                register_unit_object_at(
+                    scope,
+                    unit_defaults,
+                    conn,
+                    snapshot,
+                    queue,
+                    wake,
+                    info,
+                    path,
+                    namespace,
+                )
+                .await;
+            }
         }
     }
 }
@@ -507,6 +534,7 @@ async fn register_unit_object_at(
     wake: &EventLoopWake,
     info: &UnitInfo,
     path: zbus::zvariant::OwnedObjectPath,
+    namespace: DbusObjectNamespace,
 ) {
     let unit_iface = UnitInterface {
         name: info.name.clone(),
@@ -514,8 +542,16 @@ async fn register_unit_object_at(
         queue: Arc::clone(queue),
         wake: wake.clone(),
         scope,
+        namespace,
     };
-    let _ = conn.object_server().at(path.clone(), unit_iface).await;
+    if namespace == DbusObjectNamespace::Native {
+        let _ = conn.object_server().at(path.clone(), unit_iface).await;
+    } else {
+        let _ = conn
+            .object_server()
+            .at(path.clone(), SystemdUnitInterface::new(unit_iface))
+            .await;
+    }
 
     if info.unit_type == "service" {
         let service_iface = ServiceInterface {
@@ -524,7 +560,14 @@ async fn register_unit_object_at(
             scope,
             unit_defaults: Arc::clone(unit_defaults),
         };
-        let _ = conn.object_server().at(path.clone(), service_iface).await;
+        if namespace == DbusObjectNamespace::Native {
+            let _ = conn.object_server().at(path, service_iface).await;
+        } else {
+            let _ = conn
+                .object_server()
+                .at(path, SystemdServiceInterface::new(service_iface))
+                .await;
+        }
     }
 }
 
@@ -551,7 +594,11 @@ async fn sync_invocation_unit_objects(
     let current: HashSet<String> = units
         .iter()
         .filter_map(|unit| unit.service_runtime.invocation_id)
-        .filter_map(|id| invocation_id_path(&id).ok())
+        .flat_map(|id| {
+            OBJECT_NAMESPACES
+                .into_iter()
+                .filter_map(move |namespace| invocation_id_path_for(namespace, &id).ok())
+        })
         .map(|path| path.as_str().to_owned())
         .collect();
 
@@ -564,26 +611,37 @@ async fn sync_invocation_unit_objects(
             .object_server()
             .remove::<UnitInterface, _>(path.as_str())
             .await;
+        let _ = conn
+            .object_server()
+            .remove::<SystemdServiceInterface, _>(path.as_str())
+            .await;
+        let _ = conn
+            .object_server()
+            .remove::<SystemdUnitInterface, _>(path.as_str())
+            .await;
     }
     for info in &units {
         let Some(invocation_id) = info.service_runtime.invocation_id else {
             continue;
         };
-        let Ok(path) = invocation_id_path(&invocation_id) else {
-            continue;
-        };
-        if !registered.contains(path.as_str()) {
-            register_unit_object_at(
-                scope,
-                unit_defaults,
-                conn,
-                snapshot,
-                queue,
-                wake,
-                info,
-                path,
-            )
-            .await;
+        for namespace in OBJECT_NAMESPACES {
+            let Ok(path) = invocation_id_path_for(namespace, &invocation_id) else {
+                continue;
+            };
+            if !registered.contains(path.as_str()) {
+                register_unit_object_at(
+                    scope,
+                    unit_defaults,
+                    conn,
+                    snapshot,
+                    queue,
+                    wake,
+                    info,
+                    path,
+                    namespace,
+                )
+                .await;
+            }
         }
     }
     *registered = current;
@@ -608,11 +666,68 @@ async fn register_job_object(
     wake: &EventLoopWake,
     info: &JobInfo,
 ) {
-    let Ok(path) = job_path(info.id) else {
-        return;
-    };
-    let interface = JobInterface::new(info.clone(), jobs.clone(), Arc::clone(queue), wake.clone());
-    let _ = conn.object_server().at(path, interface).await;
+    for namespace in OBJECT_NAMESPACES {
+        let Ok(path) = job_path_for(namespace, info.id) else {
+            continue;
+        };
+        let interface = JobInterface::new_in_namespace(
+            info.clone(),
+            jobs.clone(),
+            Arc::clone(queue),
+            wake.clone(),
+            namespace,
+        );
+        if namespace == DbusObjectNamespace::Native {
+            let _ = conn.object_server().at(path, interface).await;
+        } else {
+            let _ = conn
+                .object_server()
+                .at(path, SystemdJobInterface::new(interface))
+                .await;
+        }
+    }
+}
+
+/// Emit a signal on the standard systemd-compatible manager interface.
+///
+/// The generated RustD signal helpers intentionally retain the native
+/// interface name, so the compatibility namespace uses zbus's low-level
+/// signal emitter for the same wire payload.
+async fn emit_systemd_manager_signal<B>(conn: &zbus::Connection, name: &str, body: &B)
+where
+    B: serde::ser::Serialize + zbus::zvariant::DynamicType,
+{
+    let _ = conn
+        .emit_signal(
+            None::<&str>,
+            SYSTEMD_OBJECT_PATH,
+            "org.freedesktop.systemd1.Manager",
+            name,
+            body,
+        )
+        .await;
+}
+
+/// Emit a standard `org.freedesktop.DBus.Properties.PropertiesChanged` signal
+/// for a compatibility object.
+async fn emit_systemd_property_changed(
+    conn: &zbus::Connection,
+    path: &str,
+    interface: &str,
+    property: &str,
+    value: zbus::zvariant::OwnedValue,
+) {
+    let changed = std::collections::HashMap::from([(property.to_owned(), value)]);
+    let body = (interface, changed, Vec::<String>::new());
+    let _ = conn
+        .emit_signal(
+            None::<&str>,
+            path,
+            "org.freedesktop.DBus.Properties",
+            "PropertiesChanged",
+            &body,
+        )
+        .await;
 }
 
 /// Emit a single `ManagerSignal` on the D-Bus connection.
@@ -642,6 +757,9 @@ async fn dispatch_signal(
             if let Ok(obj_path) = zbus::zvariant::ObjectPath::try_from(path.as_str()) {
                 let _ = ManagerInterface::unit_new(signal_ctxt, &id, obj_path).await;
             }
+            if let Ok(compat_path) = unit_path_for(DbusObjectNamespace::Compatibility, &id) {
+                emit_systemd_manager_signal(conn, "UnitNew", &(id.as_str(), compat_path)).await;
+            }
         }
         ManagerSignal::UnitRemoved { id, path } => {
             if let Ok(obj_path) = zbus::zvariant::ObjectPath::try_from(path.as_str()) {
@@ -655,12 +773,32 @@ async fn dispatch_signal(
                 .object_server()
                 .remove::<UnitInterface, _>(path.as_str())
                 .await;
+            if let Ok(compat_path) = unit_path_for(DbusObjectNamespace::Compatibility, &id) {
+                let compat_path_string = compat_path.as_str().to_owned();
+                let _ = conn
+                    .object_server()
+                    .remove::<SystemdServiceInterface, _>(compat_path_string.as_str())
+                    .await;
+                let _ = conn
+                    .object_server()
+                    .remove::<SystemdUnitInterface, _>(compat_path_string.as_str())
+                    .await;
+                emit_systemd_manager_signal(conn, "UnitRemoved", &(id.as_str(), compat_path)).await;
+            }
         }
         ManagerSignal::JobNew { job, path } => {
             register_job_object(conn, jobs, queue, wake, &job).await;
             if let Ok(obj_path) = zbus::zvariant::ObjectPath::try_from(path.as_str()) {
                 let _ =
                     ManagerInterface::job_new(signal_ctxt, job.id, obj_path, &job.unit_name).await;
+            }
+            if let Ok(compat_job) = job_path_for(DbusObjectNamespace::Compatibility, job.id) {
+                emit_systemd_manager_signal(
+                    conn,
+                    "JobNew",
+                    &(job.id, compat_job, job.unit_name.as_str()),
+                )
+                .await;
             }
         }
         ManagerSignal::JobStateChanged { job, path } => {
@@ -674,6 +812,27 @@ async fn dispatch_signal(
                 let _ = interface
                     .state_changed(interface_ref.signal_context())
                     .await;
+            }
+            if let Ok(compat_path) = job_path_for(DbusObjectNamespace::Compatibility, job.id) {
+                let compat_path_string = compat_path.as_str().to_owned();
+                if let Ok(interface_ref) = conn
+                    .object_server()
+                    .interface::<_, SystemdJobInterface>(compat_path_string.as_str())
+                    .await
+                {
+                    interface_ref.get_mut().await.set_state(job.state);
+                }
+                emit_systemd_property_changed(
+                    conn,
+                    &compat_path_string,
+                    "org.freedesktop.systemd1.Job",
+                    "State",
+                    zbus::zvariant::OwnedValue::try_from(zbus::zvariant::Value::from(
+                        job.state.as_str(),
+                    ))
+                    .expect("job state is a valid D-Bus string value"),
+                )
+                .await;
             }
         }
         ManagerSignal::JobRemoved { job, path, result } => {
@@ -691,12 +850,32 @@ async fn dispatch_signal(
                 .object_server()
                 .remove::<JobInterface, _>(path.as_str())
                 .await;
+            if let Ok(compat_job_path) = job_path_for(DbusObjectNamespace::Compatibility, job.id) {
+                let compat_job_string = compat_job_path.as_str().to_owned();
+                emit_systemd_manager_signal(
+                    conn,
+                    "JobRemoved",
+                    &(
+                        job.id,
+                        compat_job_path,
+                        job.unit_name.as_str(),
+                        result.as_str(),
+                    ),
+                )
+                .await;
+                let _ = conn
+                    .object_server()
+                    .remove::<SystemdJobInterface, _>(compat_job_string.as_str())
+                    .await;
+            }
         }
         ManagerSignal::Reloading { active } => {
             let _ = ManagerInterface::reloading(signal_ctxt, active).await;
+            emit_systemd_manager_signal(conn, "Reloading", &(active,)).await;
         }
         ManagerSignal::UnitFilesChanged => {
             let _ = ManagerInterface::unit_files_changed(signal_ctxt).await;
+            emit_systemd_manager_signal(conn, "UnitFilesChanged", &()).await;
         }
         ManagerSignal::StartupFinished {
             firmware,
@@ -714,6 +893,12 @@ async fn dispatch_signal(
                 initrd,
                 userspace,
                 total,
+            )
+            .await;
+            emit_systemd_manager_signal(
+                conn,
+                "StartupFinished",
+                &(firmware, loader, kernel, initrd, userspace, total),
             )
             .await;
         }

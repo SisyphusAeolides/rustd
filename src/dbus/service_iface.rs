@@ -3015,6 +3015,117 @@ fn capability_mask(names: &[String], empty: u64) -> u64 {
     })
 }
 
+/// Adapter that exports a service through the standard systemd D-Bus
+/// interface name while retaining one implementation of service behavior.
+pub struct SystemdServiceInterface {
+    inner: ServiceInterface,
+}
+
+impl SystemdServiceInterface {
+    /// Wrap a service interface for the standard systemd namespace.
+    #[must_use]
+    pub fn new(inner: ServiceInterface) -> Self {
+        Self { inner }
+    }
+}
+
+#[zbus::export::async_trait::async_trait]
+impl zbus::object_server::Interface for SystemdServiceInterface {
+    fn name() -> zbus::names::InterfaceName<'static> {
+        zbus::names::InterfaceName::from_static_str_unchecked("org.freedesktop.systemd1.Service")
+    }
+
+    async fn get(
+        &self,
+        property_name: &str,
+    ) -> Option<zbus::fdo::Result<zbus::zvariant::OwnedValue>> {
+        <ServiceInterface as zbus::object_server::Interface>::get(&self.inner, property_name).await
+    }
+
+    async fn get_all(
+        &self,
+    ) -> zbus::fdo::Result<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> {
+        <ServiceInterface as zbus::object_server::Interface>::get_all(&self.inner).await
+    }
+
+    fn set<'call>(
+        &'call self,
+        property_name: &'call str,
+        value: &'call zbus::zvariant::Value<'_>,
+        ctxt: &'call zbus::object_server::SignalContext<'_>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <ServiceInterface as zbus::object_server::Interface>::set(
+            &self.inner,
+            property_name,
+            value,
+            ctxt,
+        )
+    }
+
+    async fn set_mut(
+        &mut self,
+        property_name: &str,
+        value: &zbus::zvariant::Value<'_>,
+        ctxt: &zbus::object_server::SignalContext<'_>,
+    ) -> Option<zbus::fdo::Result<()>> {
+        <ServiceInterface as zbus::object_server::Interface>::set_mut(
+            &mut self.inner,
+            property_name,
+            value,
+            ctxt,
+        )
+        .await
+    }
+
+    fn call<'call>(
+        &'call self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        message: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <ServiceInterface as zbus::object_server::Interface>::call(
+            &self.inner,
+            server,
+            connection,
+            message,
+            name,
+        )
+    }
+
+    fn call_mut<'call>(
+        &'call mut self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        message: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <ServiceInterface as zbus::object_server::Interface>::call_mut(
+            &mut self.inner,
+            server,
+            connection,
+            message,
+            name,
+        )
+    }
+
+    fn introspect_to_writer(&self, writer: &mut dyn std::fmt::Write, level: usize) {
+        let mut generated = String::new();
+        <ServiceInterface as zbus::object_server::Interface>::introspect_to_writer(
+            &self.inner,
+            &mut generated,
+            level,
+        );
+        let generated = generated.replace(
+            "io.rustd.Manager1.Service",
+            "org.freedesktop.systemd1.Service",
+        );
+        writer
+            .write_str(&generated)
+            .expect("writing D-Bus introspection XML cannot fail");
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

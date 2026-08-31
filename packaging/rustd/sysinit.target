@@ -1,4 +1,4 @@
 [Unit]
 Description=RustD System Initialization
-Wants=rustd-remount-fs.service local-fs.target rustd-sysusers.service rustd-tmpfiles-setup.service rustd-journald.service rustd-random-seed.service rustd-vconsole-setup.service rustd-udevd.service rustd-udev-trigger.service rustd-udev-settle.service
-After=rustd-remount-fs.service local-fs.target rustd-journald.service rustd-sysusers.service rustd-tmpfiles-setup.service
+Wants=rustd-remount-fs.service local-fs.target rustd-sysusers.service rustd-tmpfiles-setup.service rustd-tmpfiles-setup-dev.service rustd-journald.service rustd-random-seed.service rustd-vconsole-setup.service rustd-udevd.service rustd-udev-trigger.service rustd-udev-settle.service
+After=rustd-remount-fs.service local-fs.target rustd-journald.service rustd-sysusers.service rustd-tmpfiles-setup.service rustd-tmpfiles-setup-dev.service

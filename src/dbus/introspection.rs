@@ -16,8 +16,8 @@ use crate::cgroup::CgroupManager;
 use crate::config::{ManagerScope, UnitDefaults};
 use crate::dbus::job_iface::JobInterface;
 use crate::dbus::manager_iface::{
-    manager_environment_from_process, manager_log_from_config, ManagerInterface,
-    ManagerInterfaceApi, SHUTDOWN_NONE,
+    manager_environment_from_process, manager_log_from_config, DbusObjectNamespace,
+    ManagerInterface, ManagerInterfaceApi, SHUTDOWN_NONE,
 };
 use crate::dbus::service_iface::ServiceInterface;
 use crate::dbus::unit_iface::UnitInterface;
@@ -129,6 +129,7 @@ fn manager_interface() -> anyhow::Result<ManagerInterfaceApi> {
         subscribers: Arc::new(Mutex::new(HashSet::new())),
         unit_references: Arc::new(Mutex::new(HashMap::new())),
         signal_tx,
+        namespace: DbusObjectNamespace::Native,
     }))
 }
 
@@ -143,6 +144,7 @@ fn unit_interfaces() -> anyhow::Result<(UnitInterface, ServiceInterface)> {
             queue,
             wake,
             scope: ManagerScope::System,
+            namespace: DbusObjectNamespace::Native,
         },
         ServiceInterface {
             name: "introspection.service".to_owned(),
@@ -206,6 +208,12 @@ mod tests {
         assert_eq!(interface_list().lines().count(), 4);
         assert!(interface_list().contains("io.rustd.Manager1.Manager"));
         assert!(interface_list().contains("io.rustd.Manager1.Service"));
+        assert!(
+            <crate::dbus::manager_iface::SystemdManagerInterfaceApi as
+                zbus::object_server::Interface>::name()
+                .as_str()
+                == "org.freedesktop.systemd1.Manager"
+        );
     }
 
     #[test]

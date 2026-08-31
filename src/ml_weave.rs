@@ -20,7 +20,7 @@
 //! ml-weave = []
 //! ```
 //!
-//! ```rust
+//! ```rust,ignore
 //! // src/lib.rs
 //! #[cfg(feature = "ml-weave")]
 //! pub mod ml_weave;

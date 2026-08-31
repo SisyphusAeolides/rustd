@@ -218,6 +218,16 @@ grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles' \
     packaging/rustd/rustd-tmpfiles-setup.service
 grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles --prefix=/dev --create --boot' \
     packaging/rustd/rustd-tmpfiles-setup-dev.service
+grep -Fq '<allow own="org.freedesktop.systemd1"/>' \
+    packaging/dbus/io.rustd.Manager1.conf
+grep -Fq '<allow send_destination="org.freedesktop.systemd1"/>' \
+    packaging/dbus/io.rustd.Manager1.conf
+grep -Fq '<allow receive_sender="org.freedesktop.systemd1"/>' \
+    packaging/dbus/io.rustd.Manager1.conf
+grep -Fq 'Wants=rustd-remount-fs.service local-fs.target rustd-sysusers.service rustd-tmpfiles-setup.service rustd-tmpfiles-setup-dev.service' \
+    packaging/rustd/sysinit.target
+grep -Fq 'After=rustd-remount-fs.service local-fs.target rustd-journald.service rustd-sysusers.service rustd-tmpfiles-setup.service rustd-tmpfiles-setup-dev.service' \
+    packaging/rustd/sysinit.target
 grep -Fxq 'ConditionPathExists=/sys' packaging/rustd/rustd-udevd.service
 ! grep -Fq 'ConditionPathIsReadWrite=/sys' packaging/rustd/rustd-udevd.service
 grep -Fxq 'ENV{MODALIAS}=="?*", RUN{builtin}+="kmod load"' \

@@ -294,6 +294,34 @@ impl Manager {
             .map_err(|error| zbus::fdo::Error::Failed(error.to_string()))?;
         Ok(())
     }
+
+    /// Start the per-user RustD manager when the first session for a UID is
+    /// created.  This is part of the logind contract consumed by PAM and
+    /// desktop stacks: setting XDG_RUNTIME_DIR alone is not sufficient, since
+    /// user services, the session bus, and graphical applications expect
+    /// `user@UID.service` to own that user's manager scope.
+    async fn start_user_manager(
+        &self,
+        uid: u32,
+        connection: &zbus::Connection,
+    ) -> zbus::fdo::Result<()> {
+        let unit = format!("user@{uid}.service");
+        connection
+            .call_method(
+                Some("io.rustd.Manager1"),
+                "/io/rustd/Manager1",
+                Some("io.rustd.Manager1.Manager"),
+                "StartUnit",
+                &(unit, "replace"),
+            )
+            .await
+            .map(|_| ())
+            .map_err(|error| {
+                zbus::fdo::Error::Failed(format!(
+                    "failed to start per-user RustD manager for UID {uid}: {error}"
+                ))
+            })
+    }
 }
 
 #[interface(name = "org.freedesktop.login1.Manager")]
@@ -369,6 +397,7 @@ impl Manager {
             locked: false,
         };
         logind::save(&session).map_err(dbus_error)?;
+        self.start_user_manager(uid, connection).await?;
         let object_path = path(self.namespace.session_path(&id))?;
         let session_state = Arc::new(Mutex::new(SessionState::new()));
         for namespace in ObjectNamespace::ALL {

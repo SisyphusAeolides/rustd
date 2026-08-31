@@ -5,7 +5,7 @@
 
 Name:           rustd
 Version:        0.1.2
-Release:        8%{?dist}
+Release:        9%{?dist}
 Summary:        RustD native Linux init and service manager
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -111,6 +111,10 @@ install -Dm0755 dist/fedora/compat/rustd-fedora-cutover \
 %{_libdir}/librustd_manager.so
 
 %changelog
+* Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-9
+- Provide the standard systemd D-Bus manager, unit, job, and service namespace
+- Complete live-media udev coldplug and graphical logind compatibility
+
 * Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-8
 - Keep RustD udev active on read-only sysfs live media
 

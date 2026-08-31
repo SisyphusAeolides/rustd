@@ -12,7 +12,9 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::mem;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const CONTROL_SOCKET: &str = "/run/udev/control";
@@ -94,6 +96,7 @@ fn main() -> anyhow::Result<()> {
                     &mut global_properties,
                     &running,
                     &stopped,
+                    arguments.dry_run,
                 );
             }
         }
@@ -254,7 +257,12 @@ fn mark_processed_sequence(sequence: u64) -> io::Result<()> {
 fn bind_control_socket() -> io::Result<UnixListener> {
     fs::create_dir_all("/run/udev")?;
     let _ = fs::remove_file(CONTROL_SOCKET);
-    UnixListener::bind(CONTROL_SOCKET)
+    let listener = UnixListener::bind(CONTROL_SOCKET)?;
+    // udev's control channel is a privileged interface.  In addition to
+    // matching the standard socket mode, this prevents an unprivileged
+    // process from injecting synthetic device events into RustD.
+    fs::set_permissions(CONTROL_SOCKET, fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
 }
 
 fn open_uevent_socket() -> io::Result<OwnedFd> {
@@ -314,12 +322,25 @@ fn handle_control(
     global_properties: &mut BTreeMap<String, String>,
     running: &AtomicBool,
     stopped: &AtomicBool,
+    dry_run: bool,
 ) {
-    let mut bytes = [0_u8; 256];
+    let mut bytes = [0_u8; 4096];
     let count = stream.read(&mut bytes).unwrap_or(0);
     let raw = String::from_utf8_lossy(&bytes[..count]);
     let message = raw.trim();
     let command = message.to_ascii_lowercase();
+
+    if let Some(payload) = message.strip_prefix("trigger=") {
+        let reply = match process_synthetic_trigger(payload, rules, global_properties, dry_run) {
+            Ok(()) => b"OK\n".as_slice(),
+            Err(error) => {
+                eprintln!("rustd-udevd: synthetic trigger rejected: {error}");
+                b"ERR\n"
+            }
+        };
+        let _ = std::io::Write::write_all(&mut stream, reply);
+        return;
+    }
 
     if let Some(property) = message.strip_prefix("property=") {
         let Some((key, value)) = property.split_once('=') else {
@@ -351,6 +372,51 @@ fn handle_control(
     // keeps synchronous RustD processing honest while allowing harmless
     // log-level/ping tuning requests used by early userspace.
     let _ = std::io::Write::write_all(&mut stream, b"OK\n");
+}
+
+fn process_synthetic_trigger(
+    payload: &str,
+    rules: &[Rule],
+    global_properties: &BTreeMap<String, String>,
+    dry_run: bool,
+) -> io::Result<()> {
+    let (action, raw_path) = payload.split_once('\t').ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "trigger command must contain action and sysfs path",
+        )
+    })?;
+    if !matches!(action, "add" | "change" | "remove" | "bind" | "unbind") {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "unsupported uevent action",
+        ));
+    }
+
+    let path = Path::new(raw_path);
+    if !path.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "synthetic uevent path is not absolute",
+        ));
+    }
+    let path = path.canonicalize()?;
+    if path == Path::new("/sys") || !path.starts_with("/sys") {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "synthetic uevent path is outside sysfs",
+        ));
+    }
+    if !path.join("uevent").is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "sysfs device has no uevent file",
+        ));
+    }
+
+    let mut device = Device::from_syspath(action, &path)?;
+    process_device(rules, global_properties, &mut device, dry_run);
+    Ok(())
 }
 
 #[cfg(test)]

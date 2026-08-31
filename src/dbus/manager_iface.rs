@@ -78,6 +78,35 @@ pub const SHUTDOWN_POWEROFF: u8 = 2;
 pub const SHUTDOWN_HALT: u8 = 3;
 pub const SHUTDOWN_KEXEC: u8 = 4;
 
+/// D-Bus object namespace used by a manager instance.
+///
+/// RustD keeps its native API under `io.rustd.Manager1` and also exposes the
+/// standard systemd-compatible namespace so applications linked against the
+/// normal libsystemd contract do not need a RustD-specific code path.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DbusObjectNamespace {
+    /// RustD's native object paths and interface names.
+    Native,
+    /// The standard `org.freedesktop.systemd1` object paths and interface names.
+    Compatibility,
+}
+
+impl DbusObjectNamespace {
+    /// Native manager object root.
+    pub const NATIVE_ROOT: &'static str = "/io/rustd/Manager1";
+    /// Standard systemd manager object root.
+    pub const COMPATIBILITY_ROOT: &'static str = "/org/freedesktop/systemd1";
+
+    /// Return this namespace's manager object root.
+    #[must_use]
+    pub const fn root(self) -> &'static str {
+        match self {
+            Self::Native => Self::NATIVE_ROOT,
+            Self::Compatibility => Self::COMPATIBILITY_ROOT,
+        }
+    }
+}
+
 /// Manager-owned environment state shared with the D-Bus interface.
 ///
 /// systemd keeps the environment inherited at manager startup separate from
@@ -1016,6 +1045,7 @@ enum FileDescriptorStoreMethodError {
 // ── ManagerInterface ──────────────────────────────────────────────────────
 
 /// The `io.rustd.Manager1.Manager` interface object.
+#[derive(Clone)]
 pub struct ManagerInterface {
     /// Manager scope selecting system or user lookup paths.
     pub scope: ManagerScope,
@@ -1092,6 +1122,8 @@ pub struct ManagerInterface {
     pub(crate) unit_references: UnitReferences,
     /// Sender for manager signals; the server task forwards them to D-Bus.
     pub signal_tx: UnboundedSender<ManagerSignal>,
+    /// Object namespace used for paths returned by this interface.
+    pub namespace: DbusObjectNamespace,
 }
 
 fn default_rlimit(
@@ -2045,7 +2077,7 @@ impl ManagerInterface {
         authorize_privileged_caller(connection, &header).await?;
         let owner = header.sender().map(ToString::to_string);
         let job = self.enqueue(JobKind::Start, &name, owner)?;
-        Ok((job_path(job.id)?,))
+        Ok((self.job_object_path(job.id)?,))
     }
 
     /// `RefUnit(name)` holds a recursive reference on behalf of the caller.
@@ -2161,7 +2193,7 @@ impl ManagerInterface {
         let job = self
             .enqueue(JobKind::Start, &new_unit, owner)
             .map_err(|error| UnitLookupError::Failed(error.to_string()))?;
-        job_path(job.id)
+        self.job_object_path(job.id)
             .map(|path| (path,))
             .map_err(|error| UnitLookupError::Failed(error.to_string()))
     }
@@ -2185,7 +2217,7 @@ impl ManagerInterface {
         authorize_privileged_caller(connection, &header).await?;
         let owner = header.sender().map(ToString::to_string);
         let job = self.enqueue(JobKind::Start, &name, owner)?;
-        Ok((job_path(job.id)?,))
+        Ok((self.job_object_path(job.id)?,))
     }
 
     /// `SetShowStatus(mode)` — update the manager's console-status policy.
@@ -2213,7 +2245,7 @@ impl ManagerInterface {
         authorize_privileged_caller(connection, &header).await?;
         let owner = header.sender().map(ToString::to_string);
         let job = self.enqueue(JobKind::Stop, &name, owner)?;
-        Ok((job_path(job.id)?,))
+        Ok((self.job_object_path(job.id)?,))
     }
 
     /// `RestartUnit(name, mode)` → job object path.
@@ -2229,7 +2261,7 @@ impl ManagerInterface {
         authorize_privileged_caller(connection, &header).await?;
         let owner = header.sender().map(ToString::to_string);
         let job = self.enqueue(JobKind::Restart, &name, owner)?;
-        Ok((job_path(job.id)?,))
+        Ok((self.job_object_path(job.id)?,))
     }
 
     /// `ReloadUnit(name, mode)` → job object path.
@@ -2244,7 +2276,7 @@ impl ManagerInterface {
         let kind = self.manager_job_kind(ManagerJobRequest::Reload, &name, &mode)?;
         authorize_privileged_caller(connection, &header).await?;
         let owner = header.sender().map(ToString::to_string);
-        Ok((job_path(self.enqueue(kind, &name, owner)?.id)?,))
+        Ok((self.job_object_path(self.enqueue(kind, &name, owner)?.id)?,))
     }
 
     /// `TryRestartUnit(name, mode)` → job object path.
@@ -2259,7 +2291,7 @@ impl ManagerInterface {
         let kind = self.manager_job_kind(ManagerJobRequest::TryRestart, &name, &mode)?;
         authorize_privileged_caller(connection, &header).await?;
         let owner = header.sender().map(ToString::to_string);
-        Ok((job_path(self.enqueue(kind, &name, owner)?.id)?,))
+        Ok((self.job_object_path(self.enqueue(kind, &name, owner)?.id)?,))
     }
 
     /// `ReloadOrRestartUnit(name, mode)` → job object path.
@@ -2274,7 +2306,7 @@ impl ManagerInterface {
         let kind = self.manager_job_kind(ManagerJobRequest::ReloadOrRestart, &name, &mode)?;
         authorize_privileged_caller(connection, &header).await?;
         let owner = header.sender().map(ToString::to_string);
-        Ok((job_path(self.enqueue(kind, &name, owner)?.id)?,))
+        Ok((self.job_object_path(self.enqueue(kind, &name, owner)?.id)?,))
     }
 
     /// `ReloadOrTryRestartUnit(name, mode)` → job object path.
@@ -2289,7 +2321,7 @@ impl ManagerInterface {
         let kind = self.manager_job_kind(ManagerJobRequest::ReloadOrTryRestart, &name, &mode)?;
         authorize_privileged_caller(connection, &header).await?;
         let owner = header.sender().map(ToString::to_string);
-        Ok((job_path(self.enqueue(kind, &name, owner)?.id)?,))
+        Ok((self.job_object_path(self.enqueue(kind, &name, owner)?.id)?,))
     }
 
     /// `EnqueueUnitJob(name, job_type, job_mode)` → complete job description.
@@ -2343,8 +2375,9 @@ impl ManagerInterface {
         let job = self
             .enqueue(kind, &name, owner)
             .map_err(|error| EnqueueUnitJobError::Failed(error.to_string()))?;
-        let job_path =
-            job_path(job.id).map_err(|error| EnqueueUnitJobError::Failed(error.to_string()))?;
+        let job_path = self
+            .job_object_path(job.id)
+            .map_err(|error| EnqueueUnitJobError::Failed(error.to_string()))?;
         Ok((
             job.id,
             job_path,
@@ -2617,7 +2650,8 @@ impl ManagerInterface {
                 .ok_or_else(|| {
                     UnitLookupError::NoSuchUnit(format!("Client {pid} not member of any unit."))
                 })?;
-            return unit_path(&unit)
+            return self
+                .unit_object_path(&unit)
                 .map(|path| (path,))
                 .map_err(|error| UnitLookupError::Failed(error.to_string()));
         }
@@ -2642,7 +2676,7 @@ impl ManagerInterface {
         self.request_unit_load(name.clone())
             .await
             .map_err(|error| LoadUnitError::Failed(error.to_string()))?;
-        unit_path(&name)
+        self.unit_object_path(&name)
             .map(|path| (path,))
             .map_err(|error| LoadUnitError::Failed(error.to_string()))
     }
@@ -3200,8 +3234,9 @@ impl ManagerInterface {
         /* v261 keeps the PIDFD lookup result on the stable, name-derived unit
          * object path.  Unlike GetUnitByInvocationID(), this method does not
          * select the invocation-ID alias. */
-        let path =
-            unit_path(&unit.name).map_err(|error| PidFdLookupError::Failed(error.to_string()))?;
+        let path = self
+            .unit_object_path(&unit.name)
+            .map_err(|error| PidFdLookupError::Failed(error.to_string()))?;
         Ok((
             path,
             unit.name,
@@ -3428,10 +3463,9 @@ impl ManagerInterface {
                 ))
             })?;
 
-        Ok(
-            (unit_path(&unit.name)
-                .map_err(|error| CgroupLookupError::Failed(error.to_string()))?,),
-        )
+        Ok((self
+            .unit_object_path(&unit.name)
+            .map_err(|error| CgroupLookupError::Failed(error.to_string()))?,))
     }
 
     /// `GetJob(id)` → canonical numeric job object path.
@@ -3440,7 +3474,9 @@ impl ManagerInterface {
         if self.jobs.get(id).is_none() {
             return Err(no_such_job(id));
         }
-        Ok((job_path(id).expect("numeric job identifiers always form valid D-Bus object paths"),))
+        Ok((self
+            .job_object_path(id)
+            .expect("numeric job identifiers always form valid D-Bus object paths"),))
     }
 
     /// `GetJobAfter(id)` → jobs whose execution is ordered after this job.
@@ -3451,7 +3487,7 @@ impl ManagerInterface {
             .jobs
             .get_after(id)
             .iter()
-            .filter_map(job_list_entry)
+            .filter_map(|job| job_list_entry_for(self.namespace, job))
             .collect(),))
     }
 
@@ -3463,7 +3499,7 @@ impl ManagerInterface {
             .jobs
             .get_before(id)
             .iter()
-            .filter_map(job_list_entry)
+            .filter_map(|job| job_list_entry_for(self.namespace, job))
             .collect(),))
     }
 
@@ -3503,7 +3539,12 @@ impl ManagerInterface {
     /// `ListJobs()` → all live jobs in numeric identifier order.
     #[zbus(out_args("jobs"))]
     fn list_jobs(&self) -> (Vec<JobListEntry>,) {
-        (self.jobs.list().iter().filter_map(job_list_entry).collect(),)
+        (self
+            .jobs
+            .list()
+            .iter()
+            .filter_map(|job| job_list_entry_for(self.namespace, job))
+            .collect(),)
     }
 
     /// `Subscribe()` — register the caller for change signals.
@@ -3634,6 +3675,21 @@ fn manager_unit_file_preset_dirs(scope: ManagerScope) -> Vec<PathBuf> {
 }
 
 impl ManagerInterface {
+    fn unit_object_path(&self, name: &str) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
+        unit_path_for(self.namespace, name)
+    }
+
+    fn invocation_object_path(
+        &self,
+        invocation_id: &[u8; 16],
+    ) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
+        invocation_id_path_for(self.namespace, invocation_id)
+    }
+
+    fn job_object_path(&self, id: u32) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
+        job_path_for(self.namespace, id)
+    }
+
     #[allow(clippy::cast_possible_wrap)]
     fn get_unit_by_pid_for_pid(
         &self,
@@ -3650,7 +3706,7 @@ impl ManagerInterface {
                     "PID {pid} does not belong to any loaded unit."
                 ))
             })?;
-        unit_path(&unit)
+        self.unit_object_path(&unit)
             .map(|path| (path,))
             .map_err(|error| PidLookupError::Failed(error.to_string()))
     }
@@ -3673,7 +3729,7 @@ impl ManagerInterface {
                 format_id128(&invocation_id)
             )));
         }
-        invocation_id_path(&invocation_id)
+        self.invocation_object_path(&invocation_id)
             .map(|path| (path,))
             .map_err(|error| InvocationIdLookupError::Failed(error.to_string()))
     }
@@ -3701,7 +3757,7 @@ impl ManagerInterface {
                 "Client PID does not belong to any unit.".to_owned(),
             )
         })?;
-        invocation_id_path(&invocation_id)
+        self.invocation_object_path(&invocation_id)
             .map(|path| (path,))
             .map_err(|error| InvocationIdLookupError::Failed(error.to_string()))
     }
@@ -4368,7 +4424,9 @@ impl ManagerInterface {
     }
 
     fn unit_list_entry(&self, unit: &UnitInfo) -> UnitListEntry {
-        let path = unit_path(&unit.name).unwrap_or_else(|_| dummy_path());
+        let path = self
+            .unit_object_path(&unit.name)
+            .unwrap_or_else(|_| dummy_path());
         let job = self.jobs.for_unit(&unit.name);
         let job_id = job.as_ref().map_or(0, |job| job.id);
         let job_type = job
@@ -4376,7 +4434,7 @@ impl ManagerInterface {
             .map_or_else(String::new, |job| job.kind.as_str().to_owned());
         let job_object_path = job
             .as_ref()
-            .and_then(|job| job_path(job.id).ok())
+            .and_then(|job| self.job_object_path(job.id).ok())
             .unwrap_or_else(dummy_path);
         (
             unit.name.clone(),
@@ -4420,7 +4478,8 @@ impl ManagerInterface {
                 "Unit {name} not loaded."
             )));
         }
-        unit_path(name).map_err(|error| UnitLookupError::Failed(error.to_string()))
+        self.unit_object_path(name)
+            .map_err(|error| UnitLookupError::Failed(error.to_string()))
     }
 
     /// Look up a unit in the candidate's current snapshot/cgroup state.
@@ -4550,6 +4609,24 @@ impl ManagerInterfaceApi {
     }
 }
 
+/// Adapter that exposes the same manager implementation through the standard
+/// systemd D-Bus interface name.  The native and compatibility objects share
+/// the manager state, but the compatibility object returns paths rooted at
+/// `/org/freedesktop/systemd1` so ordinary libsystemd clients can follow them.
+pub struct SystemdManagerInterfaceApi {
+    inner: ManagerInterfaceApi,
+}
+
+impl SystemdManagerInterfaceApi {
+    /// Wrap a manager configured for [`DbusObjectNamespace::Compatibility`].
+    #[must_use]
+    pub fn new(inner: ManagerInterface) -> Self {
+        Self {
+            inner: ManagerInterfaceApi::new(inner),
+        }
+    }
+}
+
 #[zbus::export::async_trait::async_trait]
 impl zbus::object_server::Interface for ManagerInterfaceApi {
     fn name() -> zbus::names::InterfaceName<'static> {
@@ -4638,6 +4715,78 @@ impl zbus::object_server::Interface for ManagerInterfaceApi {
             level,
         );
         let generated = generated.replace("name=\"r#type\"", "name=\"type\"");
+        writer
+            .write_str(&generated)
+            .expect("writing D-Bus introspection XML cannot fail");
+    }
+}
+
+#[zbus::export::async_trait::async_trait]
+impl zbus::object_server::Interface for SystemdManagerInterfaceApi {
+    fn name() -> zbus::names::InterfaceName<'static> {
+        zbus::names::InterfaceName::from_static_str_unchecked("org.freedesktop.systemd1.Manager")
+    }
+
+    async fn get(
+        &self,
+        property_name: &str,
+    ) -> Option<zbus::fdo::Result<zbus::zvariant::OwnedValue>> {
+        self.inner.get(property_name).await
+    }
+
+    async fn get_all(
+        &self,
+    ) -> zbus::fdo::Result<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> {
+        self.inner.get_all().await
+    }
+
+    fn set<'call>(
+        &'call self,
+        property_name: &'call str,
+        value: &'call zbus::zvariant::Value<'_>,
+        ctxt: &'call zbus::object_server::SignalContext<'_>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        self.inner.set(property_name, value, ctxt)
+    }
+
+    async fn set_mut(
+        &mut self,
+        property_name: &str,
+        value: &zbus::zvariant::Value<'_>,
+        ctxt: &zbus::object_server::SignalContext<'_>,
+    ) -> Option<zbus::fdo::Result<()>> {
+        self.inner.set_mut(property_name, value, ctxt).await
+    }
+
+    fn call<'call>(
+        &'call self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        message: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        self.inner.call(server, connection, message, name)
+    }
+
+    fn call_mut<'call>(
+        &'call mut self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        message: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        self.inner.call_mut(server, connection, message, name)
+    }
+
+    fn introspect_to_writer(&self, writer: &mut dyn std::fmt::Write, level: usize) {
+        let mut generated = String::new();
+        self.inner.introspect_to_writer(&mut generated, level);
+        let generated = generated
+            .replace(
+                "io.rustd.Manager1.Manager",
+                "org.freedesktop.systemd1.Manager",
+            )
+            .replace("name=\"r#type\"", "name=\"type\"");
         writer
             .write_str(&generated)
             .expect("writing D-Bus introspection XML cannot fail");
@@ -5396,8 +5545,16 @@ fn systemd_architecture() -> &'static str {
 /// Replaces non-alphanumeric chars with `_XX` percent-style encoding,
 /// matching the upstream `bus_unit_path()` helper.
 pub fn unit_path(name: &str) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
+    unit_path_for(DbusObjectNamespace::Native, name)
+}
+
+/// Build a unit object path in the requested namespace.
+pub fn unit_path_for(
+    namespace: DbusObjectNamespace,
+    name: &str,
+) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
     let escaped = escape_unit_name(name);
-    let path = format!("/io/rustd/Manager1/unit/{escaped}");
+    let path = format!("{}/unit/{escaped}", namespace.root());
     zbus::zvariant::OwnedObjectPath::try_from(path)
         .map_err(|e| zbus::fdo::Error::InvalidArgs(e.to_string()))
 }
@@ -5409,7 +5566,15 @@ pub fn unit_path(name: &str) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPat
 pub fn invocation_id_path(
     invocation_id: &[u8; 16],
 ) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
-    let path = format!("/io/rustd/Manager1/unit/_{}", format_id128(invocation_id));
+    invocation_id_path_for(DbusObjectNamespace::Native, invocation_id)
+}
+
+/// Build an invocation-specific unit path in the requested namespace.
+pub fn invocation_id_path_for(
+    namespace: DbusObjectNamespace,
+    invocation_id: &[u8; 16],
+) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
+    let path = format!("{}/unit/_{}", namespace.root(), format_id128(invocation_id));
     zbus::zvariant::OwnedObjectPath::try_from(path)
         .map_err(|error| zbus::fdo::Error::InvalidArgs(error.to_string()))
 }
@@ -5822,22 +5987,36 @@ fn nanoseconds_to_usec(nanoseconds: i64) -> u64 {
 
 /// Build the canonical numeric D-Bus object path for a job.
 pub fn job_path(id: u32) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
-    let path = format!("/io/rustd/Manager1/job/{id}");
+    job_path_for(DbusObjectNamespace::Native, id)
+}
+
+/// Build a numeric job object path in the requested namespace.
+pub fn job_path_for(
+    namespace: DbusObjectNamespace,
+    id: u32,
+) -> zbus::fdo::Result<zbus::zvariant::OwnedObjectPath> {
+    let path = format!("{}/job/{id}", namespace.root());
     zbus::zvariant::OwnedObjectPath::try_from(path)
         .map_err(|error| zbus::fdo::Error::InvalidArgs(error.to_string()))
 }
 
-/// Convert a live job into the canonical `a(usssoo)` wire tuple.
+/// Convert a live job into a list entry in the requested namespace.
 #[must_use]
-pub fn job_list_entry(info: &JobInfo) -> Option<JobListEntry> {
+pub fn job_list_entry_for(namespace: DbusObjectNamespace, info: &JobInfo) -> Option<JobListEntry> {
     Some((
         info.id,
         info.unit_name.clone(),
         info.kind.as_str().to_owned(),
         info.state.as_str().to_owned(),
-        job_path(info.id).ok()?,
-        unit_path(&info.unit_name).ok()?,
+        job_path_for(namespace, info.id).ok()?,
+        unit_path_for(namespace, &info.unit_name).ok()?,
     ))
+}
+
+/// Convert a live job into the canonical `a(usssoo)` wire tuple.
+#[must_use]
+pub fn job_list_entry(info: &JobInfo) -> Option<JobListEntry> {
+    job_list_entry_for(DbusObjectNamespace::Native, info)
 }
 
 fn no_such_job(id: u32) -> JobMethodError {
@@ -6347,6 +6526,22 @@ mod tests {
         assert!(p.as_str().starts_with("/io/rustd/Manager1/unit/"));
     }
 
+    #[test]
+    fn compatibility_paths_follow_the_standard_systemd_namespace() {
+        assert_eq!(
+            unit_path_for(DbusObjectNamespace::Compatibility, "foo.service")
+                .unwrap()
+                .as_str(),
+            "/org/freedesktop/systemd1/unit/foo_2eservice"
+        );
+        assert_eq!(
+            job_path_for(DbusObjectNamespace::Compatibility, 17)
+                .unwrap()
+                .as_str(),
+            "/org/freedesktop/systemd1/job/17"
+        );
+    }
+
     fn test_interface() -> (
         ManagerInterface,
         Arc<Mutex<JobQueue>>,
@@ -6401,6 +6596,7 @@ mod tests {
             subscribers: Arc::new(Mutex::new(HashSet::new())),
             unit_references: Arc::new(Mutex::new(HashMap::new())),
             signal_tx,
+            namespace: DbusObjectNamespace::Native,
         };
         (interface, queue, wake, reload_requested)
     }

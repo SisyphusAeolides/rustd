@@ -24,6 +24,7 @@ use zbus::interface;
 
 use crate::config::ManagerScope;
 use crate::dbus::auth::authorize_privileged_caller;
+use crate::dbus::manager_iface::{job_path_for, DbusObjectNamespace};
 use crate::event::EventLoopWake;
 use crate::ipc::UnitInfo;
 use crate::job::{JobKind, JobQueue};
@@ -49,6 +50,8 @@ pub struct UnitInterface {
     pub wake: EventLoopWake,
     /// Manager scope owning this object.
     pub scope: ManagerScope,
+    /// D-Bus object namespace used for job paths returned by this object.
+    pub namespace: DbusObjectNamespace,
 }
 
 impl UnitInterface {
@@ -79,7 +82,7 @@ impl UnitInterface {
         self.wake.wake().map_err(|error| {
             zbus::fdo::Error::Failed(format!("internal: event loop wake failed: {error}"))
         })?;
-        crate::dbus::manager_iface::job_path(job.id)
+        job_path_for(self.namespace, job.id)
     }
 
     fn validate_mode(mode: &str, request: &'static str) -> zbus::fdo::Result<()> {
@@ -845,6 +848,115 @@ fn condition_entries(
         .collect()
 }
 
+/// Adapter that exports a unit through the standard systemd D-Bus interface
+/// name while retaining one implementation of the unit behavior.
+pub struct SystemdUnitInterface {
+    inner: UnitInterface,
+}
+
+impl SystemdUnitInterface {
+    /// Wrap a unit configured for the compatibility object namespace.
+    #[must_use]
+    pub fn new(inner: UnitInterface) -> Self {
+        Self { inner }
+    }
+}
+
+#[zbus::export::async_trait::async_trait]
+impl zbus::object_server::Interface for SystemdUnitInterface {
+    fn name() -> zbus::names::InterfaceName<'static> {
+        zbus::names::InterfaceName::from_static_str_unchecked("org.freedesktop.systemd1.Unit")
+    }
+
+    async fn get(
+        &self,
+        property_name: &str,
+    ) -> Option<zbus::fdo::Result<zbus::zvariant::OwnedValue>> {
+        <UnitInterface as zbus::object_server::Interface>::get(&self.inner, property_name).await
+    }
+
+    async fn get_all(
+        &self,
+    ) -> zbus::fdo::Result<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> {
+        <UnitInterface as zbus::object_server::Interface>::get_all(&self.inner).await
+    }
+
+    fn set<'call>(
+        &'call self,
+        property_name: &'call str,
+        value: &'call zbus::zvariant::Value<'_>,
+        ctxt: &'call zbus::object_server::SignalContext<'_>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <UnitInterface as zbus::object_server::Interface>::set(
+            &self.inner,
+            property_name,
+            value,
+            ctxt,
+        )
+    }
+
+    async fn set_mut(
+        &mut self,
+        property_name: &str,
+        value: &zbus::zvariant::Value<'_>,
+        ctxt: &zbus::object_server::SignalContext<'_>,
+    ) -> Option<zbus::fdo::Result<()>> {
+        <UnitInterface as zbus::object_server::Interface>::set_mut(
+            &mut self.inner,
+            property_name,
+            value,
+            ctxt,
+        )
+        .await
+    }
+
+    fn call<'call>(
+        &'call self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        message: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <UnitInterface as zbus::object_server::Interface>::call(
+            &self.inner,
+            server,
+            connection,
+            message,
+            name,
+        )
+    }
+
+    fn call_mut<'call>(
+        &'call mut self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        message: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <UnitInterface as zbus::object_server::Interface>::call_mut(
+            &mut self.inner,
+            server,
+            connection,
+            message,
+            name,
+        )
+    }
+
+    fn introspect_to_writer(&self, writer: &mut dyn std::fmt::Write, level: usize) {
+        let mut generated = String::new();
+        <UnitInterface as zbus::object_server::Interface>::introspect_to_writer(
+            &self.inner,
+            &mut generated,
+            level,
+        );
+        let generated =
+            generated.replace("io.rustd.Manager1.Unit", "org.freedesktop.systemd1.Unit");
+        writer
+            .write_str(&generated)
+            .expect("writing D-Bus introspection XML cannot fail");
+    }
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -862,6 +974,7 @@ mod tests {
             queue: Arc::new(Mutex::new(JobQueue::default())),
             wake: EventLoopWake::create().unwrap(),
             scope: ManagerScope::System,
+            namespace: DbusObjectNamespace::Native,
         }
     }
 
@@ -885,6 +998,7 @@ mod tests {
             queue: Arc::new(Mutex::new(JobQueue::default())),
             wake: EventLoopWake::create().unwrap(),
             scope: ManagerScope::System,
+            namespace: DbusObjectNamespace::Native,
         };
         assert_eq!(iface.id(), "foo.service");
         assert_eq!(iface.names(), vec!["foo.service"]);

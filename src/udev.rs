@@ -107,6 +107,14 @@ impl Device {
             .cloned()
             .or_else(|| subsystem_name(&syspath))
             .unwrap_or_default();
+        // A sysfs enumeration is not accompanied by the kernel's uevent
+        // header.  Populate the structural keys that normal netlink events
+        // carry so the same rule engine sees an identical device record when
+        // coldplugging from a live/read-only sysfs tree.
+        properties.insert("ACTION".to_string(), action.to_string());
+        properties.insert("DEVPATH".to_string(), devpath.clone());
+        properties.insert("KERNEL".to_string(), kernel.clone());
+        properties.insert("SUBSYSTEM".to_string(), subsystem.clone());
         Ok(Self {
             action: action.to_string(),
             devpath,
@@ -774,7 +782,18 @@ fn apply_node_permissions(
     explicit_mode: Option<u32>,
     created: bool,
 ) -> io::Result<()> {
-    if created || explicit_mode.is_some() {
+    // devtmpfs creates kernel device nodes as 0600 before userspace udev has
+    // applied its default policy.  Standard udev promotes that untouched
+    // kernel default to 0660 (and then applies the rule-selected group),
+    // which is required for non-root graphical sessions to open DRM, input,
+    // and other device nodes.  Preserve any mode that was already customized
+    // by an earlier rule or by the initramfs.
+    let apply_default_mode = if !created && explicit_mode.is_none() {
+        fs::metadata(path)?.permissions().mode() & 0o777 == 0o600
+    } else {
+        false
+    };
+    if created || explicit_mode.is_some() || apply_default_mode {
         fs::set_permissions(
             path,
             fs::Permissions::from_mode(explicit_mode.unwrap_or(0o660)),
@@ -915,6 +934,13 @@ mod tests {
         assert_eq!(
             fs::metadata(file.path()).unwrap().permissions().mode() & 0o777,
             0o640
+        );
+
+        fs::set_permissions(file.path(), fs::Permissions::from_mode(0o600)).unwrap();
+        apply_node_permissions(file.path(), None, false).unwrap();
+        assert_eq!(
+            fs::metadata(file.path()).unwrap().permissions().mode() & 0o777,
+            0o660
         );
 
         apply_node_permissions(file.path(), None, true).unwrap();

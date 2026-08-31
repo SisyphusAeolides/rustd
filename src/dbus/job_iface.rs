@@ -18,7 +18,9 @@ use std::sync::{Arc, Mutex};
 use zbus::interface;
 
 use crate::dbus::auth::authorize_privileged_caller;
-use crate::dbus::manager_iface::{job_list_entry, unit_path, JobListEntry};
+use crate::dbus::manager_iface::{
+    job_list_entry_for, unit_path_for, DbusObjectNamespace, JobListEntry,
+};
 use crate::event::EventLoopWake;
 use crate::job::{JobInfo, JobKind, JobQueue, JobRegistry, JobState};
 
@@ -31,6 +33,7 @@ pub struct JobInterface {
     registry: JobRegistry,
     queue: Arc<Mutex<JobQueue>>,
     wake: EventLoopWake,
+    namespace: DbusObjectNamespace,
 }
 
 impl JobInterface {
@@ -42,6 +45,18 @@ impl JobInterface {
         queue: Arc<Mutex<JobQueue>>,
         wake: EventLoopWake,
     ) -> Self {
+        Self::new_in_namespace(info, registry, queue, wake, DbusObjectNamespace::Native)
+    }
+
+    /// Construct a job interface in a selected D-Bus object namespace.
+    #[must_use]
+    pub fn new_in_namespace(
+        info: JobInfo,
+        registry: JobRegistry,
+        queue: Arc<Mutex<JobQueue>>,
+        wake: EventLoopWake,
+        namespace: DbusObjectNamespace,
+    ) -> Self {
         Self {
             id: info.id,
             unit_name: info.unit_name,
@@ -50,11 +65,12 @@ impl JobInterface {
             registry,
             queue,
             wake,
+            namespace,
         }
     }
 
     fn unit_object_path(&self) -> zbus::zvariant::OwnedObjectPath {
-        unit_path(&self.unit_name).unwrap_or_else(|_| {
+        unit_path_for(self.namespace, &self.unit_name).unwrap_or_else(|_| {
             zbus::zvariant::OwnedObjectPath::try_from("/")
                 .expect("the D-Bus root object path is valid")
         })
@@ -103,7 +119,7 @@ impl JobInterface {
         self.registry
             .get_after(self.id)
             .iter()
-            .filter_map(job_list_entry)
+            .filter_map(|job| job_list_entry_for(self.namespace, job))
             .collect()
     }
 
@@ -112,7 +128,7 @@ impl JobInterface {
         self.registry
             .get_before(self.id)
             .iter()
-            .filter_map(job_list_entry)
+            .filter_map(|job| job_list_entry_for(self.namespace, job))
             .collect()
     }
 
@@ -148,6 +164,120 @@ impl JobInterface {
     #[zbus(property)]
     fn activation_details(&self) -> Vec<(String, String)> {
         Vec::new()
+    }
+}
+
+/// Adapter that exports a job through the standard systemd D-Bus interface
+/// name while retaining one implementation of job behavior.
+pub struct SystemdJobInterface {
+    inner: JobInterface,
+}
+
+impl SystemdJobInterface {
+    /// Wrap a job configured for the compatibility object namespace.
+    #[must_use]
+    pub fn new(inner: JobInterface) -> Self {
+        Self { inner }
+    }
+
+    /// Update the state carried by the compatibility object before emitting
+    /// its standard `PropertiesChanged` signal.
+    pub fn set_state(&mut self, state: JobState) {
+        self.inner.set_state(state);
+    }
+}
+
+#[zbus::export::async_trait::async_trait]
+impl zbus::object_server::Interface for SystemdJobInterface {
+    fn name() -> zbus::names::InterfaceName<'static> {
+        zbus::names::InterfaceName::from_static_str_unchecked("org.freedesktop.systemd1.Job")
+    }
+
+    async fn get(
+        &self,
+        property_name: &str,
+    ) -> Option<zbus::fdo::Result<zbus::zvariant::OwnedValue>> {
+        <JobInterface as zbus::object_server::Interface>::get(&self.inner, property_name).await
+    }
+
+    async fn get_all(
+        &self,
+    ) -> zbus::fdo::Result<std::collections::HashMap<String, zbus::zvariant::OwnedValue>> {
+        <JobInterface as zbus::object_server::Interface>::get_all(&self.inner).await
+    }
+
+    fn set<'call>(
+        &'call self,
+        property_name: &'call str,
+        value: &'call zbus::zvariant::Value<'_>,
+        ctxt: &'call zbus::object_server::SignalContext<'_>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <JobInterface as zbus::object_server::Interface>::set(
+            &self.inner,
+            property_name,
+            value,
+            ctxt,
+        )
+    }
+
+    async fn set_mut(
+        &mut self,
+        property_name: &str,
+        value: &zbus::zvariant::Value<'_>,
+        ctxt: &zbus::object_server::SignalContext<'_>,
+    ) -> Option<zbus::fdo::Result<()>> {
+        <JobInterface as zbus::object_server::Interface>::set_mut(
+            &mut self.inner,
+            property_name,
+            value,
+            ctxt,
+        )
+        .await
+    }
+
+    fn call<'call>(
+        &'call self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        message: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <JobInterface as zbus::object_server::Interface>::call(
+            &self.inner,
+            server,
+            connection,
+            message,
+            name,
+        )
+    }
+
+    fn call_mut<'call>(
+        &'call mut self,
+        server: &'call zbus::ObjectServer,
+        connection: &'call zbus::Connection,
+        message: &'call zbus::message::Message,
+        name: zbus::names::MemberName<'call>,
+    ) -> zbus::object_server::DispatchResult<'call> {
+        <JobInterface as zbus::object_server::Interface>::call_mut(
+            &mut self.inner,
+            server,
+            connection,
+            message,
+            name,
+        )
+    }
+
+    fn introspect_to_writer(&self, writer: &mut dyn std::fmt::Write, level: usize) {
+        let mut generated = String::new();
+        <JobInterface as zbus::object_server::Interface>::introspect_to_writer(
+            &self.inner,
+            &mut generated,
+            level,
+        );
+        let generated = generated.replace("io.rustd.Manager1.Job", "org.freedesktop.systemd1.Job");
+        writer
+            .write_str(&generated)
+            .expect("writing D-Bus introspection XML cannot fail");
     }
 }
 

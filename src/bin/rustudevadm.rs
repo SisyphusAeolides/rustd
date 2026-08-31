@@ -911,13 +911,33 @@ fn trigger_one(devpath: &Path, args: &TriggerArgs, action: &str) -> bool {
     if args.verbose {
         println!("{}", devpath.display());
     }
-    if !args.dry_run {
-        if let Ok(mut f) = fs::OpenOptions::new().write(true).open(&uevent_file) {
-            let _ = f.write_all(action.as_bytes());
-        }
+    if args.dry_run {
+        return true;
     }
 
-    true
+    match fs::OpenOptions::new().write(true).open(&uevent_file) {
+        Ok(mut file) => match file.write_all(action.as_bytes()) {
+            Ok(()) => true,
+            Err(error) => request_udevd_trigger(devpath, action, error),
+        },
+        Err(error) => request_udevd_trigger(devpath, action, error),
+    }
+}
+
+/// Ask RustD's udev daemon to process an already-existing sysfs device when
+/// the kernel's `uevent` write interface is unavailable.  Live media commonly
+/// mounts sysfs read-only; that must not make coldplug silently report success
+/// while leaving DRM, input, block, or network nodes uninitialized.
+fn request_udevd_trigger(devpath: &Path, action: &str, error: std::io::Error) -> bool {
+    let command = format!("trigger={}\t{}", action.trim(), devpath.to_string_lossy());
+    if send_udevd_control(&command).is_ok() {
+        return true;
+    }
+    eprintln!(
+        "udevadm: cannot trigger {} through sysfs ({error}) or RustD udev control",
+        devpath.display()
+    );
+    false
 }
 
 fn matches_trigger_filters(devpath: &Path, args: &TriggerArgs) -> bool {
