@@ -59,10 +59,18 @@ make_source() {
         # project-owned vendor trees remain part of the source archive and
         # Cargo's generated source replacement config points only at vendor-rpm
         # for registry crates.
-        cargo vendor --locked vendor-rpm > /tmp/rustd-cargo-vendor-config.$$
+        vendor_config="$(mktemp)"
+        cargo vendor --locked vendor-rpm > "$vendor_config"
         mkdir -p .cargo
-        cp /tmp/rustd-cargo-vendor-config.$$ .cargo/config.toml
-        rm -f /tmp/rustd-cargo-vendor-config.$$
+        if [[ -f .cargo/config.toml ]]; then
+            merged_config="$(mktemp)"
+            awk '1' .cargo/config.toml "$vendor_config" > "$merged_config"
+            mv "$merged_config" .cargo/config.toml
+        else
+            mv "$vendor_config" .cargo/config.toml
+            vendor_config=
+        fi
+        [[ -z $vendor_config ]] || rm -f "$vendor_config"
     )
     tar --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner \
         -C "$work" -cf - "$name-$version" | gzip -n -9 > "$dest"
