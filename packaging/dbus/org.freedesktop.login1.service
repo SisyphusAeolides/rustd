@@ -2,5 +2,5 @@
 
 [D-BUS Service]
 Name=org.freedesktop.login1
-Exec=/bin/false
+Exec=/usr/lib/rustd/rustd-logind
 User=root

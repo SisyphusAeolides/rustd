@@ -267,6 +267,9 @@ check-packaging:
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd --user' packaging/rustd/user@.service; \
 	grep -Fq 'ExecStart=/usr/bin/dbus-daemon' packaging/rustd/dbus.service; \
 	test -f packaging/dbus/io.rustd.Login1.service; \
+	grep -Fq 'Exec=/usr/lib/rustd/rustd-logind' packaging/dbus/io.rustd.Login1.service; \
+	test -f packaging/dbus/org.freedesktop.login1.service; \
+	grep -Fq 'Exec=/usr/lib/rustd/rustd-logind' packaging/dbus/org.freedesktop.login1.service; \
 	test -f packaging/dbus/io.rustd.Login1.conf; \
 	test -f packaging/dbus/io.rustd.Hostname1.service; \
 	test -f packaging/dbus/io.rustd.Locale1.service; \
