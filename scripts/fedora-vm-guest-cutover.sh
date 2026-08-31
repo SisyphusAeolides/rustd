@@ -184,11 +184,18 @@ lsinitrd "$image" > /var/tmp/rustd-lsinitrd.txt
 
 grep -Eq '^[[:space:]]*selinux([[:space:]]|$)' /var/tmp/rustd-initrd-modules.txt
 
-if grep -Eq '^[[:space:]]*(systemd|dracut-systemd|systemd-[^[:space:]]+)([[:space:]]|$)' /var/tmp/rustd-initrd-modules.txt; then
+bad_dracut_modules="$(
+    grep -E '^[[:space:]]*(systemd|dracut-systemd|systemd-[^[:space:]]+)([[:space:]]|$)' \
+        /var/tmp/rustd-initrd-modules.txt \
+        | grep -Ev '^[[:space:]]*systemd-initrd([[:space:]]|$)' || true
+)"
+if [[ -n "$bad_dracut_modules" ]]; then
     echo 'systemd dracut module remains in converted initramfs:' >&2
-    grep -E '^[[:space:]]*(systemd|dracut-systemd|systemd-[^[:space:]]+)([[:space:]]|$)' /var/tmp/rustd-initrd-modules.txt >&2 || true
+    printf '%s\n' "$bad_dracut_modules" >&2
     exit 1
 fi
+test "$(rpm -qf --qf '%{NAME}\n' \
+    /usr/lib/dracut/modules.d/00systemd-initrd/module-setup.sh)" = rustd-fedora-compat
 
 grep -Fq 'usr/lib/rustd/rustd-udevd' /var/tmp/rustd-lsinitrd.txt
 grep -Eq 'usr/lib/systemd/systemd-udevd$' /var/tmp/rustd-lsinitrd.txt

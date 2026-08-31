@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -103,7 +103,7 @@ grep -Fq '/var/lib/chrony' dist/fedora/tmpfiles/rustd-fedora.conf
 grep -Fq '/var/log/chrony' dist/fedora/tmpfiles/rustd-fedora.conf
 ! grep -Fq 'inst_hook pre-pivot' dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh
 grep -Fq 'init_exec_t' dist/fedora/selinux/rustd_fedora.fc
-grep -Fq 'install_items+=" /usr/bin/rustudevadm /usr/lib/rustd/rustd-udevd "' \
+grep -Fq 'install_items+=" /usr/bin/rustudevadm /usr/lib/rustd/rustd-udevd /usr/lib/systemd/systemd-udevd "' \
     dist/fedora/90-rustd-dracut.conf
 grep -Fq '/usr/lib/rustd/rustd-udevd' dist/fedora/90-rustd-dracut.conf
 test -f dist/fedora/compat/systemd-udevd
@@ -112,6 +112,13 @@ grep -Eq 'omit_dracutmodules\+=".*[[:space:]]rngd([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
 grep -Eq 'omit_dracutmodules\+=".*[[:space:]]memstrack([[:space:]]|$)' \
     dist/fedora/90-rustd-dracut.conf
+! grep -Eq 'omit_dracutmodules\+=".*[[:space:]]systemd-initrd([[:space:]]|$)' \
+    dist/fedora/90-rustd-dracut.conf
+test -x dist/fedora/dracut/00systemd-initrd/module-setup.sh
+bash -n dist/fedora/dracut/00systemd-initrd/module-setup.sh
+grep -Fq 'echo base' dist/fedora/dracut/00systemd-initrd/module-setup.sh
+grep -Fq '/usr/lib/systemd/systemd-udevd' dist/fedora/dracut/00systemd-initrd/module-setup.sh
+grep -Fq '/usr/lib/rustd/rustd-udevd' dist/fedora/dracut/00systemd-initrd/module-setup.sh
 for name in halt poweroff reboot shutdown telinit runlevel; do
     ln -s rustd-shutdown "$name"
 done
@@ -137,6 +144,7 @@ install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_prefix}/lib/tmpfiles.d \
            %{buildroot}%{_prefix}/lib/udev/rules.d \
            %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d \
+           %{buildroot}%{_prefix}/lib/dracut/modules.d/00systemd-initrd \
            %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs
 install -m0755 dist/fedora/compat/systemctl %{buildroot}%{_bindir}/systemctl
 install -m0755 dist/fedora/compat/systemd-tmpfiles %{buildroot}%{_bindir}/systemd-tmpfiles
@@ -171,6 +179,8 @@ install -m0644 dist/fedora/90-rustd-dracut.conf \
     %{buildroot}%{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
 install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
     %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
+install -m0755 dist/fedora/dracut/00systemd-initrd/module-setup.sh \
+    %{buildroot}%{_prefix}/lib/dracut/modules.d/00systemd-initrd/module-setup.sh
 
 %files
 %license LICENSE*
@@ -199,9 +209,14 @@ install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
 %{_prefix}/lib/udev/rules.d/50-rustd-default.rules
 %{_prefix}/lib/udev/rules.d/80-drivers.rules
 %{_prefix}/lib/dracut/dracut.conf.d/90-rustd.conf
+%{_prefix}/lib/dracut/modules.d/00systemd-initrd/module-setup.sh
 %{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
 
 %changelog
+* Sun Aug 30 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-3
+- Provide RustD's systemd-initrd dracut compatibility contract
+- Keep RLC live-image squash support free of systemd implementation modules
+
 * Sun Aug 30 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-2
 - Install a regular initramfs-safe udev compatibility wrapper
 - Explicitly include RustD's udev daemon in dracut images

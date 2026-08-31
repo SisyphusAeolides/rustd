@@ -5,7 +5,7 @@
 
 Name:           rustd-compat-libs
 Version:        0.1.2
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        Fedora libsystemd/libudev compatibility libraries backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -62,6 +62,9 @@ bash scripts/check-compat-libs.sh %{buildroot}%{_prefix}
 %{_libdir}/libudev.so.1
 
 %changelog
+* Sun Aug 30 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-3
+- Bump the coordinated RustD package release for the dracut compatibility module
+
 * Sun Aug 30 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-2
 - Bump the coordinated RustD package release for the initramfs udev fix
 
