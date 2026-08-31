@@ -11,13 +11,26 @@ Linux kernel ABIs and useful freedesktop/Linux application protocols may be
 supported where they make sense, but another init system is not RustD's
 reference architecture and implementation parity is not a release gate.
 
-> **Current status (2026-08-24):** RustD's native, build, packaging, and
+For ArachOS, RustD is the measured PID 1 payload loaded by GRUB into Arach
+Kernel. CIQ RLC 10.2 supplies the userspace and RPM ecosystem. That path is
+release-qualified only when Arach Kernel provides the complete Linux process,
+filesystem, cgroup, device, IPC, and networking contracts exercised by the
+packaged RustD service graph.
+
+The default manager scheduler includes a bounded nonlinear policy weave using
+Lorenz and Mandelbrot features plus Rössler, logistic-map, Lyapunov, and
+Duffing signals. These signals rank only jobs that are already dependency-ready;
+they cannot bypass transaction ordering or configured critical operations.
+Their boundedness and ordering invariants are covered by unit tests, while any
+performance claim still requires boot and workload benchmarks.
+
+> **Current status (2026-08-31):** RustD's native, build, packaging, and
 > compatibility-library gates are passing, including 107 native targets and
-> complete validation of the 336-entry compatibility surface. The companion
-> resolver's source and packaging gates are also passing. The ArachOS live
-> image has been built and artifact-checked: `/usr/sbin/init` resolves to RustD
-> and the image contains no RPM named `systemd`, `systemd-libs`, `systemd-udev`,
-> or `systemd-resolved`.
+> complete validation of the 336-entry compatibility surface. The bounded
+> nonlinear scheduler passes its ordering and bounds tests. The pinned RustD
+> and RustD-resolved revisions also pass the staged EL10 RPM build, `%check`,
+> and ArachOS candidate-repository validation. The final Arach-Kernel image and
+> installed-system runtime certificate remain open gates.
 >
 > **Production boundary:** this is not a claim that RustD is a 100% certified,
 > drop-in replacement for systemd. Repeated installed-system VM campaigns as
@@ -115,16 +128,17 @@ The repository now uses RustD identity through its compiled and packaged core:
 
 Remaining work is release hardening, not an internal crate-name migration. The
 largest unresolved production boundary is repeated sole-PID1 installed-system
-certification on the exact Fedora cutover image together with final ABI closure
-and the paired RustD-Resolved release certificate.
+certification on the exact ArachOS RLC image together with Arach Kernel ABI
+closure and the paired RustD-Resolved release certificate.
 
 ## Supported platform
 
-Fedora 44 is the current zero-systemd cutover certification target. The release
-gate uses the official Fedora Cloud base image and must prove that the machine
-continues to boot and operate after the Fedora systemd package stack is removed.
-Arch Linux and compatible Arch-based distributions remain supported build and
-native-install targets, but they do not substitute for the Fedora cutover gate.
+ArachOS on CIQ RLC 10.2 is the current integration and release-certification
+target. Its final gate uses Arach Kernel, GRUB, RustD PID 1, RustD-resolved, and
+the RLC userspace selected by graphical Anaconda. Fedora 44 remains a separate
+zero-systemd compatibility campaign, while Arch Linux and compatible
+Arch-based distributions remain supported build and native-install targets;
+neither substitutes for the ArachOS installed-system gate.
 
 ## Fedora zero-systemd cutover
 
