@@ -4,7 +4,7 @@
 
 Name:           rustd-selinux
 Version:        0.1.2
-Release:        7%{?dist}
+Release:        8%{?dist}
 Summary:        SELinux policy labels and resolver state rules for RustD on Fedora
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd

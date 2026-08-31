@@ -5,7 +5,7 @@
 
 Name:           rustd
 Version:        0.1.2
-Release:        7%{?dist}
+Release:        8%{?dist}
 Summary:        RustD native Linux init and service manager
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
