@@ -4,7 +4,10 @@ Documentation=man:rustd-udevd(8)
 DefaultDependencies=no
 After=rustd-sysusers.service rustd-tmpfiles-setup-dev.service
 Before=sysinit.target
-ConditionPathIsReadWrite=/sys
+# udev only reads sysfs while processing kernel events.  Live media and
+# containers may expose sysfs read-only even though device-event handling is
+# fully functional, so writability must not suppress the device manager.
+ConditionPathExists=/sys
 
 [Service]
 Type=simple

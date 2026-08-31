@@ -218,6 +218,8 @@ grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles' \
     packaging/rustd/rustd-tmpfiles-setup.service
 grep -Fxq 'ExecStart=/usr/bin/rustd-tmpfiles --prefix=/dev --create --boot' \
     packaging/rustd/rustd-tmpfiles-setup-dev.service
+grep -Fxq 'ConditionPathExists=/sys' packaging/rustd/rustd-udevd.service
+! grep -Fq 'ConditionPathIsReadWrite=/sys' packaging/rustd/rustd-udevd.service
 grep -Fxq 'ENV{MODALIAS}=="?*", RUN{builtin}+="kmod load"' \
     dist/fedora/compat/80-drivers.rules
 grep -Fxq 'ACTION=="remove", GOTO="rustd_drivers_end"' \
