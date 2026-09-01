@@ -1,5 +1,5 @@
 schema=rustd-varlink-idl-v1
 status=pass
-tested_sha=2e57d39ad7c08915410293fe35beec9dcf64de1a
+tested_sha=c7e7e88314e0f800bdf97b11160dd4f29772c5dd
 behavior_outcome=success
 grammar=varlink-official
