@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        11%{?dist}
+Release:        12%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -135,6 +135,7 @@ grep -Fq 'inst_script "$moddir/lvm_scan.sh" /usr/bin/lvm_scan' \
     dist/fedora/dracut/91rustd-lvm/module-setup.sh
 grep -Fq 'inst_hook initqueue/settled 90 "$moddir/lvm_scan_initqueue.sh"' \
     dist/fedora/dracut/91rustd-lvm/module-setup.sh
+grep -Fq 'rustd_lvm=/usr/bin/lvm' dist/fedora/dracut/91rustd-lvm/lvm_scan.sh
 grep -Fq -- '--noudevsync' dist/fedora/dracut/91rustd-lvm/lvm_scan.sh
 grep -Fq 'LVM2_member' dist/fedora/dracut/91rustd-lvm/lvm_scan.sh
 grep -Fq '/sbin/lvm_scan' dist/fedora/dracut/91rustd-lvm/lvm_scan_initqueue.sh
@@ -273,6 +274,9 @@ done
 %{_prefix}/lib/dracut/modules.d/99img-lib/*
 
 %changelog
+* Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-12
+- Preserve LVM multiplexer argv[0] while applying RustD initramfs activation flags
+
 * Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-11
 - Run the RustD LVM scanner from settled initqueue coldplug
 - Seed LVM2 PV markers when reduced udev rules omit the stock RUN action

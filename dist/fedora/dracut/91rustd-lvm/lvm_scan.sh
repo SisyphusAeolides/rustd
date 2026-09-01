@@ -6,7 +6,11 @@
 # systemd-udev device-mapper cookie. The stock scanner still owns all LVM
 # discovery, filtering, retry, and activation policy.
 
-rustd_lvm=/usr/lib/rustd/initrd/lvm.real
+# LVM is a command multiplexer and uses argv[0] to select its command-line
+# personality.  Invoke the preserved /usr/bin/lvm path so version, config,
+# lvs, vgscan, and activation dispatch normally; calling the identical ELF
+# through its lvm.real storage path makes it reject every subcommand.
+rustd_lvm=/usr/bin/lvm
 
 # Fedora's stock scanner normally receives one marker from 64-lvm.rules for
 # each LVM2 PV. Keep the wrapper self-sufficient when early coldplug was

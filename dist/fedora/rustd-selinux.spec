@@ -4,7 +4,7 @@
 
 Name:           rustd-selinux
 Version:        0.1.2
-Release:        11%{?dist}
+Release:        12%{?dist}
 Summary:        SELinux policy labels and resolver state rules for RustD on Fedora
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -66,6 +66,9 @@ install -D -m0644 selinux-build/%{modulename}.pp.bz2 \
 %selinux_relabel_post -s %{selinuxtype}
 
 %changelog
+* Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-12
+- Preserve LVM multiplexer argv[0] while applying RustD initramfs activation flags
+
 * Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-11
 - Coordinate the RustD initramfs LVM settled-initqueue fallback
 

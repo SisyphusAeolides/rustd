@@ -5,7 +5,7 @@
 
 Name:           rustd-compat-libs
 Version:        0.1.2
-Release:        11%{?dist}
+Release:        12%{?dist}
 Summary:        Fedora libsystemd/libudev compatibility libraries backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -62,6 +62,9 @@ bash scripts/check-compat-libs.sh %{buildroot}%{_prefix}
 %{_libdir}/libudev.so.1
 
 %changelog
+* Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-12
+- Preserve LVM multiplexer argv[0] while applying RustD initramfs activation flags
+
 * Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-11
 - Coordinate the RustD initramfs LVM settled-initqueue fallback
 
