@@ -1,5 +1,6 @@
 LIBSYSTEMD_209 {
 
+
   global:
     sd_booted;
     sd_get_sessions;
@@ -110,11 +111,13 @@ LIBSYSTEMD_211 {
 
 LIBSYSTEMD_213 {
 
+
   global:
     sd_uid_get_display;
 } LIBSYSTEMD_211;
 
 LIBSYSTEMD_214 {
+
 
   global:
     sd_pid_notify;
@@ -127,17 +130,20 @@ LIBSYSTEMD_217 {
 } LIBSYSTEMD_216;
 
 LIBSYSTEMD_219 {
+
   global:
     sd_pid_notify_with_fds;
 } LIBSYSTEMD_217;
 
 LIBSYSTEMD_220 {
 
+
   global:
     sd_pid_get_user_slice;
 } LIBSYSTEMD_219;
 
 LIBSYSTEMD_221 {
+
 
   global:
     sd_event_add_child;
@@ -258,6 +264,7 @@ LIBSYSTEMD_221 {
 } LIBSYSTEMD_220;
 
 LIBSYSTEMD_222 {
+
   global:
     sd_bus_flush_close_unref;
     sd_bus_emit_object_added;
@@ -266,16 +273,19 @@ LIBSYSTEMD_222 {
 
 LIBSYSTEMD_226 {
 
+
   global:
     sd_pid_get_cgroup;
 } LIBSYSTEMD_222;
 
 LIBSYSTEMD_227 {
+
   global:
     sd_listen_fds_with_names;
 } LIBSYSTEMD_226;
 
 LIBSYSTEMD_229 {
+
   global:
     sd_journal_enumerate_fields;
     sd_journal_has_persistent_files;
@@ -284,6 +294,7 @@ LIBSYSTEMD_229 {
 } LIBSYSTEMD_227;
 
 LIBSYSTEMD_230 {
+
   global:
     sd_journal_open_directory_fd;
     sd_journal_open_files_fd;
@@ -297,6 +308,7 @@ LIBSYSTEMD_232 {
 
 LIBSYSTEMD_233 {
 
+
   global:
     sd_id128_get_machine_app_specific;
     sd_is_socket_sockaddr;
@@ -309,12 +321,14 @@ LIBSYSTEMD_235 {
 } LIBSYSTEMD_234;
 
 LIBSYSTEMD_236 {
+
   global:
     sd_bus_message_new;
     sd_bus_message_seal;
 } LIBSYSTEMD_235;
 
 LIBSYSTEMD_237 {
+
 
   global:
     sd_bus_add_match_async;
@@ -323,6 +337,7 @@ LIBSYSTEMD_237 {
 } LIBSYSTEMD_236;
 
 LIBSYSTEMD_238 {
+
   global:
     sd_bus_get_n_queued_read;
     sd_bus_get_n_queued_write;
@@ -330,11 +345,13 @@ LIBSYSTEMD_238 {
 
 LIBSYSTEMD_239 {
 
+
   global:
     sd_event_add_inotify;
 } LIBSYSTEMD_238;
 
 LIBSYSTEMD_240 {
+
 
   global:
     sd_bus_get_method_call_timeout;
@@ -363,6 +380,7 @@ LIBSYSTEMD_240 {
 } LIBSYSTEMD_239;
 
 LIBSYSTEMD_241 {
+
   global:
     sd_bus_close_unref;
 } LIBSYSTEMD_240;
@@ -371,6 +389,7 @@ LIBSYSTEMD_242 {
 } LIBSYSTEMD_241;
 
 LIBSYSTEMD_243 {
+
 
   global:
     sd_bus_object_vtable_format;
@@ -381,11 +400,13 @@ LIBSYSTEMD_244 {
 } LIBSYSTEMD_243;
 
 LIBSYSTEMD_245 {
+
   global:
     sd_journal_open_namespace;
 } LIBSYSTEMD_244;
 
 LIBSYSTEMD_246 {
+
   global:
     sd_notify_barrier;
     sd_bus_interface_name_is_valid;
@@ -398,11 +419,13 @@ LIBSYSTEMD_246 {
 
 LIBSYSTEMD_247 {
 
+
   global:
     sd_event_add_time_relative;
 } LIBSYSTEMD_246;
 
 LIBSYSTEMD_248 {
+
 
   global:
     sd_device_get_action;
@@ -416,6 +439,7 @@ LIBSYSTEMD_250 {
 
 LIBSYSTEMD_251 {
 
+
   global:
     sd_device_new_from_devname;
     sd_device_open;
@@ -426,12 +450,14 @@ LIBSYSTEMD_252 {
 
 LIBSYSTEMD_253 {
 
+
   global:
     sd_pidfd_get_owner_uid;
     sd_pidfd_get_session;
 } LIBSYSTEMD_252;
 
 LIBSYSTEMD_254 {
+
 
   global:
     sd_session_get_leader;
@@ -444,11 +470,13 @@ LIBSYSTEMD_255 {
 } LIBSYSTEMD_254;
 
 LIBSYSTEMD_256 {
+
   global:
     sd_journal_stream_fd_with_namespace;
 } LIBSYSTEMD_255;
 
 LIBSYSTEMD_257 {
+
 
   global:
     sd_json_variant_by_index;
@@ -463,6 +491,7 @@ LIBSYSTEMD_257 {
 } LIBSYSTEMD_256;
 
 LIBSYSTEMD_258 {
+
 
   global:
     sd_varlink_idl_parse;
