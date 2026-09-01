@@ -30,7 +30,10 @@ install() {
     inst_script "$stock_scanner" \
         /usr/lib/rustd/initrd/lvm_scan.stock
     inst_simple /usr/bin/lvm /usr/lib/rustd/initrd/lvm.real
-    # Fedora's merged-/usr initramfs resolves /sbin/lvm_scan to this path;
-    # install over the stock scanner after preserving its implementation.
+    # Fedora's merged-/usr initramfs resolves /sbin/lvm_scan to this path.
+    # dracut's inst_script deliberately keeps an existing destination, so
+    # remove only the temporary stock destination after preserving its
+    # implementation above, then install the RustD wrapper in its place.
+    rm -f "$initdir/usr/bin/lvm_scan"
     inst_script "$moddir/lvm_scan.sh" /usr/bin/lvm_scan
 }
