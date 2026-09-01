@@ -36,4 +36,18 @@ grep -Fxq 'options    root=UUID=11111111-2222-3333-4444-555555555555 rd.lvm.lv=t
 test ! -e "$entry"
 test ! -e "$entry_dir"
 
+mkdir -p "$root/boot/efi/EFI"
+esp_version=7.2.0-esp-test
+"$bin" --root "$root" add \
+    "$esp_version" "$work/vmlinuz" "$work/initramfs.img"
+esp_entry="$root/boot/loader/entries/$machine_id-$esp_version.conf"
+esp_entry_dir="$root/boot/$machine_id/$esp_version"
+test -s "$esp_entry"
+test -s "$esp_entry_dir/linux"
+test -s "$esp_entry_dir/initrd"
+test ! -e "$root/boot/efi/$machine_id/$esp_version/linux"
+"$bin" --root "$root" remove "$esp_version"
+test ! -e "$esp_entry"
+test ! -e "$esp_entry_dir"
+
 printf '%s\n' 'kernel-install compatibility test passed'

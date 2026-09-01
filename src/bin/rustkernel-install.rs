@@ -119,10 +119,12 @@ fn find_boot_path(cli_boot: Option<&PathBuf>, esp: &Path, root: Option<&Path>) -
         }
     }
     let boot_dir = resolve_root_path(root, "/boot");
-    if boot_dir.exists()
-        && boot_dir.is_dir()
-        && (boot_dir.join("loader").exists() || boot_dir.join("EFI").exists())
-    {
+    // Linux kernel artifacts and BLS entries belong in /boot even when an
+    // EFI system partition is mounted at /boot/efi. During the first kernel
+    // transaction /boot/loader may not exist yet, so waiting for a marker
+    // directory incorrectly selects the ESP as $BOOT and makes dracut write
+    // versioned kernel files under /boot/efi.
+    if boot_dir.exists() && boot_dir.is_dir() {
         return boot_dir;
     }
     if esp.exists() {
