@@ -3,6 +3,7 @@
 //!
 //! Compatibility reference: systemd v261 `src/journald/journald.c`.
 
+use std::os::fd::RawFd;
 use std::path::PathBuf;
 
 use rustd::journal::daemon::{JournalDaemon, JournalDaemonConfig};
@@ -17,7 +18,23 @@ fn main() {
         }
     };
 
-    match JournalDaemon::new(&config).and_then(JournalDaemon::run) {
+    let activated = match rustd::native::listen_fds(true) {
+        Ok(0) => None,
+        Ok(count) => {
+            let fds: Vec<RawFd> = (0..count).map(|offset| 3 + offset as RawFd).collect();
+            Some(fds)
+        }
+        Err(error) => {
+            eprintln!("rustd-journald: socket activation setup failed: {error}");
+            std::process::exit(1);
+        }
+    };
+
+    let daemon = activated.map_or_else(
+        || JournalDaemon::new(&config),
+        |fds| JournalDaemon::new_with_inherited_sockets(&config, fds),
+    );
+    match daemon.and_then(JournalDaemon::run) {
         Ok(_) => {}
         Err(error) => {
             eprintln!("rustd-journald: {error}");

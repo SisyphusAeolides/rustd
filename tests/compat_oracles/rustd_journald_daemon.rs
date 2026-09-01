@@ -2,7 +2,9 @@
 // End-to-end coverage for the native rustd-journald executable.
 
 use std::io::Write as _;
-use std::os::unix::net::{UnixDatagram, UnixStream};
+use std::os::unix::io::{IntoRawFd, RawFd};
+use std::os::unix::net::{UnixDatagram, UnixListener, UnixStream};
+use std::os::unix::process::CommandExt;
 use std::path::Path;
 use std::process::{Child, Command};
 use std::thread;
@@ -109,6 +111,84 @@ fn failed_second_socket_bind_cleans_up_the_first_socket() {
         "receiver socket must be cleaned after stdout setup fails"
     );
     assert_eq!(std::fs::read(&stdout_path).unwrap(), b"not a socket");
+}
+
+#[test]
+fn socket_activated_daemon_adopts_both_listeners_without_unlinking_them() {
+    let temporary = TempDir::new().expect("temporary journal root");
+    let runtime_directory = temporary.path().join("runtime");
+    let journal_directory = temporary.path().join("journal");
+    std::fs::create_dir_all(&runtime_directory).expect("create runtime directory");
+    let datagram_path = runtime_directory.join("socket");
+    let stdout_path = runtime_directory.join("stdout");
+    let datagram = UnixDatagram::bind(&datagram_path).expect("bind activated datagram");
+    let stdout = UnixListener::bind(&stdout_path).expect("bind activated stdout");
+    let datagram_fd = datagram.into_raw_fd();
+    let stdout_fd = stdout.into_raw_fd();
+
+    let mut command = Command::new("/bin/sh");
+    command
+        .arg("-c")
+        .arg(
+            "RUSTD_LISTEN_PID=$$; export RUSTD_LISTEN_PID; \
+             RUSTD_LISTEN_FDS=2; export RUSTD_LISTEN_FDS; \
+             RUSTD_LISTEN_FDNAMES=datagram:stdout; export RUSTD_LISTEN_FDNAMES; \
+             exec \"$1\" --runtime-directory \"$2\" --journal-directory \"$3\"",
+        )
+        .arg("rustd-journald-activated")
+        .arg(env!("CARGO_BIN_EXE_systemd-journald"))
+        .arg(&runtime_directory)
+        .arg(&journal_directory);
+    // SAFETY: this pre-exec hook only moves the two owned activation fds to
+    // the descriptors reserved by the RustD socket-activation ABI.
+    unsafe {
+        command.pre_exec(move || {
+            dup2_for_activation(datagram_fd, 3)?;
+            dup2_for_activation(stdout_fd, 4)?;
+            Ok(())
+        });
+    }
+    let mut daemon = command.spawn().expect("start socket-activated journald");
+    wait_for_path(&journal_directory.join("system.journal"));
+
+    let client = UnixDatagram::unbound().expect("create activated datagram client");
+    client
+        .send_to(b"MESSAGE=activated datagram\nPRIORITY=5\n", &datagram_path)
+        .expect("send activated datagram");
+    let mut stream = UnixStream::connect(&stdout_path).expect("connect activated stdout");
+    stream
+        .write_all(b"activated-test\nactivated.service\n4\n0\n0\n\n0\nactivated stdout\n")
+        .expect("write activated stdout");
+    drop(stream);
+    wait_for_file_bytes(&journal_directory.join("system.journal"), b"activated datagram");
+    wait_for_file_bytes(&journal_directory.join("system.journal"), b"activated stdout");
+
+    // Safety: daemon.id() is the PID returned by this test's own child spawn.
+    #[allow(clippy::cast_possible_wrap)]
+    let signal_result = unsafe { libc::kill(daemon.id() as libc::pid_t, libc::SIGTERM) };
+    assert_eq!(signal_result, 0, "send SIGTERM to activated journald");
+    wait_for_successful_exit(&mut daemon);
+    assert!(datagram_path.exists(), "socket unit retains datagram path");
+    assert!(stdout_path.exists(), "socket unit retains stdout path");
+    std::fs::remove_file(datagram_path).expect("remove test datagram path");
+    std::fs::remove_file(stdout_path).expect("remove test stdout path");
+}
+
+fn dup2_for_activation(source: RawFd, target: RawFd) -> std::io::Result<()> {
+    if source != target && unsafe { libc::dup2(source, target) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    let flags = unsafe { libc::fcntl(target, libc::F_GETFD) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if unsafe { libc::fcntl(target, libc::F_SETFD, flags & !libc::FD_CLOEXEC) } < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    if source != target {
+        unsafe { libc::close(source) };
+    }
+    Ok(())
 }
 
 fn start_daemon(runtime_directory: &Path, journal_directory: &Path) -> Child {

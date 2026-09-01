@@ -369,12 +369,83 @@ fn apply_ownership_and_mode(path: &Path, mode: Option<u32>, uid: Option<u32>, gi
 }
 
 fn restorecon_created_path(path: &Path) {
-    if let Err(error) = rustd::selinux::restorecon_path(path) {
-        eprintln!(
-            "rustd-tmpfiles: restorecon failed for {}: {error}",
-            path.display()
-        );
+    for target in restorecon_targets(path) {
+        if let Err(error) = rustd::selinux::restorecon_path(&target) {
+            // `z`/`Z` entries intentionally tolerate a path that is not
+            // present yet. This is especially common for tmpfiles globs and
+            // optional kernel trees during early boot.
+            if matches!(
+                error
+                    .root_cause()
+                    .downcast_ref::<io::Error>()
+                    .map(io::Error::kind),
+                Some(io::ErrorKind::NotFound | io::ErrorKind::NotADirectory)
+            ) {
+                continue;
+            }
+            eprintln!(
+                "rustd-tmpfiles: restorecon failed for {}: {error}",
+                target.display()
+            );
+        }
     }
+}
+
+fn restorecon_targets(path: &Path) -> Vec<PathBuf> {
+    if !has_glob_magic(path) {
+        return path
+            .exists()
+            .then(|| path.to_path_buf())
+            .into_iter()
+            .collect();
+    }
+
+    let mut candidates = vec![PathBuf::from("/")];
+    for component in path.components() {
+        let std::path::Component::Normal(component) = component else {
+            continue;
+        };
+        let Some(pattern) = component.to_str() else {
+            return Vec::new();
+        };
+        let mut next = Vec::new();
+        for base in candidates {
+            if has_glob_magic_component(pattern) {
+                let Ok(entries) = fs::read_dir(&base) else {
+                    continue;
+                };
+                for entry in entries.flatten() {
+                    let name = entry.file_name();
+                    if rustd::glob::matches_no_escape(pattern, &name.to_string_lossy()) {
+                        next.push(entry.path());
+                    }
+                }
+            } else {
+                next.push(base.join(pattern));
+            }
+        }
+        candidates = next;
+        if candidates.is_empty() {
+            break;
+        }
+    }
+    candidates
+        .into_iter()
+        .filter(|candidate| candidate.exists() || candidate.is_symlink())
+        .collect()
+}
+
+fn has_glob_magic(path: &Path) -> bool {
+    path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_str()
+            .is_some_and(has_glob_magic_component)
+    })
+}
+
+fn has_glob_magic_component(component: &str) -> bool {
+    component.contains(['*', '?', '['])
 }
 
 fn execute_create(entry: &TmpfileEntry) -> io::Result<()> {
@@ -636,5 +707,32 @@ fn main() {
         for entry in &entries {
             let _ = execute_clean(entry);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_restorecon_paths_are_ignored() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("missing");
+        assert!(restorecon_targets(&path).is_empty());
+    }
+
+    #[test]
+    fn restorecon_globs_only_return_existing_matches() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("man/man1")).unwrap();
+        fs::create_dir_all(root.path().join("man/man8")).unwrap();
+        fs::write(root.path().join("man/man1/index.db"), []).unwrap();
+        fs::write(root.path().join("man/man8/other"), []).unwrap();
+
+        let pattern = root.path().join("man/*/index*");
+        assert_eq!(
+            restorecon_targets(&pattern),
+            vec![root.path().join("man/man1/index.db")]
+        );
     }
 }

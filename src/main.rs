@@ -189,6 +189,12 @@ fn main() -> anyhow::Result<()> {
         None => false,
     };
     if !restored {
+        // systemd opens journald's sockets before dispatching the boot graph.
+        // Pre-queue the native socket unit so any service that emits output
+        // early in the transaction can connect without losing its logs.
+        if manager.load_unit("rustd-journald.socket").is_ok() {
+            manager.enqueue_start("rustd-journald.socket")?;
+        }
         manager.enqueue_start(&target)?;
     }
 

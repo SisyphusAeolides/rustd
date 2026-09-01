@@ -135,7 +135,7 @@ impl WorkerPool {
 pub struct StdoutServer {
     pub listen_fd: RawFd,
     _listener: OwnedFd,
-    _path_guard: SocketPathGuard,
+    _path_guard: Option<SocketPathGuard>,
     pool: Arc<WorkerPool>,
 }
 
@@ -180,7 +180,27 @@ impl StdoutServer {
         Ok(Self {
             listen_fd,
             _listener: listener,
-            _path_guard: path_guard,
+            _path_guard: Some(path_guard),
+            pool,
+        })
+    }
+
+    /// Adopt an already-bound stream listener supplied by a RustD socket
+    /// unit. The socket unit owns the filesystem path and lifecycle.
+    pub fn from_inherited_fd(fd: RawFd, sink: Arc<JournalSink>) -> anyhow::Result<Self> {
+        // SAFETY: the caller transfers ownership of this activation fd to the
+        // server and does not use or close it afterwards.
+        let listener = unsafe { UnixListener::from_raw_fd(fd) };
+        listener.set_nonblocking(true)?;
+        let pool = WorkerPool::global(Arc::clone(&sink));
+        let raw = listener.into_raw_fd();
+        // SAFETY: `raw` is the owned descriptor returned by `into_raw_fd`.
+        let listener = unsafe { OwnedFd::from_raw_fd(raw) };
+        let listen_fd = listener.as_raw_fd();
+        Ok(Self {
+            listen_fd,
+            _listener: listener,
+            _path_guard: None,
             pool,
         })
     }

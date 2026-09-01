@@ -7,6 +7,7 @@
 //! Pre-existing socket paths are never removed by this implementation. Socket
 //! paths created by a daemon instance are removed when that instance exits.
 
+use std::os::fd::RawFd;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -80,6 +81,24 @@ impl JournalDaemon {
     /// Returns an error if storage cannot be initialized, an existing socket
     /// blocks startup, or event source registration fails.
     pub fn new(config: &JournalDaemonConfig) -> anyhow::Result<Self> {
+        Self::new_inner(config, None)
+    }
+
+    /// Create the daemon by adopting the datagram and stdout listeners passed
+    /// by `rustd-journald.socket`, in that order. This mirrors systemd's
+    /// journald socket activation: clients can connect before the daemon
+    /// process is dispatched, and the socket unit retains path ownership.
+    pub fn new_with_inherited_sockets(
+        config: &JournalDaemonConfig,
+        listen_fds: Vec<RawFd>,
+    ) -> anyhow::Result<Self> {
+        Self::new_inner(config, Some(listen_fds))
+    }
+
+    fn new_inner(
+        config: &JournalDaemonConfig,
+        inherited_fds: Option<Vec<RawFd>>,
+    ) -> anyhow::Result<Self> {
         prepare_directory(&config.runtime_directory)?;
         prepare_directory(&config.journal_directory)?;
 
@@ -96,16 +115,39 @@ impl JournalDaemon {
         let writer = JournalWriter::open_resilient(&journal_path)?;
         let sink = JournalSink::with_writer(ring, writer);
 
-        let receiver_path = config.runtime_directory.join("socket");
-        let stdout_path = config.runtime_directory.join("stdout");
-
         // Create the signal source before exposing either socket. A SIGTERM
         // arriving during startup is then delivered through signalfd rather
         // than terminating the daemon between the two binds.
         let mut event_loop = EventLoop::new()?;
 
-        let receiver = JournalReceiver::bind_at(&receiver_path, Arc::clone(&sink))?;
-        let stdout = StdoutServer::bind_at(&stdout_path, Arc::clone(&sink))?;
+        let (receiver, stdout) = if let Some(listen_fds) = inherited_fds {
+            if listen_fds.len() != 2 {
+                let supplied = listen_fds.len();
+                for fd in listen_fds {
+                    // SAFETY: activation descriptors are owned by this
+                    // constructor on the error path.
+                    unsafe { libc::close(fd) };
+                }
+                anyhow::bail!(
+                    "rustd-journald.socket supplied {}, expected datagram and stdout listeners",
+                    supplied
+                );
+            }
+            let mut fds = listen_fds.into_iter();
+            let receiver_fd = fds.next().expect("validated listener count");
+            let stdout_fd = fds.next().expect("validated listener count");
+            (
+                JournalReceiver::from_inherited_fd(receiver_fd, Arc::clone(&sink))?,
+                StdoutServer::from_inherited_fd(stdout_fd, Arc::clone(&sink))?,
+            )
+        } else {
+            let receiver_path = config.runtime_directory.join("socket");
+            let stdout_path = config.runtime_directory.join("stdout");
+            (
+                JournalReceiver::bind_at(&receiver_path, Arc::clone(&sink))?,
+                StdoutServer::bind_at(&stdout_path, Arc::clone(&sink))?,
+            )
+        };
 
         event_loop.add_io(receiver.raw_fd(), libc::EPOLLIN as u32, Box::new(receiver))?;
         event_loop.add_io(stdout.raw_fd(), libc::EPOLLIN as u32, Box::new(stdout))?;

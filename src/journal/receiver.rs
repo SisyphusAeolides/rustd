@@ -38,7 +38,7 @@ pub const DEFAULT_SOCKET_PATH: &str = "/run/rustd/journal/socket";
 pub struct JournalReceiver {
     pub fd: RawFd,
     _socket: OwnedFd,
-    _path_guard: SocketPathGuard,
+    _path_guard: Option<SocketPathGuard>,
     sink: Arc<JournalSink>,
 }
 
@@ -83,7 +83,28 @@ impl JournalReceiver {
         Ok(Self {
             fd,
             _socket: socket,
-            _path_guard: path_guard,
+            _path_guard: Some(path_guard),
+            sink,
+        })
+    }
+
+    /// Adopt an already-bound datagram socket supplied by a RustD socket
+    /// unit. The socket unit owns the filesystem path and will remove it
+    /// when deactivated; the journal daemon owns only this descriptor.
+    pub fn from_inherited_fd(fd: RawFd, sink: Arc<JournalSink>) -> anyhow::Result<Self> {
+        // SAFETY: the caller transfers ownership of this activation fd to the
+        // receiver and does not use or close it afterwards.
+        let socket = unsafe { UnixDatagram::from_raw_fd(fd) };
+        socket.set_nonblocking(true)?;
+        enable_passcred(socket.as_raw_fd())?;
+        let raw = socket.into_raw_fd();
+        // SAFETY: `raw` is the owned descriptor returned by `into_raw_fd`.
+        let socket = unsafe { OwnedFd::from_raw_fd(raw) };
+        let fd = socket.as_raw_fd();
+        Ok(Self {
+            fd,
+            _socket: socket,
+            _path_guard: None,
             sink,
         })
     }

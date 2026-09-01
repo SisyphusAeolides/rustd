@@ -16,6 +16,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 const CONTROL_SOCKET: &str = "/run/udev/control";
 const QUEUE_FILE: &str = "/run/udev/queue";
@@ -97,37 +98,61 @@ fn main() -> anyhow::Result<()> {
                     &running,
                     &stopped,
                     arguments.dry_run,
+                    netlink.as_raw_fd(),
                 );
             }
         }
         if fds[0].revents & libc::POLLIN != 0 && !stopped.load(Ordering::Relaxed) {
-            let mut events = VecDeque::new();
-            receive_pending_events(netlink.as_raw_fd(), &mut events)?;
-            if !events.is_empty() {
-                let _ = fs::write(QUEUE_FILE, b"1\n");
-            }
-            while let Some(event) = events.pop_front() {
-                let sequence = uevent_sequence(&event);
-                if let Some(mut device) = Device::from_uevent(&event) {
-                    process_device(&rules, &global_properties, &mut device, arguments.dry_run);
-                }
-                if let Some(sequence) = sequence {
-                    if let Err(error) = mark_processed_sequence(sequence) {
-                        eprintln!(
-                            "rustd-udevd: failed to publish processed uevent sequence {sequence}: {error}"
-                        );
-                    }
-                }
-                // Coldplug can produce more events while a RUN rule is being
-                // handled. Keep the queue marker present until the socket and
-                // the userspace backlog are both empty.
-                receive_pending_events(netlink.as_raw_fd(), &mut events)?;
-            }
-            let _ = fs::remove_file(QUEUE_FILE);
+            process_pending_events(
+                netlink.as_raw_fd(),
+                &rules,
+                &global_properties,
+                arguments.dry_run,
+            )?;
         }
     }
     let _ = fs::remove_file(CONTROL_SOCKET);
     Ok(())
+}
+
+/// Drain and process every kernel event currently available to the daemon.
+///
+/// The queue marker is created before the first event is handled and removed
+/// only after a final non-blocking receive. This gives `rustudevadm settle`
+/// one authoritative state transition to wait for instead of racing the
+/// kernel's asynchronous netlink delivery.
+fn process_pending_events(
+    netlink_fd: libc::c_int,
+    rules: &[Rule],
+    global_properties: &BTreeMap<String, String>,
+    dry_run: bool,
+) -> io::Result<bool> {
+    let mut events = VecDeque::new();
+    receive_pending_events(netlink_fd, &mut events)?;
+    if events.is_empty() {
+        return Ok(false);
+    }
+
+    fs::write(QUEUE_FILE, b"1\n")?;
+    while let Some(event) = events.pop_front() {
+        let sequence = uevent_sequence(&event);
+        if let Some(mut device) = Device::from_uevent(&event) {
+            process_device(rules, global_properties, &mut device, dry_run);
+        }
+        if let Some(sequence) = sequence {
+            if let Err(error) = mark_processed_sequence(sequence) {
+                eprintln!(
+                    "rustd-udevd: failed to publish processed uevent sequence {sequence}: {error}"
+                );
+            }
+        }
+        // Coldplug can produce more events while a RUN rule is being handled.
+        // Keep the queue marker present until the socket and userspace
+        // backlog are both empty.
+        receive_pending_events(netlink_fd, &mut events)?;
+    }
+    let _ = fs::remove_file(QUEUE_FILE);
+    Ok(true)
 }
 
 fn daemonize() -> io::Result<Option<OwnedFd>> {
@@ -324,12 +349,32 @@ fn handle_control(
     running: &AtomicBool,
     stopped: &AtomicBool,
     dry_run: bool,
+    netlink_fd: libc::c_int,
 ) {
     let mut bytes = [0_u8; 4096];
     let count = stream.read(&mut bytes).unwrap_or(0);
     let raw = String::from_utf8_lossy(&bytes[..count]);
     let message = raw.trim();
     let command = message.to_ascii_lowercase();
+
+    if let Some(timeout) = message.strip_prefix("settle=") {
+        let timeout = timeout.parse::<u64>().unwrap_or(120).min(24 * 60 * 60);
+        let result = settle_events(
+            netlink_fd,
+            rules,
+            global_properties,
+            dry_run,
+            Duration::from_secs(timeout),
+        );
+        let reply = if let Err(error) = result {
+            eprintln!("rustd-udevd: settle failed: {error}");
+            b"ERR\n".as_slice()
+        } else {
+            b"OK\n".as_slice()
+        };
+        let _ = std::io::Write::write_all(&mut stream, reply);
+        return;
+    }
 
     if let Some(payload) = message.strip_prefix("trigger=") {
         let reply = match process_synthetic_trigger(payload, rules, global_properties, dry_run) {
@@ -373,6 +418,61 @@ fn handle_control(
     // keeps synchronous RustD processing honest while allowing harmless
     // log-level/ping tuning requests used by early userspace.
     let _ = std::io::Write::write_all(&mut stream, b"OK\n");
+}
+
+/// Wait until the daemon has observed and processed all currently pending
+/// kernel events, including events that arrive shortly after a trigger write.
+///
+/// The short quiet period mirrors udev's queue-settle behavior while keeping
+/// the implementation single-threaded: the control request itself services
+/// the netlink fd, so a settle request cannot be acknowledged ahead of an
+/// event already queued in the kernel.
+fn settle_events(
+    netlink_fd: libc::c_int,
+    rules: &[Rule],
+    global_properties: &BTreeMap<String, String>,
+    dry_run: bool,
+    timeout: Duration,
+) -> io::Result<()> {
+    let start = std::time::Instant::now();
+    let quiet_period = Duration::from_millis(100);
+
+    loop {
+        if process_pending_events(netlink_fd, rules, global_properties, dry_run)? {
+            continue;
+        }
+
+        if start.elapsed() >= timeout {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "udev event queue did not become idle",
+            ));
+        }
+
+        let remaining = timeout.saturating_sub(start.elapsed());
+        let wait = remaining.min(quiet_period);
+        let timeout_ms = i32::try_from(wait.as_millis()).unwrap_or(i32::MAX).max(1);
+        let mut pollfd = libc::pollfd {
+            fd: netlink_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let result = unsafe { libc::poll(&mut pollfd, 1, timeout_ms) };
+        if result < 0 {
+            let error = io::Error::last_os_error();
+            if error.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(error);
+        }
+        if result == 0 {
+            // Confirm that no event arrived during the quiet interval. A
+            // final receive closes the small poll-to-return race.
+            if !process_pending_events(netlink_fd, rules, global_properties, dry_run)? {
+                return Ok(());
+            }
+        }
+    }
 }
 
 fn process_synthetic_trigger(

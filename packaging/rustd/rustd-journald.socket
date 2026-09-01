@@ -1,0 +1,14 @@
+[Unit]
+Description=RustD Journal Sockets
+DefaultDependencies=no
+Before=sockets.target sysinit.target
+
+[Socket]
+ListenDatagram=/run/rustd/journal/socket
+ListenStream=/run/rustd/journal/stdout
+PassCredentials=yes
+SocketMode=0666
+Service=rustd-journald.service
+
+[Install]
+WantedBy=sockets.target

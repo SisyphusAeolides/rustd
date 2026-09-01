@@ -1,12 +1,13 @@
 [Unit]
 Description=RustD Journal Service
 DefaultDependencies=no
-After=local-fs.target rustd-tmpfiles-setup.service
-Requires=rustd-tmpfiles-setup.service
+After=rustd-journald.socket local-fs.target rustd-tmpfiles-setup.service
+Requires=rustd-journald.socket rustd-tmpfiles-setup.service
 Before=sysinit.target
 
 [Service]
 Type=simple
+Sockets=rustd-journald.socket
 StandardOutput=null
 StandardError=null
 ExecStartPre=/usr/bin/mkdir -p /run/rustd/journal
