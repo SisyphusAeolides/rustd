@@ -345,7 +345,7 @@
     "udev_ref",
     "udev_unref"
   ],
-  "tested_sha": "2068564e3c9bb7a192a083fc095cf736af2bbe4c",
+  "tested_sha": "c7e7e88314e0f800bdf97b11160dd4f29772c5dd",
   "unsupported": 0,
   "unsupported_symbols": []
 }
