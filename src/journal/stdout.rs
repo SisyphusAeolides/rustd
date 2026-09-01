@@ -187,6 +187,10 @@ impl StdoutServer {
 
     /// Adopt an already-bound stream listener supplied by a RustD socket
     /// unit. The socket unit owns the filesystem path and lifecycle.
+    ///
+    /// # Errors
+    /// Returns an error if `fd` cannot be configured as a nonblocking stream
+    /// listener.
     pub fn from_inherited_fd(fd: RawFd, sink: Arc<JournalSink>) -> anyhow::Result<Self> {
         // SAFETY: the caller transfers ownership of this activation fd to the
         // server and does not use or close it afterwards.

@@ -208,11 +208,11 @@ mod tests {
         assert_eq!(interface_list().lines().count(), 4);
         assert!(interface_list().contains("io.rustd.Manager1.Manager"));
         assert!(interface_list().contains("io.rustd.Manager1.Service"));
-        assert!(
+        assert_eq!(
             <crate::dbus::manager_iface::SystemdManagerInterfaceApi as
                 zbus::object_server::Interface>::name()
-                .as_str()
-                == "org.freedesktop.systemd1.Manager"
+                .as_str(),
+            "org.freedesktop.systemd1.Manager"
         );
     }
 

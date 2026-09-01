@@ -374,13 +374,14 @@ fn restorecon_created_path(path: &Path) {
             // `z`/`Z` entries intentionally tolerate a path that is not
             // present yet. This is especially common for tmpfiles globs and
             // optional kernel trees during early boot.
-            if matches!(
-                error
-                    .root_cause()
-                    .downcast_ref::<io::Error>()
-                    .map(io::Error::kind),
-                Some(io::ErrorKind::NotFound | io::ErrorKind::NotADirectory)
-            ) {
+            let missing_or_not_directory = error
+                .root_cause()
+                .downcast_ref::<io::Error>()
+                .is_some_and(|io_error| {
+                    io_error.kind() == io::ErrorKind::NotFound
+                        || io_error.raw_os_error() == Some(libc::ENOTDIR)
+                });
+            if missing_or_not_directory {
                 continue;
             }
             eprintln!(

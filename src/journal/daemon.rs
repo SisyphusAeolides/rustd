@@ -90,6 +90,10 @@ impl JournalDaemon {
     /// by RustD socket units. Descriptors are classified by their kernel
     /// socket type rather than by activation order, so separate native and
     /// `/dev/log` socket units can safely activate the same service.
+    ///
+    /// # Errors
+    /// Returns an error if an activation descriptor is invalid, the listeners
+    /// cannot be adopted, or the daemon's journal storage cannot be opened.
     pub fn new_with_inherited_sockets(
         config: &JournalDaemonConfig,
         listen_fds: Vec<RawFd>,

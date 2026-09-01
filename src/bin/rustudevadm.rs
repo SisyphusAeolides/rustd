@@ -1110,7 +1110,7 @@ fn handle_control(args: &ControlArgs) -> anyhow::Result<()> {
         println!("udevadm: Set children-max to {max}.");
     }
     for prop in &args.property {
-        println!("udevadm: Set global property '{}'.", prop);
+        println!("udevadm: Set global property '{prop}'.");
     }
     Ok(())
 }

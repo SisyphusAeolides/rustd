@@ -1843,7 +1843,7 @@ fn spawn_command(
     let journal_path = std::env::var_os("RUSTD_JOURNAL_STDOUT")
         .map_or_else(|| PathBuf::from(DEFAULT_STDOUT_PATH), PathBuf::from);
     let service_tty = open_service_tty(section)?;
-    let service_tty_fd = service_tty.as_ref().map_or(-1, |file| file.as_raw_fd());
+    let service_tty_fd = service_tty.as_ref().map_or(-1, AsRawFd::as_raw_fd);
     let mut stdout_stream = None;
     let mut stderr_stream = None;
     let mut stdout_fallback = None;

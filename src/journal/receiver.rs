@@ -94,6 +94,10 @@ impl JournalReceiver {
     /// Adopt an already-bound datagram socket supplied by a RustD socket
     /// unit. The socket unit owns the filesystem path and will remove it
     /// when deactivated; the journal daemon owns only this descriptor.
+    ///
+    /// # Errors
+    /// Returns an error if `fd` is not a usable datagram socket or cannot be
+    /// configured for nonblocking credential-aware operation.
     pub fn from_inherited_fd(fd: RawFd, sink: Arc<JournalSink>) -> anyhow::Result<Self> {
         // SAFETY: the caller transfers ownership of this activation fd to the
         // receiver and does not use or close it afterwards.

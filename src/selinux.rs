@@ -94,6 +94,10 @@ pub fn load_initial_policy() -> anyhow::Result<()> {
 /// RustD cannot rely on systemd-udevd's label restoration because RustD owns
 /// the udev daemon on a system-free Fedora installation. Resolve the symbol at
 /// runtime so the binary remains usable on non-SELinux systems.
+///
+/// # Errors
+/// Returns an error if the path contains a NUL byte, libselinux cannot be
+/// loaded, the restorecon symbol cannot be resolved, or relabeling fails.
 pub fn restorecon_path(path: &Path) -> anyhow::Result<()> {
     if !Path::new("/sys/fs/selinux/enforce").exists() {
         return Ok(());
@@ -136,6 +140,10 @@ pub fn restorecon_path(path: &Path) -> anyhow::Result<()> {
 /// The recursive walk intentionally lives here instead of depending on the
 /// external `restorecon` command: RustD's PID 1 and udev daemon must be able to
 /// perform this operation during early boot with only libselinux available.
+///
+/// # Errors
+/// Returns an error if a path cannot be labeled or its directory entries
+/// cannot be read.
 pub fn restorecon_tree(path: &Path) -> anyhow::Result<()> {
     restorecon_path(path)?;
     let metadata = match fs::symlink_metadata(path) {

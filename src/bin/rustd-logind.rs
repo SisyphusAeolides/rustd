@@ -662,9 +662,10 @@ impl Manager {
     fn attach_device(
         &self,
         seat: String,
-        _sysfs: String,
-        _interactive: bool,
+        sysfs: String,
+        interactive: bool,
     ) -> zbus::fdo::Result<()> {
+        let _ = (sysfs, interactive);
         if seat_names(logind::sessions().iter()).contains(&seat) {
             Ok(())
         } else {
@@ -672,19 +673,19 @@ impl Manager {
         }
     }
 
-    fn flush_devices(&self, _reexecute: bool) {}
+    fn flush_devices(&self, reexecute: bool) {
+        let _ = reexecute;
+    }
 
-    fn set_user_linger(
-        &self,
-        uid: u32,
-        _enable: bool,
-        _interactive: bool,
-    ) -> zbus::fdo::Result<()> {
+    fn set_user_linger(&self, uid: u32, enable: bool, interactive: bool) -> zbus::fdo::Result<()> {
+        let _ = (enable, interactive);
         self.get_user(uid).map(|_| ())
     }
 
     #[zbus(name = "SetWallMessage")]
-    fn set_wall_message_method(&self, _message: String, _enable: bool) {}
+    fn set_wall_message_method(&self, message: String, enable: bool) {
+        let _ = (message, enable);
+    }
 
     #[zbus(property)]
     fn n_current_inhibitors(&self) -> u64 {
@@ -1102,31 +1103,38 @@ impl Manager {
             .await
     }
 
-    async fn power_off_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+    async fn power_off_with_flags(&self, flags: u64) -> zbus::fdo::Result<()> {
+        let _ = flags;
         self.power_off(false).await
     }
 
-    async fn reboot_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+    async fn reboot_with_flags(&self, flags: u64) -> zbus::fdo::Result<()> {
+        let _ = flags;
         self.reboot(false).await
     }
 
-    async fn halt_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+    async fn halt_with_flags(&self, flags: u64) -> zbus::fdo::Result<()> {
+        let _ = flags;
         self.halt(false).await
     }
 
-    async fn suspend_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+    async fn suspend_with_flags(&self, flags: u64) -> zbus::fdo::Result<()> {
+        let _ = flags;
         self.suspend(false).await
     }
 
-    async fn hibernate_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+    async fn hibernate_with_flags(&self, flags: u64) -> zbus::fdo::Result<()> {
+        let _ = flags;
         self.hibernate(false).await
     }
 
-    async fn hybrid_sleep_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+    async fn hybrid_sleep_with_flags(&self, flags: u64) -> zbus::fdo::Result<()> {
+        let _ = flags;
         self.hybrid_sleep(false).await
     }
 
-    async fn suspend_then_hibernate_with_flags(&self, _flags: u64) -> zbus::fdo::Result<()> {
+    async fn suspend_then_hibernate_with_flags(&self, flags: u64) -> zbus::fdo::Result<()> {
+        let _ = flags;
         self.suspend_then_hibernate(false).await
     }
 
@@ -1134,13 +1142,21 @@ impl Manager {
         false
     }
 
-    fn set_reboot_parameter(&self, _parameter: String) {}
+    fn set_reboot_parameter(&self, parameter: String) {
+        let _ = parameter;
+    }
 
-    fn set_reboot_to_boot_loader_entry(&self, _entry: String) {}
+    fn set_reboot_to_boot_loader_entry(&self, entry: String) {
+        let _ = entry;
+    }
 
-    fn set_reboot_to_boot_loader_menu(&self, _timeout: u64) {}
+    fn set_reboot_to_boot_loader_menu(&self, timeout: u64) {
+        let _ = timeout;
+    }
 
-    fn set_reboot_to_firmware_setup(&self, _enable: bool) {}
+    fn set_reboot_to_firmware_setup(&self, enable: bool) {
+        let _ = enable;
+    }
 
     #[zbus(signal)]
     async fn prepare_for_shutdown(ctxt: &zbus::SignalContext<'_>, active: bool)
@@ -1320,7 +1336,7 @@ impl zbus::object_server::Interface for Login1Manager {
                         )
                         .await
                 }
-                Err(error) => Err(zbus::fdo::Error::InvalidArgs(error.to_string())),
+                Err(error) => Err(zbus::fdo::Error::InvalidArgs(error.clone())),
             }
         };
         zbus::DispatchResult::new_async(connection, msg, future)
@@ -1343,7 +1359,7 @@ impl zbus::object_server::Interface for Login1Manager {
     }
 
     fn introspect_to_writer(&self, writer: &mut dyn std::fmt::Write, level: usize) {
-        <Manager as zbus::object_server::Interface>::introspect_to_writer(&self.0, writer, level)
+        <Manager as zbus::object_server::Interface>::introspect_to_writer(&self.0, writer, level);
     }
 }
 
@@ -1558,7 +1574,8 @@ impl SessionObject {
         Ok(())
     }
 
-    fn take_control(&self, _force: bool) -> zbus::fdo::Result<()> {
+    fn take_control(&self, force: bool) -> zbus::fdo::Result<()> {
+        let _ = force;
         if logind::session(&self.id).is_none() {
             return Err(no_such_session());
         }
@@ -1589,11 +1606,10 @@ impl SessionObject {
             .state
             .lock()
             .map_err(|_| zbus::fdo::Error::Failed("session state lock poisoned".into()))?;
-        if !state.devices.contains_key(&(major, minor)) {
-            state.devices.insert(
-                (major, minor),
-                open_device(major, minor).map_err(dbus_error)?,
-            );
+        if let std::collections::hash_map::Entry::Vacant(entry) =
+            state.devices.entry((major, minor))
+        {
+            entry.insert(open_device(major, minor).map_err(dbus_error)?);
         }
         let fd = state
             .devices
@@ -1614,9 +1630,13 @@ impl SessionObject {
         Ok(())
     }
 
-    fn pause_device_complete(&self, _major: u32, _minor: u32) {}
+    fn pause_device_complete(&self, major: u32, minor: u32) {
+        let _ = (major, minor);
+    }
 
-    fn set_idle_hint(&self, _idle: bool) {}
+    fn set_idle_hint(&self, idle: bool) {
+        let _ = idle;
+    }
 
     fn set_locked_hint(&self, locked: bool) -> zbus::fdo::Result<()> {
         set_locked(&self.id, locked)
@@ -1641,10 +1661,11 @@ impl SessionObject {
 
     fn set_brightness(
         &self,
-        _subsystem: String,
-        _device: String,
-        _brightness: u32,
+        subsystem: String,
+        device: String,
+        brightness: u32,
     ) -> zbus::fdo::Result<()> {
+        let _ = (subsystem, device, brightness);
         // Brightness is hardware-specific and is intentionally handled by
         // the desktop's backlight service.  Accept the standard call so a
         // desktop does not fail its session setup on RustD-only systems.
@@ -1864,7 +1885,8 @@ impl SeatObject {
         }
     }
 
-    fn switch_to(&self, _vtnr: u32) -> zbus::fdo::Result<()> {
+    fn switch_to(&self, vtnr: u32) -> zbus::fdo::Result<()> {
+        let _ = vtnr;
         Ok(())
     }
 
@@ -2031,7 +2053,7 @@ mod tests {
 
     #[test]
     fn session_seats_are_retained_alongside_the_local_seat() {
-        let sessions = vec![Session {
+        let sessions = [Session {
             seat: "seat1".into(),
             ..Session::default()
         }];
