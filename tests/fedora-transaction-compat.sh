@@ -6,7 +6,8 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT HUP INT TERM
 mkdir -p "$WORK/bin" "$WORK/system" "$WORK/user" "$WORK/preset" "$WORK/user-preset" \
-    "$WORK/native-system" "$WORK/native-user" "$WORK/global-user" "$WORK/markers" "$WORK/manager/system"
+    "$WORK/empty-preset" "$WORK/native-system" "$WORK/native-user" "$WORK/global-user" \
+    "$WORK/markers" "$WORK/manager/system"
 LOG=$WORK/rustctl.log
 
 cat > "$WORK/bin/rustctl" <<'EOF'
@@ -73,6 +74,12 @@ grep -Fq 'enable demo.service' "$LOG"
 "$WORK/bin/systemctl" preset --global demo-user.service
 [[ -L "$WORK/native-user/demo-user.service" ]]
 [[ -L "$WORK/global-user/default.target.wants/demo-user.service" ]]
+
+# An empty preset search path is valid during early package installation. It
+# must resolve to ignore without indexing an empty associative-array key.
+export RUSTD_FEDORA_SYSTEM_PRESET_DIRS="$WORK/empty-preset"
+"$WORK/bin/systemctl" preset demo.service
+export RUSTD_FEDORA_SYSTEM_PRESET_DIRS="$WORK/preset"
 
 "$WORK/bin/systemctl" disable --now --no-warn demo.service
 grep -Eq -- '--now .*disable demo\.service|--now disable demo\.service' "$LOG"
