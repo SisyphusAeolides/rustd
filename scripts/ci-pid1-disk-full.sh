@@ -10,6 +10,7 @@ RELEASE_DIR="${RUSTD_RELEASE_DIR:-target/release}"
 SERIAL_LOG="${RUSTD_PID1_SERIAL_LOG:-pid1-disk-full.log}"
 KERNEL="${RUSTD_PID1_KERNEL:-}"
 QEMU_TIMEOUT="${RUSTD_PID1_QEMU_TIMEOUT:-120s}"
+QEMU="${RUSTD_QEMU_BINARY:-}"
 
 cleanup() {
     status=$?
@@ -26,12 +27,20 @@ for binary in rustd rustctl rustd-journald rustd-cat; do
         exit 1
     }
 done
-for command in busybox cpio gzip ldd qemu-system-x86_64 timeout; do
+for command in busybox cpio gzip ldd timeout; do
     command -v "$command" >/dev/null || {
         echo "required command not found: $command" >&2
         exit 1
     }
 done
+if [[ -z "$QEMU" ]]; then
+    QEMU="$(command -v qemu-system-x86_64 || true)"
+    [[ -n "$QEMU" ]] || QEMU=/usr/libexec/qemu-kvm
+fi
+[[ -x "$QEMU" ]] || {
+    echo "required QEMU x86_64 binary not found" >&2
+    exit 1
+}
 
 if [[ -z "$KERNEL" ]]; then
     KERNEL="$(find /boot -maxdepth 1 -type f -name 'vmlinuz-*' -print | sort -V | tail -1)"
@@ -257,7 +266,7 @@ INITRAMFS="$ROOT/rustd-pid1-disk-full.cpio.gz"
 
 set +e
 timeout --signal=TERM --kill-after=5s "$QEMU_TIMEOUT" \
-    qemu-system-x86_64 \
+    "$QEMU" \
     -machine accel=tcg -cpu max -m 512M -smp 2 \
     -kernel "$KERNEL" -initrd "$INITRAMFS" \
     -append "console=ttyS0 panic=-1 random.trust_cpu=on rustd.unit=default.target rustd.log_target=console" \
