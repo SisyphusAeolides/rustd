@@ -1,11 +1,11 @@
-# RPM RustD Cutover
+# RPM/DNF RustD Cutover
 
 This directory contains the RPM/DNF compatibility and packaging surfaces used
 by the exclusive ArachOS RustD installation. The source path is retained for
 the existing compatibility build layout.
 
 The compatibility entry points are **not systemd implementations**. They exist
-so already-built Fedora RPM scriptlets can continue to invoke the conventional
+so already-built bootstrap RPM scriptlets can continue to invoke the conventional
 transaction command names while all service-manager actions are executed by
 RustD (`rustctl`, `rustd-tmpfiles`, `rustd-sysusers`, `rustd-sysctl`,
 `rustd-binfmt`, and `rustudevadm`).
