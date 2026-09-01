@@ -1,0 +1,17 @@
+[Unit]
+Description=RustD Journal Socket (/dev/log)
+DefaultDependencies=no
+Before=sockets.target
+IgnoreOnIsolate=yes
+
+[Socket]
+ListenDatagram=/run/rustd/journal/dev-log
+PassCredentials=yes
+Service=rustd-journald.service
+SocketMode=0666
+Symlinks=/dev/log
+ReceiveBuffer=8M
+SendBuffer=8M
+
+[Install]
+WantedBy=sockets.target

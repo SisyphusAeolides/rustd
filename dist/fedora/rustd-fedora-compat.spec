@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        15%{?dist}
+Release:        16%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -275,6 +275,9 @@ done
 %{_prefix}/lib/dracut/modules.d/99img-lib/*
 
 %changelog
+* Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-16
+- Coordinate Fedora transaction compatibility with RustD journal sockets
+
 * Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-15
 - Require LVM userspace for the RustD initramfs compatibility module
 

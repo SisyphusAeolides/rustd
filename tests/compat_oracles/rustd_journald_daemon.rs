@@ -24,14 +24,19 @@ fn isolated_daemon_persists_datagram_and_stdout_entries_then_exits_on_sigterm() 
     let mut daemon = start_daemon(&runtime_directory, &journal_directory);
 
     let datagram_path = runtime_directory.join("socket");
+    let syslog_path = runtime_directory.join("dev-log");
     let stdout_path = runtime_directory.join("stdout");
     wait_for_path(&datagram_path);
+    wait_for_path(&syslog_path);
     wait_for_path(&stdout_path);
 
     let client = UnixDatagram::unbound().expect("create datagram client");
     client
         .send_to(b"MESSAGE=datagram message\nPRIORITY=5\n", &datagram_path)
         .expect("send journal datagram");
+    client
+        .send_to(b"MESSAGE=syslog message\nPRIORITY=4\n", &syslog_path)
+        .expect("send syslog datagram");
 
     let mut stdout = UnixStream::connect(&stdout_path).expect("connect journal stdout");
     stdout
@@ -40,6 +45,7 @@ fn isolated_daemon_persists_datagram_and_stdout_entries_then_exits_on_sigterm() 
     drop(stdout);
 
     wait_for_file_bytes(&journal_file, b"datagram message");
+    wait_for_file_bytes(&journal_file, b"syslog message");
     wait_for_file_bytes(&journal_file, b"stdout message");
 
     // Safety: daemon.id() is the PID returned by this test's own child spawn.
@@ -48,10 +54,12 @@ fn isolated_daemon_persists_datagram_and_stdout_entries_then_exits_on_sigterm() 
     assert_eq!(signal_result, 0, "send SIGTERM to journald");
     wait_for_successful_exit(&mut daemon);
     wait_for_absent(&datagram_path);
+    wait_for_absent(&syslog_path);
     wait_for_absent(&stdout_path);
 
     let mut restarted = start_daemon(&runtime_directory, &journal_directory);
     wait_for_path(&datagram_path);
+    wait_for_path(&syslog_path);
     wait_for_path(&stdout_path);
     client
         .send_to(b"MESSAGE=restart message\nPRIORITY=6\n", &datagram_path)
@@ -63,6 +71,7 @@ fn isolated_daemon_persists_datagram_and_stdout_entries_then_exits_on_sigterm() 
     let signal_result = unsafe { libc::kill(restarted.id() as libc::pid_t, libc::SIGTERM) };
     assert_eq!(signal_result, 0, "send SIGTERM to restarted journald");
     wait_for_successful_exit(&mut restarted);
+    wait_for_absent(&syslog_path);
     wait_for_absent(&datagram_path);
     wait_for_absent(&stdout_path);
 
@@ -84,7 +93,9 @@ fn isolated_daemon_persists_datagram_and_stdout_entries_then_exits_on_sigterm() 
     assert!(rendered.contains("restart message"));
 
     assert!(
-        datagram_path.starts_with(temporary.path()) && stdout_path.starts_with(temporary.path()),
+        datagram_path.starts_with(temporary.path())
+            && syslog_path.starts_with(temporary.path())
+            && stdout_path.starts_with(temporary.path()),
         "the test sockets must remain inside the temporary directory"
     );
 }
@@ -120,31 +131,41 @@ fn socket_activated_daemon_adopts_both_listeners_without_unlinking_them() {
     let journal_directory = temporary.path().join("journal");
     std::fs::create_dir_all(&runtime_directory).expect("create runtime directory");
     let datagram_path = runtime_directory.join("socket");
+    let syslog_path = runtime_directory.join("dev-log");
     let stdout_path = runtime_directory.join("stdout");
     let datagram = UnixDatagram::bind(&datagram_path).expect("bind activated datagram");
+    let syslog = UnixDatagram::bind(&syslog_path).expect("bind activated syslog datagram");
     let stdout = UnixListener::bind(&stdout_path).expect("bind activated stdout");
     let datagram_fd = datagram.into_raw_fd();
+    let syslog_fd = syslog.into_raw_fd();
     let stdout_fd = stdout.into_raw_fd();
+    // Keep the source descriptors out of fd 3..5. The test process may
+    // allocate the listening sockets in that range, and a direct permutation
+    // could overwrite a source before it is copied.
+    let datagram_source = duplicate_activation_fd(datagram_fd).expect("duplicate datagram fd");
+    let stdout_source = duplicate_activation_fd(stdout_fd).expect("duplicate stdout fd");
+    let syslog_source = duplicate_activation_fd(syslog_fd).expect("duplicate syslog fd");
 
     let mut command = Command::new("/bin/sh");
     command
         .arg("-c")
         .arg(
             "RUSTD_LISTEN_PID=$$; export RUSTD_LISTEN_PID; \
-             RUSTD_LISTEN_FDS=2; export RUSTD_LISTEN_FDS; \
-             RUSTD_LISTEN_FDNAMES=datagram:stdout; export RUSTD_LISTEN_FDNAMES; \
+             RUSTD_LISTEN_FDS=3; export RUSTD_LISTEN_FDS; \
+             RUSTD_LISTEN_FDNAMES=datagram:stdout:syslog; export RUSTD_LISTEN_FDNAMES; \
              exec \"$1\" --runtime-directory \"$2\" --journal-directory \"$3\"",
         )
         .arg("rustd-journald-activated")
         .arg(env!("CARGO_BIN_EXE_systemd-journald"))
         .arg(&runtime_directory)
         .arg(&journal_directory);
-    // SAFETY: this pre-exec hook only moves the two owned activation fds to
+    // SAFETY: this pre-exec hook only moves the three owned activation fds to
     // the descriptors reserved by the RustD socket-activation ABI.
     unsafe {
         command.pre_exec(move || {
-            dup2_for_activation(datagram_fd, 3)?;
-            dup2_for_activation(stdout_fd, 4)?;
+            dup2_for_activation(datagram_source, 3)?;
+            dup2_for_activation(stdout_source, 4)?;
+            dup2_for_activation(syslog_source, 5)?;
             Ok(())
         });
     }
@@ -155,12 +176,16 @@ fn socket_activated_daemon_adopts_both_listeners_without_unlinking_them() {
     client
         .send_to(b"MESSAGE=activated datagram\nPRIORITY=5\n", &datagram_path)
         .expect("send activated datagram");
+    client
+        .send_to(b"MESSAGE=activated syslog\nPRIORITY=4\n", &syslog_path)
+        .expect("send activated syslog datagram");
     let mut stream = UnixStream::connect(&stdout_path).expect("connect activated stdout");
     stream
         .write_all(b"activated-test\nactivated.service\n4\n0\n0\n\n0\nactivated stdout\n")
         .expect("write activated stdout");
     drop(stream);
     wait_for_file_bytes(&journal_directory.join("system.journal"), b"activated datagram");
+    wait_for_file_bytes(&journal_directory.join("system.journal"), b"activated syslog");
     wait_for_file_bytes(&journal_directory.join("system.journal"), b"activated stdout");
 
     // Safety: daemon.id() is the PID returned by this test's own child spawn.
@@ -169,8 +194,10 @@ fn socket_activated_daemon_adopts_both_listeners_without_unlinking_them() {
     assert_eq!(signal_result, 0, "send SIGTERM to activated journald");
     wait_for_successful_exit(&mut daemon);
     assert!(datagram_path.exists(), "socket unit retains datagram path");
+    assert!(syslog_path.exists(), "socket unit retains syslog path");
     assert!(stdout_path.exists(), "socket unit retains stdout path");
     std::fs::remove_file(datagram_path).expect("remove test datagram path");
+    std::fs::remove_file(syslog_path).expect("remove test syslog path");
     std::fs::remove_file(stdout_path).expect("remove test stdout path");
 }
 
@@ -189,6 +216,15 @@ fn dup2_for_activation(source: RawFd, target: RawFd) -> std::io::Result<()> {
         unsafe { libc::close(source) };
     }
     Ok(())
+}
+
+fn duplicate_activation_fd(source: RawFd) -> std::io::Result<RawFd> {
+    let duplicate = unsafe { libc::fcntl(source, libc::F_DUPFD_CLOEXEC, 10) };
+    if duplicate < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(duplicate)
+    }
 }
 
 fn start_daemon(runtime_directory: &Path, journal_directory: &Path) -> Child {

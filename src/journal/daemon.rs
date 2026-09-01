@@ -31,7 +31,8 @@ pub const DEFAULT_JOURNAL_FILENAME: &str = "system.journal";
 /// Configuration for one journal daemon instance.
 #[derive(Debug, Clone)]
 pub struct JournalDaemonConfig {
-    /// Directory containing the `socket` and `stdout` UNIX socket paths.
+    /// Directory containing the `socket`, `dev-log`, and `stdout` UNIX socket
+    /// paths.
     pub runtime_directory: PathBuf,
     /// Directory used for the default persistent journal filename.
     pub journal_directory: PathBuf,
@@ -62,7 +63,7 @@ impl JournalDaemonConfig {
     }
 }
 
-/// A running journal daemon with registered datagram and stdout listeners.
+/// A running journal daemon with registered journal listeners.
 pub struct JournalDaemon {
     event_loop: EventLoop,
     sink: Arc<JournalSink>,
@@ -70,11 +71,12 @@ pub struct JournalDaemon {
 }
 
 impl JournalDaemon {
-    /// Create the daemon and bind its two journal sockets.
+    /// Create the daemon and bind its native, syslog, and stdout sockets.
     ///
     /// `runtime_directory` and the journal file parent are created when they
-    /// do not exist. A pre-existing `socket` or `stdout` path is an error,
-    /// preventing an accidental replacement of a live host journal socket.
+    /// do not exist. A pre-existing `socket`, `dev-log`, or `stdout` path is
+    /// an error, preventing an accidental replacement of a live host journal
+    /// socket.
     /// Paths successfully created by this instance are removed during teardown.
     ///
     /// # Errors
@@ -85,9 +87,9 @@ impl JournalDaemon {
     }
 
     /// Create the daemon by adopting the datagram and stdout listeners passed
-    /// by `rustd-journald.socket`, in that order. This mirrors systemd's
-    /// journald socket activation: clients can connect before the daemon
-    /// process is dispatched, and the socket unit retains path ownership.
+    /// by RustD socket units. Descriptors are classified by their kernel
+    /// socket type rather than by activation order, so separate native and
+    /// `/dev/log` socket units can safely activate the same service.
     pub fn new_with_inherited_sockets(
         config: &JournalDaemonConfig,
         listen_fds: Vec<RawFd>,
@@ -120,36 +122,70 @@ impl JournalDaemon {
         // than terminating the daemon between the two binds.
         let mut event_loop = EventLoop::new()?;
 
-        let (receiver, stdout) = if let Some(listen_fds) = inherited_fds {
-            if listen_fds.len() != 2 {
-                let supplied = listen_fds.len();
-                for fd in listen_fds {
-                    // SAFETY: activation descriptors are owned by this
-                    // constructor on the error path.
-                    unsafe { libc::close(fd) };
+        let (receivers, stdout) = if let Some(listen_fds) = inherited_fds {
+            let mut datagram_fds = Vec::new();
+            let mut stdout_fds = Vec::new();
+            for fd in &listen_fds {
+                let is_datagram =
+                    crate::native::is_socket(*fd, libc::AF_UNIX, libc::SOCK_DGRAM, None);
+                let is_stream =
+                    crate::native::is_socket(*fd, libc::AF_UNIX, libc::SOCK_STREAM, Some(true));
+                match (is_datagram, is_stream) {
+                    (Ok(true), _) => datagram_fds.push(*fd),
+                    (_, Ok(true)) => stdout_fds.push(*fd),
+                    (Err(error), _) | (_, Err(error)) => {
+                        close_fds(&listen_fds);
+                        return Err(error).context("classify rustd-journald activation sockets");
+                    }
+                    _ => {
+                        close_fds(&listen_fds);
+                        anyhow::bail!("rustd-journald received an unsupported activation socket");
+                    }
                 }
+            }
+            if datagram_fds.is_empty() || stdout_fds.len() != 1 {
+                close_fds(&listen_fds);
                 anyhow::bail!(
-                    "rustd-journald.socket supplied {}, expected datagram and stdout listeners",
-                    supplied
+                    "rustd-journald expected at least one datagram and exactly one stdout listener, received {} datagram and {} stdout listeners",
+                    datagram_fds.len(),
+                    stdout_fds.len()
                 );
             }
-            let mut fds = listen_fds.into_iter();
-            let receiver_fd = fds.next().expect("validated listener count");
-            let stdout_fd = fds.next().expect("validated listener count");
-            (
-                JournalReceiver::from_inherited_fd(receiver_fd, Arc::clone(&sink))?,
-                StdoutServer::from_inherited_fd(stdout_fd, Arc::clone(&sink))?,
-            )
+
+            let mut receivers = Vec::with_capacity(datagram_fds.len());
+            for (index, fd) in datagram_fds.iter().copied().enumerate() {
+                match JournalReceiver::from_inherited_fd(fd, Arc::clone(&sink)) {
+                    Ok(receiver) => receivers.push(receiver),
+                    Err(error) => {
+                        close_fds(&datagram_fds[index + 1..]);
+                        close_fds(&stdout_fds);
+                        return Err(error).context("adopt rustd-journald datagram listener");
+                    }
+                }
+            }
+            let stdout = match StdoutServer::from_inherited_fd(stdout_fds[0], Arc::clone(&sink)) {
+                Ok(stdout) => stdout,
+                Err(error) => {
+                    return Err(error).context("adopt rustd-journald stdout listener");
+                }
+            };
+            (receivers, stdout)
         } else {
             let receiver_path = config.runtime_directory.join("socket");
+            let syslog_path = config.runtime_directory.join("dev-log");
             let stdout_path = config.runtime_directory.join("stdout");
             (
-                JournalReceiver::bind_at(&receiver_path, Arc::clone(&sink))?,
+                vec![
+                    JournalReceiver::bind_at(&receiver_path, Arc::clone(&sink))?,
+                    JournalReceiver::bind_at(&syslog_path, Arc::clone(&sink))?,
+                ],
                 StdoutServer::bind_at(&stdout_path, Arc::clone(&sink))?,
             )
         };
 
-        event_loop.add_io(receiver.raw_fd(), libc::EPOLLIN as u32, Box::new(receiver))?;
+        for receiver in receivers {
+            event_loop.add_io(receiver.raw_fd(), libc::EPOLLIN as u32, Box::new(receiver))?;
+        }
         event_loop.add_io(stdout.raw_fd(), libc::EPOLLIN as u32, Box::new(stdout))?;
 
         let compatibility_links =
@@ -237,7 +273,7 @@ fn install_compatibility_links(
         )
     })?;
     let mut guards = Vec::new();
-    for name in ["socket", "stdout"] {
+    for name in ["socket", "dev-log", "stdout"] {
         let target = runtime_directory.join(name);
         let path = compatibility_directory.join(name);
         match std::fs::read_link(&path) {
@@ -277,7 +313,55 @@ fn install_compatibility_links(
             Err(error) => return Err(error.into()),
         }
     }
+    if runtime_directory == Path::new(DEFAULT_RUNTIME_DIRECTORY) {
+        let path = Path::new("/dev/log");
+        let target = runtime_directory.join("dev-log");
+        match std::fs::read_link(path) {
+            Ok(existing) if existing == target => guards.push(SymlinkGuard {
+                path: path.to_owned(),
+                target,
+                owned: false,
+            }),
+            Ok(existing) => {
+                anyhow::bail!(
+                    "journal compatibility link {} points to {} instead of {}",
+                    path.display(),
+                    existing.display(),
+                    target.display()
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidInput => {
+                anyhow::bail!(
+                    "journal compatibility path {} exists and is not a symlink",
+                    path.display()
+                );
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                symlink(&target, path).map_err(|error| {
+                    anyhow::anyhow!(
+                        "create journal compatibility link {} -> {}: {error}",
+                        path.display(),
+                        target.display()
+                    )
+                })?;
+                guards.push(SymlinkGuard {
+                    path: path.to_owned(),
+                    target,
+                    owned: true,
+                });
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
     Ok(guards)
+}
+
+fn close_fds(fds: &[RawFd]) {
+    for &fd in fds {
+        // SAFETY: callers pass descriptors owned by the failing activation
+        // path; successful adoption transfers ownership to a Rust wrapper.
+        unsafe { libc::close(fd) };
+    }
 }
 
 fn prepare_directory(path: &Path) -> anyhow::Result<()> {
@@ -347,9 +431,14 @@ mod tests {
             std::fs::read_link(compatibility.join("stdout")).unwrap(),
             runtime.join("stdout")
         );
+        assert_eq!(
+            std::fs::read_link(compatibility.join("dev-log")).unwrap(),
+            runtime.join("dev-log")
+        );
         drop(guards);
         assert!(std::fs::symlink_metadata(compatibility.join("socket")).is_err());
         assert!(std::fs::symlink_metadata(compatibility.join("stdout")).is_err());
+        assert!(std::fs::symlink_metadata(compatibility.join("dev-log")).is_err());
     }
 
     #[test]

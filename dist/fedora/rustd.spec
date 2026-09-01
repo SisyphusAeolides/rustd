@@ -5,7 +5,7 @@
 
 Name:           rustd
 Version:        0.1.2
-Release:        15%{?dist}
+Release:        16%{?dist}
 Summary:        RustD native Linux init and service manager
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -113,6 +113,9 @@ install -Dm0755 dist/fedora/compat/rustd-fedora-cutover \
 %{_libdir}/librustd_manager.so
 
 %changelog
+* Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-16
+- Add native RustD syslog socket activation and socket-unit permissions
+
 * Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-15
 - Harden Fedora preset compatibility and coordinate LVM package availability
 

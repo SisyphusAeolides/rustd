@@ -13,8 +13,9 @@
 //! Upstream reference: `src/core/socket.c` (v261)
 
 use std::ffi::CString;
+use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::io::RawFd;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -44,18 +45,25 @@ const DEFAULT_BACKLOG: libc::c_int = 128;
 /// # Errors
 /// Returns an error if any `Listen*=` directive cannot be bound.
 pub fn open_listen_fds(specs: &[ListenSpec], pass_cred: bool) -> anyhow::Result<Vec<RawFd>> {
+    open_listen_fds_with_options(specs, pass_cred, 0o755, 0o666)
+}
+
+fn open_listen_fds_with_options(
+    specs: &[ListenSpec],
+    pass_cred: bool,
+    directory_mode: u32,
+    socket_mode: u32,
+) -> anyhow::Result<Vec<RawFd>> {
     let mut fds = Vec::with_capacity(specs.len());
 
-    for spec in specs {
-        let fd = open_one(spec)?;
-        if fd < 0 {
-            return Err(anyhow!(
-                "listen {} {}: errno {}",
-                spec.kind,
-                spec.address,
-                -fd
-            ));
-        }
+    for (index, spec) in specs.iter().enumerate() {
+        let fd = match open_one(spec, directory_mode, socket_mode) {
+            Ok(fd) => fd,
+            Err(error) => {
+                close_listen_fds(&fds, &specs[..index]);
+                return Err(error);
+            }
+        };
 
         // Apply PassCredentials= if requested.
         if pass_cred
@@ -64,7 +72,16 @@ pub fn open_listen_fds(specs: &[ListenSpec], pass_cred: bool) -> anyhow::Result<
                 "Stream" | "Datagram" | "SequentialPacket"
             )
         {
-            unsafe { rustd_socket_set_passcred(fd, 1) };
+            let result = unsafe { rustd_socket_set_passcred(fd, 1) };
+            if result < 0 {
+                close_listen_fds(&fds, &specs[..index]);
+                unsafe { libc::close(fd) };
+                return Err(anyhow!(
+                    "failed to enable credentials on {}: errno {}",
+                    spec.address,
+                    -result
+                ));
+            }
         }
 
         fds.push(fd);
@@ -74,18 +91,13 @@ pub fn open_listen_fds(specs: &[ListenSpec], pass_cred: bool) -> anyhow::Result<
 }
 
 /// Open a single listener fd for one `ListenSpec`.
-fn open_one(spec: &ListenSpec) -> anyhow::Result<RawFd> {
+fn open_one(spec: &ListenSpec, directory_mode: u32, socket_mode: u32) -> anyhow::Result<RawFd> {
     // Absolute UNIX paths need their parent directories, which early boot often
     // has not created yet (for example `/run/dbus` before dbus.socket binds).
     if spec.address.starts_with('/') {
         if let Some(parent) = Path::new(&spec.address).parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).map_err(|error| {
-                    anyhow!(
-                        "failed to create listen directory {}: {error}",
-                        parent.display()
-                    )
-                })?;
+                ensure_directory(parent, directory_mode)?;
             }
         }
     }
@@ -126,8 +138,203 @@ fn open_one(spec: &ListenSpec) -> anyhow::Result<RawFd> {
             -fd
         ))
     } else {
+        let result = unsafe { libc::fchmod(fd, socket_mode as libc::mode_t) };
+        if result < 0 {
+            let error = std::io::Error::last_os_error();
+            unsafe { libc::close(fd) };
+            return Err(anyhow!(
+                "failed to set mode {:04o} on {}: {error}",
+                socket_mode,
+                spec.address
+            ));
+        }
+        // Linux does not propagate fchmod(2) on an AF_UNIX socket descriptor
+        // to the filesystem socket inode. Apply the mode to the pathname as
+        // well, matching systemd's umask-before-bind behavior.
+        if spec.address.starts_with('/') {
+            std::fs::set_permissions(&spec.address, std::fs::Permissions::from_mode(socket_mode))
+                .map_err(|error| {
+                unsafe { libc::close(fd) };
+                anyhow!(
+                    "failed to set mode {:04o} on {}: {error}",
+                    socket_mode,
+                    spec.address
+                )
+            })?;
+        }
         Ok(fd)
     }
+}
+
+fn parse_mode(value: &str, default: u32, setting: &str) -> anyhow::Result<u32> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(default);
+    }
+    let digits = value.strip_prefix("0o").unwrap_or(value);
+    let mode = u32::from_str_radix(digits, 8)
+        .map_err(|error| anyhow!("invalid {setting}={value}: {error}"))?;
+    if mode > 0o7777 {
+        return Err(anyhow!("invalid {setting}={value}: mode exceeds 07777"));
+    }
+    Ok(mode)
+}
+
+/// Create a directory path, applying `DirectoryMode` only to components that
+/// this activation creates. Existing system directories are left untouched.
+fn ensure_directory(path: &Path, mode: u32) -> anyhow::Result<()> {
+    if !path.is_absolute() {
+        return Err(anyhow!(
+            "listen directory must be absolute: {}",
+            path.display()
+        ));
+    }
+
+    let mut missing = Vec::new();
+    let mut current = path.to_owned();
+    loop {
+        match std::fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata.file_type().is_symlink() || !metadata.is_dir() {
+                    return Err(anyhow!(
+                        "listen directory is not a real directory: {}",
+                        current.display()
+                    ));
+                }
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(current.clone());
+                let Some(parent) = current.parent() else {
+                    return Err(anyhow!(
+                        "cannot find parent for listen directory {}",
+                        current.display()
+                    ));
+                };
+                current = parent.to_owned();
+            }
+            Err(error) => {
+                return Err(anyhow!(
+                    "inspect listen directory {}: {error}",
+                    current.display()
+                ));
+            }
+        }
+    }
+
+    for directory in missing.into_iter().rev() {
+        match std::fs::create_dir(&directory) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(anyhow!(
+                    "failed to create listen directory {}: {error}",
+                    directory.display()
+                ));
+            }
+        }
+        let metadata = std::fs::symlink_metadata(&directory)?;
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Err(anyhow!(
+                "listen directory is not a real directory: {}",
+                directory.display()
+            ));
+        }
+        std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(mode)).map_err(
+            |error| {
+                anyhow!(
+                    "set mode on listen directory {}: {error}",
+                    directory.display()
+                )
+            },
+        )?;
+    }
+
+    Ok(())
+}
+
+#[derive(Debug)]
+struct SocketSymlinkGuard {
+    path: PathBuf,
+    target: PathBuf,
+}
+
+impl Drop for SocketSymlinkGuard {
+    fn drop(&mut self) {
+        if std::fs::read_link(&self.path).ok().as_deref() == Some(self.target.as_path()) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+}
+
+fn install_socket_symlinks(
+    symlinks: &[String],
+    specs: &[ListenSpec],
+    directory_mode: u32,
+) -> anyhow::Result<Vec<SocketSymlinkGuard>> {
+    if symlinks.is_empty() {
+        return Ok(Vec::new());
+    }
+    let target = specs
+        .iter()
+        .find(|spec| spec.address.starts_with('/'))
+        .map(|spec| PathBuf::from(&spec.address))
+        .ok_or_else(|| anyhow!("Socket Symlinks= requires an absolute Listen*= path"))?;
+    let mut guards = Vec::with_capacity(symlinks.len());
+
+    for link in symlinks {
+        let path = PathBuf::from(link);
+        if !path.is_absolute() {
+            return Err(anyhow!("socket symlink path must be absolute: {link}"));
+        }
+        if path == target {
+            return Err(anyhow!(
+                "socket symlink path cannot equal its listen path: {link}"
+            ));
+        }
+        if let Some(parent) = path.parent() {
+            ensure_directory(parent, directory_mode)?;
+        }
+
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                let existing = std::fs::read_link(&path)?;
+                if existing != target {
+                    return Err(anyhow!(
+                        "socket symlink {} points to {} instead of {}",
+                        path.display(),
+                        existing.display(),
+                        target.display()
+                    ));
+                }
+                guards.push(SocketSymlinkGuard {
+                    path,
+                    target: target.clone(),
+                });
+            }
+            Ok(_) => {
+                return Err(anyhow!(
+                    "socket symlink path exists and is not a symlink: {}",
+                    path.display()
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::os::unix::fs::symlink(&target, &path).map_err(|error| {
+                    anyhow!(
+                        "create socket symlink {} -> {}: {error}",
+                        path.display(),
+                        target.display()
+                    )
+                })?;
+                guards.push(SocketSymlinkGuard {
+                    path,
+                    target: target.clone(),
+                });
+            }
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(guards)
 }
 
 /// Close all fds in `fds` and remove any `AF_UNIX` socket paths.
@@ -173,6 +380,8 @@ pub struct SocketRecord {
     pub listen_fds: Vec<RawFd>,
     /// Event-loop registrations which trigger the companion service.
     pub source_ids: Vec<SourceId>,
+    /// Symlinks owned by this active socket unit.
+    symlink_guards: Vec<SocketSymlinkGuard>,
 }
 
 impl Drop for SocketRecord {
@@ -210,12 +419,30 @@ pub fn activate_socket(
         ));
     };
 
-    let fds = open_listen_fds(&sock.specific.listen, sock.specific.pass_credentials)?;
+    let directory_mode = parse_mode(&sock.specific.directory_mode, 0o755, "DirectoryMode")?;
+    let socket_mode = parse_mode(&sock.specific.socket_mode, 0o666, "SocketMode")?;
+    let fds = open_listen_fds_with_options(
+        &sock.specific.listen,
+        sock.specific.pass_credentials,
+        directory_mode,
+        socket_mode,
+    )?;
     apply_socket_opts(
         &fds,
         sock.specific.receive_buffer,
         sock.specific.send_buffer,
     );
+    let symlink_guards = match install_socket_symlinks(
+        &sock.specific.symlinks,
+        &sock.specific.listen,
+        directory_mode,
+    ) {
+        Ok(guards) => guards,
+        Err(error) => {
+            close_listen_fds(&fds, &sock.specific.listen);
+            return Err(error);
+        }
+    };
 
     let service_name = triggered_service_name(record.loaded.name(), &sock.specific.service);
     let trigger_limit = Arc::new(Mutex::new(TriggerLimit::new(
@@ -241,6 +468,7 @@ pub fn activate_socket(
                 for source_id in source_ids {
                     let _ = event_loop.remove_io(source_id);
                 }
+                drop(symlink_guards);
                 close_listen_fds(&fds, &sock.specific.listen);
                 return Err(error);
             }
@@ -249,6 +477,7 @@ pub fn activate_socket(
 
     sock_rec.listen_fds = fds;
     sock_rec.source_ids = source_ids;
+    sock_rec.symlink_guards = symlink_guards;
     record.state = UnitState::Active;
 
     Ok(())
@@ -266,6 +495,7 @@ pub fn deactivate_socket(
     for source_id in sock_rec.source_ids.drain(..) {
         let _ = event_loop.remove_io(source_id);
     }
+    sock_rec.symlink_guards.clear();
     close_listen_fds(&sock_rec.listen_fds, &sock.specific.listen);
     sock_rec.listen_fds.clear();
     record.state = UnitState::Inactive;
@@ -410,10 +640,14 @@ mod tests {
     #[test]
     fn opens_linux_abstract_unix_listener_from_at_address() {
         let address = format!("@rustd-abstract-test-{}", std::process::id());
-        let fd = open_one(&ListenSpec {
-            kind: "Stream".to_owned(),
-            address: address.clone(),
-        })
+        let fd = open_one(
+            &ListenSpec {
+                kind: "Stream".to_owned(),
+                address: address.clone(),
+            },
+            0o755,
+            0o666,
+        )
         .unwrap();
         let mut socket_address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
         let mut length = std::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
@@ -470,6 +704,56 @@ mod tests {
         assert_eq!(job.unit_name, "trigger.service");
 
         deactivate_socket(&mut record, &mut socket_record, &mut event_loop);
+    }
+
+    #[test]
+    fn socket_activation_applies_modes_and_removes_declared_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let socket_path = root.path().join("nested/activation.sock");
+        let symlink_path = root.path().join("dev/log");
+        let loaded = LoadedUnit::Socket(Box::new(ParsedUnit {
+            name: "journal.socket".to_owned(),
+            source_path: PathBuf::from("/fake/journal.socket"),
+            unit: UnitSection::default(),
+            install: InstallSection::default(),
+            specific: SocketSection {
+                listen: vec![ListenSpec {
+                    kind: "Datagram".to_owned(),
+                    address: socket_path.display().to_string(),
+                }],
+                socket_mode: "0600".to_owned(),
+                directory_mode: "0700".to_owned(),
+                symlinks: vec![symlink_path.display().to_string()],
+                ..Default::default()
+            },
+        }));
+        let mut record = UnitRecord::new(loaded);
+        let mut socket_record = SocketRecord::default();
+        let mut event_loop = EventLoop::new().unwrap();
+        let queue = Arc::new(Mutex::new(JobQueue::default()));
+
+        activate_socket(&mut record, &mut socket_record, &mut event_loop, &queue).unwrap();
+        assert_eq!(
+            std::fs::metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::symlink_metadata(socket_path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777,
+            0o700
+        );
+        assert_eq!(std::fs::read_link(&symlink_path).unwrap(), socket_path);
+
+        deactivate_socket(&mut record, &mut socket_record, &mut event_loop);
+        assert!(!socket_path.exists());
+        assert!(std::fs::symlink_metadata(&symlink_path).is_err());
     }
 
     #[test]

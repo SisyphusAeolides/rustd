@@ -79,7 +79,7 @@ else
     fail "init.scope is failed"
 fi
 
-for socket in /run/rustd/journal/socket /run/rustd/journal/stdout; do
+for socket in /run/rustd/journal/socket /run/rustd/journal/dev-log /run/rustd/journal/stdout /dev/log; do
     if [ -S "${socket}" ]; then
         pass "${socket} exists"
     else

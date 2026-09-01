@@ -265,7 +265,9 @@ check-packaging:
 	! grep -Fq '/run/systemd' packaging/tmpfiles/rustd.conf; \
 	test -d packaging/rustd; \
 	test ! -e packaging/systemd; \
-	for unit in default.target graphical.target sysinit.target basic.target multi-user.target rescue.target emergency.target shutdown.target umount.target getty.target getty@.service serial-getty@.service container-getty@.service console-getty.service dbus.service display-manager.service plasmalogin.service rustd-journald.socket rustd-journald.service rustd-logind.service rustd-udevd.service rustd-tmpfiles-setup.service rustd-tmpfiles-setup-dev.service rustd-udev-trigger.service rustd-udev-settle.service rustd-user-sessions.service user@.service; do test -f "packaging/rustd/$$unit"; done; \
+	for unit in default.target graphical.target sysinit.target basic.target multi-user.target rescue.target emergency.target shutdown.target umount.target getty.target getty@.service serial-getty@.service container-getty@.service console-getty.service dbus.service display-manager.service plasmalogin.service rustd-journald.socket rustd-journald-dev-log.socket rustd-journald.service rustd-logind.service rustd-udevd.service rustd-tmpfiles-setup.service rustd-tmpfiles-setup-dev.service rustd-udev-trigger.service rustd-udev-settle.service rustd-user-sessions.service user@.service; do test -f "packaging/rustd/$$unit"; done; \
+	grep -Fq 'rustd-journald-dev-log.socket' packaging/rustd/rustd-journald.service; \
+	grep -Fq 'Symlinks=/dev/log' packaging/rustd/rustd-journald-dev-log.socket; \
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd-journald --runtime-directory /run/rustd/journal' packaging/rustd/rustd-journald.service; \
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd-logind' packaging/rustd/rustd-logind.service; \
 	grep -Fq 'ConditionPathExists=/sys' packaging/rustd/rustd-udevd.service; \

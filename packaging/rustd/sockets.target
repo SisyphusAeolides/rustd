@@ -1,2 +1,4 @@
 [Unit]
 Description=RustD Socket Units
+Wants=rustd-journald.socket rustd-journald-dev-log.socket
+After=rustd-journald.socket rustd-journald-dev-log.socket

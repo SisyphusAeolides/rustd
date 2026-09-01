@@ -34,6 +34,9 @@ use crate::journal::socket::SocketPathGuard;
 
 /// The native `RustD` journal datagram path used by installed execution.
 pub const DEFAULT_SOCKET_PATH: &str = "/run/rustd/journal/socket";
+/// The native `RustD` syslog-compatible datagram path used by installed
+/// execution and exposed through `/dev/log`.
+pub const DEFAULT_SYSLOG_SOCKET_PATH: &str = "/run/rustd/journal/dev-log";
 
 pub struct JournalReceiver {
     pub fd: RawFd,
