@@ -46,7 +46,7 @@ jobs:
             printf 'schema=rustd-json-varlink-staged-v1\nstatus=pass\ntested_sha=%s\nbehavior_outcome=success\nbackend=json-c+af-unix\nsystemd_headers=none\n' "$GITHUB_SHA" > certification/json-varlink-staged-latest.txt
             rm -f certification/json-varlink-staged-diagnostic.txt
             git add libs/compat/sd_json_varlink_impl.c certification/json-varlink-staged-latest.txt certification/json-varlink-staged-diagnostic.txt
-            git config user.name 'Kenny Glowner'
+            git config user.name 'Kenny Glauner'
             git config user.email 'SisyphusAeolides@pm.me'
             git commit -m 'Certify JSON Varlink compatibility engine'
             git push origin HEAD:main
@@ -59,7 +59,7 @@ jobs:
           mkdir -p certification
           { printf 'schema=rustd-json-varlink-diagnostic-v1\nstatus=failure\ntested_sha=%s\nrc=%s\n--- tail ---\n' "$GITHUB_SHA" "$rc"; tail -n 200 /tmp/json-varlink.log; } > certification/json-varlink-staged-diagnostic.txt
           git add certification/json-varlink-staged-diagnostic.txt
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record JSON Varlink diagnostic'
           git push origin HEAD:main

@@ -65,7 +65,7 @@ jobs:
           git rebase --autostash origin/main
           git add libs/maps/libsystemd.map libs/maps/libudev.map
           git diff --cached --check
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Complete Fedora ELF version namespaces'
           git push origin HEAD:main

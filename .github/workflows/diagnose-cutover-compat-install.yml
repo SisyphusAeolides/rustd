@@ -47,7 +47,7 @@ jobs:
             tail -n 240 /tmp/cutover-install.log || true
           } > certification/cutover-install-diagnostic.txt
           git add certification/cutover-install-diagnostic.txt
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record cutover install diagnostic'
           git push origin HEAD:main

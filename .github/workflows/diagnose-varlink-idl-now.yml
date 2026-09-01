@@ -46,7 +46,7 @@ jobs:
             printf 'schema=rustd-varlink-idl-v1\nstatus=pass\ntested_sha=%s\nbehavior_outcome=success\ngrammar=varlink-official\n' "$GITHUB_SHA" > certification/varlink-idl-latest.txt
             rm -f certification/varlink-idl-diagnostic.txt
             git add libs/compat/sd_json_varlink_abi.h certification/varlink-idl-latest.txt certification/varlink-idl-diagnostic.txt
-            git config user.name 'Kenny Glowner'
+            git config user.name 'Kenny Glauner'
             git config user.email 'SisyphusAeolides@pm.me'
             git commit -m 'Certify Varlink IDL compatibility parser'
             git push origin HEAD:main
@@ -59,7 +59,7 @@ jobs:
           mkdir -p certification
           { printf 'schema=rustd-varlink-idl-diagnostic-v1\nstatus=failure\ntested_sha=%s\nrc=%s\n--- tail ---\n' "$GITHUB_SHA" "$rc"; tail -n 200 /tmp/varlink-idl.log; } > certification/varlink-idl-diagnostic.txt
           git add certification/varlink-idl-diagnostic.txt
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record Varlink IDL diagnostic'
           git push origin HEAD:main

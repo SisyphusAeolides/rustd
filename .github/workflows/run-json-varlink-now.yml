@@ -39,7 +39,7 @@ jobs:
           rm -f certification/json-varlink-staged-diagnostic.txt .github/workflows/run-json-varlink-now.yml
           git add -A libs/compat/sd_json_varlink_impl.c certification .github/workflows/run-json-varlink-now.yml
           git diff --cached --check
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Certify JSON Varlink compatibility engine'
           git push origin HEAD:main

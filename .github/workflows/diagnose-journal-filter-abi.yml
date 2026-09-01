@@ -51,7 +51,7 @@ jobs:
             tail -n 180 /tmp/journal-filter.log
           } > certification/journal-filter-diagnostic.txt
           git add certification/journal-filter-diagnostic.txt
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record journal filter closure diagnostic'
           git push origin HEAD:main

@@ -64,7 +64,7 @@ jobs:
           } > certification/fedora-transaction-latest.txt
           git add certification/fedora-transaction-latest.txt
           git diff --cached --check
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m "Record Fedora transaction ${outcome}" || exit 0
             bash scripts/push-certification-voucher.sh

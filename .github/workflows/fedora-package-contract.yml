@@ -78,7 +78,7 @@ jobs:
           } > certification/fedora-package-contract-latest.txt
           git add certification/fedora-package-contract-latest.txt
           git diff --cached --check
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m "Record Fedora package contract ${outcome}" || exit 0
           bash scripts/push-certification-voucher.sh

@@ -50,7 +50,7 @@ jobs:
             tail -n 200 /tmp/sd-bus-bridge.log
           } > certification/sd-bus-bridge-diagnostic.txt
           git add certification/sd-bus-bridge-diagnostic.txt
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record sd-bus bridge diagnostic'
           git push origin HEAD:main

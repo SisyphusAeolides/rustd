@@ -56,7 +56,7 @@ jobs:
             tail -n 240 /tmp/release-closure.log
           } > certification/release-closure-diagnostic.txt
           git add certification/release-closure-diagnostic.txt
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record release closure diagnostic'
           git push origin HEAD:main

@@ -23,7 +23,7 @@ jobs:
           printf '\n# triggered from %s\n' "$GITHUB_SHA" >> .github/workflows/land-compat-event-engine-v2.yml
           rm -f .github/compat-event-engine-trigger .github/workflows/trigger-compat-event-engine.yml
           git add -A .github/compat-event-engine-trigger .github/workflows/trigger-compat-event-engine.yml .github/workflows/land-compat-event-engine-v2.yml
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Trigger verified compatibility event engine'
           git push origin HEAD:main

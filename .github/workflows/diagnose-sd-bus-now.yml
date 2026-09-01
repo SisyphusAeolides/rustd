@@ -48,7 +48,7 @@ jobs:
           mkdir -p certification
           { printf 'schema=rustd-sd-bus-diagnostic-v2\nstatus=failure\ntested_sha=%s\nrc=%s\n--- tail ---\n' "$GITHUB_SHA" "$rc"; tail -n 240 /tmp/sd-bus.log; } > certification/sd-bus-bridge-diagnostic.txt
           git add certification/sd-bus-bridge-diagnostic.txt
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record exact sd-bus diagnostic'
           git push origin HEAD:main

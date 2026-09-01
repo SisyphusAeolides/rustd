@@ -47,7 +47,7 @@ jobs:
           dbus-run-session -- /tmp/test-sd-bus-impl
           rm -f .github/workflows/fix-sd-bus-async-dispatch.yml
           git add -A libs/compat/sd_bus_impl.c .github/workflows/fix-sd-bus-async-dispatch.yml
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Fix selective sd-bus async dispatch'
           git push origin HEAD:main

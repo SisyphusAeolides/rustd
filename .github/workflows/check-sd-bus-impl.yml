@@ -62,7 +62,7 @@ jobs:
           fi
           git add -A certification/
           if ! git diff --cached --quiet; then
-            git config user.name 'Kenny Glowner'
+            git config user.name 'Kenny Glauner'
             git config user.email 'SisyphusAeolides@pm.me'
             git commit -m "Record staged sd-bus compile $status"
             bash scripts/push-certification-voucher.sh

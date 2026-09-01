@@ -95,7 +95,7 @@ jobs:
               [ "$status" = pass ]
               exit
           fi
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m "Record ReadWritePaths certification $status"
           bash scripts/push-certification-voucher.sh

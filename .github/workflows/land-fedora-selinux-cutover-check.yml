@@ -41,7 +41,7 @@ jobs:
           git rebase --autostash origin/main
           git add scripts/fedora-cutover-gate.sh
           git diff --cached --check
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Require enforcing SELinux for Fedora cutover'
           git push origin HEAD:main

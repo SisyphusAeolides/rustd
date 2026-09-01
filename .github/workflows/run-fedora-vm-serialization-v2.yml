@@ -53,7 +53,7 @@ jobs:
             .github/workflows/land-fedora-vm-serialization.yml \
             .github/workflows/run-fedora-vm-serialization-v2.yml
           git diff --cached --check
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Keep Fedora VM certification running'
           git push origin HEAD:main

@@ -42,7 +42,7 @@ jobs:
           mkdir -p certification
           { printf 'schema=rustd-journal-filter-diagnostic-v2\nstatus=failure\ntested_sha=%s\nrc=%s\n--- tail ---\n' "$GITHUB_SHA" "$rc"; tail -n 240 /tmp/journal-filter.log; } > certification/journal-filter-diagnostic.txt
           git add certification/journal-filter-diagnostic.txt
-          git config user.name 'Kenny Glowner'
+          git config user.name 'Kenny Glauner'
           git config user.email 'SisyphusAeolides@pm.me'
           git commit -m 'Record exact journal filter diagnostic'
           git push origin HEAD:main

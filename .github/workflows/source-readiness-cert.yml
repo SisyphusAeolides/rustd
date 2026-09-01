@@ -46,7 +46,7 @@ jobs:
           cp /tmp/source-readiness-latest.json certification/source-readiness-latest.json
           git add certification/source-readiness-latest.json
           if ! git diff --cached --quiet; then
-            git config user.name 'Kenny Glowner'
+            git config user.name 'Kenny Glauner'
             git config user.email 'SisyphusAeolides@pm.me'
             git commit -m 'Record exact source readiness'
             bash scripts/push-certification-voucher.sh

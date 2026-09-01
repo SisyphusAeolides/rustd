@@ -11,7 +11,7 @@ import sys
 
 SYSTEMD_INCLUDE = re.compile(r"#\s*include\s*[<\"]systemd/")
 SYSTEMD_NEEDED = re.compile(r"\bNEEDED\b.*\blibsystemd\.so")
-EXPECTED_REQUIRED = 335
+EXPECTED_REQUIRED = 338
 
 
 def fail(message: str) -> None:
