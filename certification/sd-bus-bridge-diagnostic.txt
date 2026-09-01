@@ -1,0 +1,6 @@
+schema=rustd-sd-bus-diagnostic-v2
+status=failure
+tested_sha=c7e7e88314e0f800bdf97b11160dd4f29772c5dd
+rc=134
+--- tail ---
+test-sd-bus-impl: libs/tests/test_sd_bus_impl.c:495: test_raw_peer_call: Assertion `sd_bus_process(bus, NULL) > 0' failed.
