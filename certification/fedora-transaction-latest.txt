@@ -1,6 +1,6 @@
 schema=rustd-fedora-transaction-v1
 status=pass
-tested_sha=b655ceaecd43343fa83be955a5411e43e5f2f4a0
+tested_sha=c7e7e88314e0f800bdf97b11160dd4f29772c5dd
 systemctl=rustd-backed
 update_helper=rustd-backed
 tmpfiles=rustd-backed
