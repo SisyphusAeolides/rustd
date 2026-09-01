@@ -1,6 +1,6 @@
 schema=rustd-fedora-package-contract-v5
-status=failure
-tested_sha=c7e7e88314e0f800bdf97b11160dd4f29772c5dd
+status=success
+tested_sha=0b3ce62e82f264334682029cd783de69657f8577
 selinux_reference_policy=compiled
 rpm_specs=parsed
 capability.systemd=rustd-fedora-compat
@@ -12,13 +12,3 @@ stage.nss=rustd-resolved-nss
 stage.systemd_erasure=forbidden
 exclusive.pretrans_auth_guard=required
 owner.init=rustd-fedora-compat
---- tail ---
-==> dist/fedora/rustd-compat-libs.spec
-==> dist/fedora/rustd-fedora-compat.spec
-==> dist/fedora/rustd-selinux.spec
-==> dist/fedora/rustd.spec
-make: Entering directory '/tmp/tmp.beVFvNMVGQ/selinux'
-Compiling targeted rustd_fedora module
-Creating targeted rustd_fedora.pp policy package
-rm tmp/rustd_fedora.mod tmp/rustd_fedora.mod.fc
-make: Leaving directory '/tmp/tmp.beVFvNMVGQ/selinux'
