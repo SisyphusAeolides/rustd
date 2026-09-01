@@ -101,7 +101,7 @@ jobs:
             --setopt=rustd.gpgcheck=0
           )
 
-          # DNF5 may unpack libgcc before the filesystem package in a fresh
+          # The package manager may unpack libgcc before the filesystem package in a fresh
           # installroot, turning /lib64 into a directory before filesystem can
           # install the merged-/usr symlink. Bootstrap filesystem separately.
           dnf -y "${base_common[@]}" install filesystem
