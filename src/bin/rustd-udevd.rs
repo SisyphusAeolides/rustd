@@ -3,8 +3,8 @@
 
 use clap::{Parser, ValueEnum};
 use rustd::udev::{
-    add_persistent_storage_links, apply_rules, load_rules, persist_device, probe_block_metadata,
-    Device, Rule,
+    add_persistent_storage_links, apply_rules, load_rules, persist_device,
+    populate_device_mapper_metadata, probe_block_metadata, Device, Rule,
 };
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
@@ -192,6 +192,7 @@ fn process_device(
         device.properties.insert(key.clone(), value.clone());
     }
     probe_block_metadata(device);
+    populate_device_mapper_metadata(device);
     // Persistent links must be available while rules are evaluated. Dracut's
     // live-root rule matches the by-label link and queues the squashfs mount
     // from that event; adding the links after rule evaluation leaves a

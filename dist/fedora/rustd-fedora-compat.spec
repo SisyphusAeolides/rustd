@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        9%{?dist}
+Release:        10%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -119,6 +119,14 @@ bash -n dist/fedora/dracut/00systemd-initrd/module-setup.sh
 grep -Fq 'echo base' dist/fedora/dracut/00systemd-initrd/module-setup.sh
 grep -Fq '/usr/lib/systemd/systemd-udevd' dist/fedora/dracut/00systemd-initrd/module-setup.sh
 grep -Fq '/usr/lib/rustd/rustd-udevd' dist/fedora/dracut/00systemd-initrd/module-setup.sh
+test -x dist/fedora/dracut/91rustd-lvm/module-setup.sh
+test -x dist/fedora/dracut/91rustd-lvm/lvm_scan.sh
+bash -n dist/fedora/dracut/91rustd-lvm/module-setup.sh
+bash -n dist/fedora/dracut/91rustd-lvm/lvm_scan.sh
+grep -Fq 'force_add_dracutmodules+=" base udev-rules rustd-selinux-initramfs rustd-lvm "' \
+    dist/fedora/90-rustd-dracut.conf
+grep -Fq 'lvm_scan.stock' dist/fedora/dracut/91rustd-lvm/module-setup.sh
+grep -Fq -- '--noudevsync' dist/fedora/dracut/91rustd-lvm/lvm_scan.sh
 for file in \
     dist/fedora/dracut/00dmsquash-live/*.sh \
     dist/fedora/dracut/00livenet/*.sh \
@@ -161,6 +169,7 @@ install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_prefix}/lib/dracut/modules.d/00dmsquash-live \
            %{buildroot}%{_prefix}/lib/dracut/modules.d/00livenet \
            %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs \
+           %{buildroot}%{_prefix}/lib/dracut/modules.d/91rustd-lvm \
            %{buildroot}%{_prefix}/lib/dracut/modules.d/99img-lib
 install -m0755 dist/fedora/compat/systemctl %{buildroot}%{_bindir}/systemctl
 install -m0755 dist/fedora/compat/systemd-tmpfiles %{buildroot}%{_bindir}/systemd-tmpfiles
@@ -197,6 +206,10 @@ install -m0755 dist/fedora/dracut/76rustd-selinux-initramfs/module-setup.sh \
     %{buildroot}%{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
 install -m0755 dist/fedora/dracut/00systemd-initrd/module-setup.sh \
     %{buildroot}%{_prefix}/lib/dracut/modules.d/00systemd-initrd/module-setup.sh
+install -m0755 dist/fedora/dracut/91rustd-lvm/module-setup.sh \
+    %{buildroot}%{_prefix}/lib/dracut/modules.d/91rustd-lvm/module-setup.sh
+install -m0755 dist/fedora/dracut/91rustd-lvm/lvm_scan.sh \
+    %{buildroot}%{_prefix}/lib/dracut/modules.d/91rustd-lvm/lvm_scan.sh
 for file in dist/fedora/dracut/00dmsquash-live/*.sh; do
     install -m0755 "$file" \
         %{buildroot}%{_prefix}/lib/dracut/modules.d/00dmsquash-live/"$(basename "$file")"
@@ -241,9 +254,14 @@ done
 %{_prefix}/lib/dracut/modules.d/00dmsquash-live/*
 %{_prefix}/lib/dracut/modules.d/00livenet/*
 %{_prefix}/lib/dracut/modules.d/76rustd-selinux-initramfs/module-setup.sh
+%{_prefix}/lib/dracut/modules.d/91rustd-lvm/module-setup.sh
+%{_prefix}/lib/dracut/modules.d/91rustd-lvm/lvm_scan.sh
 %{_prefix}/lib/dracut/modules.d/99img-lib/*
 
 %changelog
+* Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-10
+- Make RustD-owned initramfs LVM activation independent of systemd-udev cookies
+
 * Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-9
 - Coordinate the standard systemd D-Bus compatibility namespace
 - Keep graphical live-session startup and udev coldplug on RustD

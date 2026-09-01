@@ -621,6 +621,94 @@ pub fn probe_block_metadata(device: &mut Device) {
     }
 }
 
+/// Populate the device-mapper properties and links that early userspace needs
+/// before it can mount an LVM-backed root filesystem.
+///
+/// The initramfs intentionally uses RustD's reduced udev rule set. Fedora's
+/// full device-mapper rules normally obtain these values from the uevent
+/// cookie and create both `/dev/mapper/*` and `/dev/<vg>/<lv>`. Kernel DM
+/// events do not reliably carry the name on every path, so derive it from
+/// sysfs and use `dmsetup splitname` for the LVM-compatible namespace.
+pub fn populate_device_mapper_metadata(device: &mut Device) {
+    if device.subsystem != "block" && !device.kernel.starts_with("dm-") {
+        return;
+    }
+
+    let dm_name = device
+        .properties
+        .get("DM_NAME")
+        .cloned()
+        .filter(|name| valid_link_component(name))
+        .or_else(|| read_attr(&device.syspath, "dm/name"));
+    let Some(dm_name) = dm_name.filter(|name| valid_link_component(name)) else {
+        return;
+    };
+
+    device
+        .properties
+        .entry("DM_NAME".to_string())
+        .or_insert_with(|| dm_name.clone());
+    device
+        .properties
+        .entry("DM_UDEV_RULES_VSN".to_string())
+        .or_insert_with(|| "3".to_string());
+    device.symlinks.insert(format!("mapper/{dm_name}"));
+    device
+        .symlinks
+        .insert(format!("disk/by-id/dm-name-{dm_name}"));
+
+    if let Some(dm_uuid) = device
+        .properties
+        .get("DM_UUID")
+        .cloned()
+        .filter(|uuid| valid_link_component(uuid))
+        .or_else(|| read_attr(&device.syspath, "dm/uuid"))
+    {
+        device
+            .properties
+            .entry("DM_UUID".to_string())
+            .or_insert_with(|| dm_uuid.clone());
+        device
+            .symlinks
+            .insert(format!("disk/by-id/dm-uuid-{dm_uuid}"));
+    }
+
+    // dmsetup is already required by dracut's device-mapper module. Its
+    // splitname output handles escaped hyphens and other valid LVM names;
+    // silently retaining the mapper link is preferable if the helper is not
+    // present in a reduced initramfs.
+    if let Ok(output) = Command::new("dmsetup")
+        .args(["splitname", "--nameprefixes", "--noheadings", "--rows"])
+        .arg(&dm_name)
+        .output()
+    {
+        for line in String::from_utf8_lossy(&output.stdout).lines() {
+            let Some((key, raw_value)) = line.split_once('=') else {
+                continue;
+            };
+            let value = unquote_import_value(raw_value);
+            if !value.is_empty() {
+                device.properties.insert(key.to_string(), value);
+            }
+        }
+    }
+
+    let volume_group = device.property("DM_VG_NAME");
+    let logical_volume = device.property("DM_LV_NAME");
+    if valid_link_component(&volume_group)
+        && valid_link_component(&logical_volume)
+        && device.property("DM_LV_LAYER").is_empty()
+    {
+        device
+            .symlinks
+            .insert(format!("{volume_group}/{logical_volume}"));
+    }
+}
+
+fn valid_link_component(value: &str) -> bool {
+    !value.is_empty() && value != "." && value != ".." && !value.contains('/')
+}
+
 fn udev_escape(value: &str) -> String {
     let mut escaped = String::new();
     for byte in value.bytes() {
@@ -1171,5 +1259,29 @@ mod tests {
         assert!(device.symlinks.contains("disk/by-uuid/1234-abcd"));
         assert!(device.symlinks.contains("disk/by-label/root\\x20disk"));
         assert!(device.symlinks.contains("disk/by-partuuid/part-uuid"));
+    }
+
+    #[test]
+    fn device_mapper_metadata_creates_mapper_and_lvm_links() {
+        let mut device = Device {
+            kernel: "dm-0".into(),
+            subsystem: "block".into(),
+            ..Device::default()
+        };
+        device
+            .properties
+            .insert("DM_NAME".into(), "fedora_fedora-root".into());
+        device
+            .properties
+            .insert("DM_UUID".into(), "LVM-root-uuid".into());
+        device
+            .properties
+            .insert("DM_VG_NAME".into(), "fedora_fedora".into());
+        device.properties.insert("DM_LV_NAME".into(), "root".into());
+
+        populate_device_mapper_metadata(&mut device);
+
+        assert!(device.symlinks.contains("mapper/fedora_fedora-root"));
+        assert!(device.symlinks.contains("fedora_fedora/root"));
     }
 }
