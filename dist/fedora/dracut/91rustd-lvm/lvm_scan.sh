@@ -8,6 +8,18 @@
 
 rustd_lvm=/usr/lib/rustd/initrd/lvm.real
 
+# Fedora's stock scanner normally receives one marker from 64-lvm.rules for
+# each LVM2 PV. Keep the wrapper self-sufficient when early coldplug was
+# performed through RustD's reduced rule engine and that RUN action was not
+# delivered.
+for sysdev in /sys/class/block/*; do
+    test -e "$sysdev/dev" || continue
+    node=/dev/${sysdev##*/}
+    lvm_type=$(blkid -p -o value -s TYPE "$node" 2>/dev/null) || lvm_type=
+    test "$lvm_type" = LVM2_member || continue
+    : > "/tmp/.lvm_scan-${sysdev##*/}"
+done
+
 lvm() {
     case "${1:-}" in
         lvchange|vgchange)

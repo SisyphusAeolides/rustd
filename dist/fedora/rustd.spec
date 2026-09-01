@@ -5,7 +5,7 @@
 
 Name:           rustd
 Version:        0.1.2
-Release:        10%{?dist}
+Release:        11%{?dist}
 Summary:        RustD native Linux init and service manager
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -111,6 +111,9 @@ install -Dm0755 dist/fedora/compat/rustd-fedora-cutover \
 %{_libdir}/librustd_manager.so
 
 %changelog
+* Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-11
+- Coordinate the RustD initramfs LVM settled-initqueue fallback
+
 * Mon Aug 31 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-10
 - Publish RustD device-mapper links for RustD-owned initramfs LVM boot
 
