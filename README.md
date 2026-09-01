@@ -13,8 +13,8 @@ reference architecture and implementation parity is not a release gate.
 
 For ArachOS, RustD is the measured PID 1 payload loaded by GRUB into Arach
 Kernel. ArachOS owns the release, repository, and installer while using an
-EL10-compatible RPM ecosystem for package interoperability. That path is
-release-qualified only when Arach Kernel provides the complete Linux process,
+Fedora 45-compatible RPM/DNF package pool for package interoperability. That
+bootstrap path is release-qualified only when Arach Kernel provides the complete Linux process,
 filesystem, cgroup, device, IPC, and networking contracts exercised by the
 packaged RustD service graph.
 
@@ -29,7 +29,7 @@ performance claim still requires boot and workload benchmarks.
 > compatibility-library gates are passing, including 107 native targets and
 > complete validation of the 336-entry compatibility surface. The bounded
 > nonlinear scheduler passes its ordering and bounds tests. The pinned RustD
-> and RustD-resolved revisions also pass the staged EL10 RPM build, `%check`,
+> and RustD-resolved revisions also pass the staged Fedora 45 RPM build, `%check`,
 > and ArachOS candidate-repository validation. The final Arach-Kernel image and
 > installed-system runtime certificate remain open gates.
 >
@@ -136,10 +136,10 @@ and the paired RustD-Resolved release certificate.
 
 ArachOS is the current integration and release-certification target. Its final
 gate uses Arach Kernel, GRUB, RustD PID 1, RustD-resolved, and the RPM/DNF
-userspace selected by graphical Anaconda. Fedora 44 remains a separate
-zero-systemd compatibility campaign, while Arch Linux and compatible
-Arch-based distributions remain supported build and native-install targets;
-neither substitutes for the ArachOS installed-system gate.
+userspace selected by graphical Anaconda. The supplied Fedora 45 netinst image
+and package pool are bootstrap inputs for that target, while Arch Linux and
+compatible Arch-based distributions remain supported build and native-install
+targets; neither substitutes for the ArachOS installed-system gate.
 
 ## ArachOS zero-systemd cutover
 
@@ -148,8 +148,8 @@ solver. A release candidate is not certified until
 `certification/fedora-full-vm-latest.txt` records `status=pass` for the exact
 RustD SHA and its pinned RustD-Resolved SHA.
 
-The campaign performs a destructive conversion of a disposable ArachOS EL10
-VM and requires all of the following:
+The campaign performs a destructive conversion of a disposable ArachOS VM and
+requires all of the following:
 
 - build RustD, RustD-Resolved, compatibility libraries, RPM transaction
   frontends, and SELinux policy from one pinned source pair;
