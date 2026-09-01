@@ -224,9 +224,11 @@ grep -Fq '<allow send_destination="org.freedesktop.systemd1"/>' \
     packaging/dbus/io.rustd.Manager1.conf
 grep -Fq '<allow receive_sender="org.freedesktop.systemd1"/>' \
     packaging/dbus/io.rustd.Manager1.conf
-grep -Fq 'Wants=rustd-remount-fs.service local-fs.target rustd-sysusers.service rustd-tmpfiles-setup.service rustd-tmpfiles-setup-dev.service' \
+# Keep the ordering contract explicit while allowing the target to retain
+# additional early-boot prerequisites (for example the journal socket).
+grep -Eq '^Wants=.*rustd-remount-fs\.service.*local-fs\.target.*rustd-sysusers\.service.*rustd-tmpfiles-setup\.service.*rustd-tmpfiles-setup-dev\.service' \
     packaging/rustd/sysinit.target
-grep -Fq 'After=rustd-remount-fs.service local-fs.target rustd-journald.service rustd-sysusers.service rustd-tmpfiles-setup.service rustd-tmpfiles-setup-dev.service' \
+grep -Eq '^After=.*rustd-remount-fs\.service.*local-fs\.target.*rustd-journald\.service.*rustd-sysusers\.service.*rustd-tmpfiles-setup\.service.*rustd-tmpfiles-setup-dev\.service' \
     packaging/rustd/sysinit.target
 grep -Fxq 'ConditionPathExists=/sys' packaging/rustd/rustd-udevd.service
 ! grep -Fq 'ConditionPathIsReadWrite=/sys' packaging/rustd/rustd-udevd.service
