@@ -16,11 +16,21 @@ depends() {
 }
 
 install() {
+    local stock_scanner=
+
     # Keep the distribution's lvm_scan behavior in sync with dracut. The
     # wrapper below only changes the activation calls that need the legacy
     # device-mapper udev acknowledgement.
-    inst_script "$dracutbasedir/modules.d/90lvm/lvm_scan.sh" \
+    for stock_scanner in \
+        "$dracutbasedir/modules.d/90lvm/lvm_scan.sh" \
+        "$dracutbasedir/modules.d/70lvm/lvm_scan.sh"; do
+        test -f "$stock_scanner" && break
+    done
+    test -f "$stock_scanner"
+    inst_script "$stock_scanner" \
         /usr/lib/rustd/initrd/lvm_scan.stock
     inst_simple /usr/bin/lvm /usr/lib/rustd/initrd/lvm.real
-    inst_script "$moddir/lvm_scan.sh" /sbin/lvm_scan
+    # Fedora's merged-/usr initramfs resolves /sbin/lvm_scan to this path;
+    # install over the stock scanner after preserving its implementation.
+    inst_script "$moddir/lvm_scan.sh" /usr/bin/lvm_scan
 }

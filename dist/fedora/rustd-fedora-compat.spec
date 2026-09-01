@@ -126,6 +126,10 @@ bash -n dist/fedora/dracut/91rustd-lvm/lvm_scan.sh
 grep -Fq 'force_add_dracutmodules+=" base udev-rules rustd-selinux-initramfs rustd-lvm "' \
     dist/fedora/90-rustd-dracut.conf
 grep -Fq 'lvm_scan.stock' dist/fedora/dracut/91rustd-lvm/module-setup.sh
+grep -Fq 'modules.d/90lvm/lvm_scan.sh' dist/fedora/dracut/91rustd-lvm/module-setup.sh
+grep -Fq 'modules.d/70lvm/lvm_scan.sh' dist/fedora/dracut/91rustd-lvm/module-setup.sh
+grep -Fq 'inst_script "$moddir/lvm_scan.sh" /usr/bin/lvm_scan' \
+    dist/fedora/dracut/91rustd-lvm/module-setup.sh
 grep -Fq -- '--noudevsync' dist/fedora/dracut/91rustd-lvm/lvm_scan.sh
 for file in \
     dist/fedora/dracut/00dmsquash-live/*.sh \
