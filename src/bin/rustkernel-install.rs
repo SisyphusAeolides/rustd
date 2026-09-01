@@ -38,6 +38,10 @@ struct Cli {
     #[arg(short = 'v', long)]
     verbose: bool,
 
+    /// Do not invoke kernel-install plugin hooks
+    #[arg(long)]
+    skip_plugins: bool,
+
     /// Do not show headers and footers
     #[arg(long)]
     no_legend: bool,
@@ -77,6 +81,7 @@ struct InstallContext {
     esp_path: PathBuf,
     entry_token: String,
     verbose: bool,
+    skip_plugins: bool,
     root: Option<PathBuf>,
 }
 
@@ -279,7 +284,12 @@ fn run_plugin_hooks(
     initrds: &[PathBuf],
     root: Option<&Path>,
     verbose: bool,
+    skip_plugins: bool,
 ) -> anyhow::Result<()> {
+    if skip_plugins {
+        return Ok(());
+    }
+
     let hook_dirs = [
         resolve_root_path(root, "/etc/kernel/install.d"),
         resolve_root_path(root, "/usr/lib/kernel/install.d"),
@@ -354,6 +364,7 @@ fn main() -> anyhow::Result<()> {
         esp_path: esp,
         entry_token: token,
         verbose: cli.verbose,
+        skip_plugins: cli.skip_plugins,
         root: cli.root,
     };
 
@@ -463,7 +474,8 @@ fn cmd_add(
     }
     fs::write(&entry_file, entry_content)?;
 
-    // Run plugin hooks
+    // Run plugin hooks unless the caller is performing an explicit artifact
+    // reconciliation that owns its own initramfs and bootloader steps.
     run_plugin_hooks(
         "add",
         version,
@@ -472,6 +484,7 @@ fn cmd_add(
         initrds,
         ctx.root.as_deref(),
         ctx.verbose,
+        ctx.skip_plugins,
     )?;
 
     println!(
@@ -504,7 +517,8 @@ fn cmd_remove(ctx: &InstallContext, version: &str) -> anyhow::Result<()> {
         removed = true;
     }
 
-    // Run plugin hooks
+    // Run plugin hooks unless the caller is performing an explicit artifact
+    // reconciliation that owns its own initramfs and bootloader steps.
     run_plugin_hooks(
         "remove",
         version,
@@ -513,6 +527,7 @@ fn cmd_remove(ctx: &InstallContext, version: &str) -> anyhow::Result<()> {
         &[],
         ctx.root.as_deref(),
         ctx.verbose,
+        ctx.skip_plugins,
     )?;
 
     if removed {

@@ -36,6 +36,42 @@ grep -Fxq 'options    root=UUID=11111111-2222-3333-4444-555555555555 rd.lvm.lv=t
 test ! -e "$entry"
 test ! -e "$entry_dir"
 
+plugin="$root/usr/lib/kernel/install.d/99-test-plugin"
+plugin_marker="$root/plugin-marker"
+mkdir -p "$(dirname "$plugin")"
+{
+    printf '%s\n' '#!/bin/sh'
+    printf 'printf "%%s\\n" invoked > %q\n' "$plugin_marker"
+} > "$plugin"
+chmod 0755 "$plugin"
+
+skip_version=7.2.0-skip-plugins-test
+"$bin" --root "$root" --boot-path "$root/boot" --skip-plugins add \
+    "$skip_version" "$work/vmlinuz" "$work/initramfs.img"
+skip_entry="$root/boot/loader/entries/$machine_id-$skip_version.conf"
+skip_entry_dir="$root/boot/$machine_id/$skip_version"
+test -s "$skip_entry"
+test -s "$skip_entry_dir/linux"
+test -s "$skip_entry_dir/initrd"
+test ! -e "$plugin_marker"
+"$bin" --root "$root" --boot-path "$root/boot" --skip-plugins remove \
+    "$skip_version"
+test ! -e "$skip_entry"
+test ! -e "$skip_entry_dir"
+
+plugin_version=7.2.0-plugin-test
+"$bin" --root "$root" --boot-path "$root/boot" add \
+    "$plugin_version" "$work/vmlinuz" "$work/initramfs.img"
+plugin_entry="$root/boot/loader/entries/$machine_id-$plugin_version.conf"
+plugin_entry_dir="$root/boot/$machine_id/$plugin_version"
+test -s "$plugin_entry"
+test -s "$plugin_entry_dir/linux"
+test -s "$plugin_entry_dir/initrd"
+test -s "$plugin_marker"
+"$bin" --root "$root" --boot-path "$root/boot" remove "$plugin_version"
+test ! -e "$plugin_entry"
+test ! -e "$plugin_entry_dir"
+
 mkdir -p "$root/boot/efi/EFI"
 esp_version=7.2.0-esp-test
 "$bin" --root "$root" add \

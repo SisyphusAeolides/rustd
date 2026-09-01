@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        13%{?dist}
+Release:        14%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -274,6 +274,9 @@ done
 %{_prefix}/lib/dracut/modules.d/99img-lib/*
 
 %changelog
+* Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-14
+- Align the kernel installer compatibility wrapper with RustD's plugin controls
+
 * Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-13
 - Route kernel package boot installation through RustD's native kernel installer
 
