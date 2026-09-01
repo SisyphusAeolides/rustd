@@ -5,7 +5,7 @@
 
 Name:           rustd
 Version:        0.1.2
-Release:        12%{?dist}
+Release:        13%{?dist}
 Summary:        RustD native Linux init and service manager
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -65,7 +65,9 @@ export CARGO_NET_OFFLINE=true
 make check-native check-packaging check-libs
 bash -n scripts/fedora-cutover-gate.sh \
     scripts/fedora-vm-guest-cutover.sh \
-    dist/fedora/compat/rustd-fedora-cutover
+    dist/fedora/compat/rustd-fedora-cutover \
+    dist/fedora/compat/kernel-install
+bash tests/kernel-install-compat.sh
 
 %install
 export CARGO_NET_OFFLINE=true
@@ -111,6 +113,9 @@ install -Dm0755 dist/fedora/compat/rustd-fedora-cutover \
 %{_libdir}/librustd_manager.so
 
 %changelog
+* Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-13
+- Delegate kernel installation to RustD and preserve installed root boot options
+
 * Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-12
 - Preserve LVM multiplexer argv[0] while applying RustD initramfs activation flags
 

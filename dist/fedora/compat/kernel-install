@@ -1,14 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
-# RustD owns initramfs generation during image assembly.  Kernel package
-# scripts still call this compatibility entry point, so accept the standard
-# add/remove verbs without handing control to a foreign service manager.
-case "${1:-}" in
-    add|remove|inspect|list)
-        exit 0
-        ;;
-    *)
-        exit 0
-        ;;
-esac
+# Kernel package scriptlets use this standard pathname. Keep the pathname
+# stable for RPM compatibility while delegating the actual boot-artifact
+# transaction to RustD's native implementation.
+if test -x /usr/bin/rustkernel-install; then
+    exec /usr/bin/rustkernel-install "$@"
+fi
+
+printf '%s\n' 'kernel-install: RustD kernel installer is unavailable' >&2
+exit 127

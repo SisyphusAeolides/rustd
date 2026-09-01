@@ -188,11 +188,7 @@ fn get_os_release_field(field: &str, root: Option<&Path>) -> Option<String> {
 }
 
 fn get_kernel_cmdline(root: Option<&Path>) -> String {
-    let files = [
-        "/etc/kernel/cmdline",
-        "/usr/lib/kernel/cmdline",
-        "/proc/cmdline",
-    ];
+    let files = ["/etc/kernel/cmdline", "/usr/lib/kernel/cmdline"];
     for file in &files {
         let path = resolve_root_path(root, file);
         if let Ok(content) = fs::read_to_string(&path) {
@@ -202,7 +198,75 @@ fn get_kernel_cmdline(root: Option<&Path>) -> String {
             }
         }
     }
-    "quiet rw".to_string()
+
+    // During an RPM transaction the target's /proc/cmdline may still be the
+    // installer command line. Derive the installed root from fstab instead of
+    // leaking installer or build-host arguments into the new boot entry.
+    let mut options = read_grub_cmdline(root)
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    if !options.iter().any(|option| option.starts_with("root=")) {
+        if let Some(root_option) = read_fstab_root(root) {
+            options.insert(0, root_option);
+        }
+    }
+    if !options
+        .iter()
+        .any(|option| option == "ro" || option == "rw")
+    {
+        options.push("ro".to_string());
+    }
+    if options.is_empty() {
+        "quiet ro".to_string()
+    } else {
+        options.join(" ")
+    }
+}
+
+fn parse_assignment_value(line: &str, key: &str) -> Option<String> {
+    let value = line.trim().strip_prefix(key)?.strip_prefix('=')?.trim();
+    if value.len() >= 2 {
+        let first = value.as_bytes()[0] as char;
+        let last = value.as_bytes()[value.len() - 1] as char;
+        if (first == '\'' || first == '"') && first == last {
+            return Some(value[1..value.len() - 1].to_string());
+        }
+    }
+    Some(value.to_string())
+}
+
+fn read_grub_cmdline(root: Option<&Path>) -> Option<String> {
+    let path = resolve_root_path(root, "/etc/default/grub");
+    let content = fs::read_to_string(path).ok()?;
+    let mut options = Vec::new();
+    for line in content.lines() {
+        for key in ["GRUB_CMDLINE_LINUX", "GRUB_CMDLINE_LINUX_DEFAULT"] {
+            if let Some(value) = parse_assignment_value(line, key) {
+                if !value.is_empty() {
+                    options.push(value);
+                }
+            }
+        }
+    }
+    (!options.is_empty()).then(|| options.join(" "))
+}
+
+fn read_fstab_root(root: Option<&Path>) -> Option<String> {
+    let path = resolve_root_path(root, "/etc/fstab");
+    let content = fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        let line = line.split('#').next()?.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let fields = line.split_whitespace().collect::<Vec<_>>();
+        if fields.len() >= 2 && fields[1] == "/" && fields[0] != "none" {
+            return Some(format!("root={}", fields[0]));
+        }
+    }
+    None
 }
 
 fn run_plugin_hooks(
@@ -213,7 +277,7 @@ fn run_plugin_hooks(
     initrds: &[PathBuf],
     root: Option<&Path>,
     verbose: bool,
-) {
+) -> anyhow::Result<()> {
     let hook_dirs = [
         resolve_root_path(root, "/etc/kernel/install.d"),
         resolve_root_path(root, "/usr/lib/kernel/install.d"),
@@ -255,21 +319,24 @@ fn run_plugin_hooks(
 
         match cmd.status() {
             Ok(status) => {
-                if !status.success() && verbose {
-                    eprintln!(
-                        "Plugin {} exited with code: {:?}",
+                if !status.success() {
+                    anyhow::bail!(
+                        "kernel-install plugin {} exited with code {:?}",
                         hook.display(),
                         status.code()
                     );
                 }
             }
             Err(e) => {
-                if verbose {
-                    eprintln!("Failed to execute plugin {}: {}", hook.display(), e);
-                }
+                anyhow::bail!(
+                    "failed to execute kernel-install plugin {}: {}",
+                    hook.display(),
+                    e
+                );
             }
         }
     }
+    Ok(())
 }
 
 fn main() -> anyhow::Result<()> {
@@ -403,7 +470,7 @@ fn cmd_add(
         initrds,
         ctx.root.as_deref(),
         ctx.verbose,
-    );
+    )?;
 
     println!(
         "Kernel {} installed successfully to {}",
@@ -444,7 +511,7 @@ fn cmd_remove(ctx: &InstallContext, version: &str) -> anyhow::Result<()> {
         &[],
         ctx.root.as_deref(),
         ctx.verbose,
-    );
+    )?;
 
     if removed {
         println!("Kernel {version} removed successfully.");
