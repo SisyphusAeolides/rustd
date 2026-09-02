@@ -178,11 +178,23 @@ kernel="$(ls -1 /usr/lib/modules | sort -V | tail -1)"
 image="/boot/initramfs-${kernel}.img"
 command -v load_policy >/dev/null
 command -v restorecon >/dev/null
+printf 'rustd cutover: rebuilding initramfs for %s\n' "$kernel"
 dracut --force "$image" "$kernel"
+printf 'rustd cutover: inspecting rebuilt initramfs\n'
 lsinitrd -m "$image" > /var/tmp/rustd-initrd-modules.txt
 lsinitrd "$image" > /var/tmp/rustd-lsinitrd.txt
 
-grep -Eq '^[[:space:]]*selinux([[:space:]]|$)' /var/tmp/rustd-initrd-modules.txt
+# The stock selinux dracut module is intentionally omitted: it is coupled to
+# systemd's early-userspace implementation. RustD's small module only stages
+# the policy inputs; RustD loads the policy after switch_root, when the real
+# root has security labels. Require that RustD module and prove the stock one
+# was not selected.
+grep -Eq '^[[:space:]]*rustd-selinux-initramfs([[:space:]]|$)' \
+    /var/tmp/rustd-initrd-modules.txt
+if grep -Eq '^[[:space:]]*selinux([[:space:]]|$)' /var/tmp/rustd-initrd-modules.txt; then
+    echo 'stock selinux dracut module remains in converted initramfs' >&2
+    exit 1
+fi
 
 bad_dracut_modules="$(
     grep -E '^[[:space:]]*(systemd|dracut-systemd|systemd-[^[:space:]]+)([[:space:]]|$)' \
