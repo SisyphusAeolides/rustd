@@ -11,6 +11,11 @@ GRAPHICAL_ATTESTATION=${RUSTD_GRAPHICAL_ATTESTATION:-}
 PASS=0
 FAIL=0
 PENDING=0
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/rustd-cutover.XXXXXXXX")
+cleanup() {
+    find "$work_dir" -depth -delete 2>/dev/null || :
+}
+trap cleanup EXIT HUP INT TERM
 
 usage() {
     cat <<'EOF'
@@ -84,10 +89,11 @@ else
 fi
 
 # DNF/RPM dependency graph must remain internally consistent after the swap.
-if dnf -q check >/tmp/rustd-fedora-dnf-check.out 2>&1; then
+dnf_check_output="$work_dir/dnf-check.out"
+if dnf -q check >"$dnf_check_output" 2>&1; then
     pass 'dnf dependency check clean'
 else
-    fail "dnf dependency check failed: $(tail -n 20 /tmp/rustd-fedora-dnf-check.out | tr '\n' ' ')"
+    fail "dnf dependency check failed: $(tail -n 20 "$dnf_check_output" | tr '\n' ' ')"
 fi
 
 owner_matches() {
