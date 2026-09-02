@@ -11,6 +11,7 @@ on:
       - scripts/fedora-vm-guest-cutover.sh
       - scripts/audit-systemd-elf-consumers.py
       - scripts/check-compat-closure.py
+      - src/bin/rustd-boot-check-no-failures.rs
       - src/bin/rustd-udevd.rs
       - dist/fedora/**
       - .github/workflows/fedora-full-vm-certification.yml
