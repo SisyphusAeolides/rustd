@@ -4,7 +4,7 @@
 
 Name:           rustd-selinux
 Version:        0.1.2
-Release:        16%{?dist}
+Release:        17%{?dist}
 Summary:        SELinux policy labels and resolver state rules for RustD on Fedora
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -66,6 +66,9 @@ install -D -m0644 selinux-build/%{modulename}.pp.bz2 \
 %selinux_relabel_post -s %{selinuxtype}
 
 %changelog
+* Wed Sep 02 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-17
+- Add Fedora daemon transitions and enforcing-mode boot mount permission
+
 * Tue Sep 01 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-16
 - Coordinate journal socket labels with the native RustD syslog endpoint
 

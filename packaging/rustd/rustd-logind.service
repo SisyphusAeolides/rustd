@@ -1,6 +1,7 @@
 [Unit]
 Description=RustD Login Service
-After=basic.target
+After=basic.target dbus.service
+Wants=dbus.service
 Before=rustd-user-sessions.service shutdown.target
 Conflicts=shutdown.target
 

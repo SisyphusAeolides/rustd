@@ -270,10 +270,22 @@ check-packaging:
 	grep -Fq 'Symlinks=/dev/log' packaging/rustd/rustd-journald-dev-log.socket; \
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd-journald --runtime-directory /run/rustd/journal' packaging/rustd/rustd-journald.service; \
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd-logind' packaging/rustd/rustd-logind.service; \
+	grep -Fq 'After=basic.target dbus.service' packaging/rustd/rustd-logind.service; \
+	grep -Fq 'Wants=dbus.service' packaging/rustd/rustd-logind.service; \
 	grep -Fq 'ConditionPathExists=/sys' packaging/rustd/rustd-udevd.service; \
 	! grep -Fq 'ConditionPathIsReadWrite=/sys' packaging/rustd/rustd-udevd.service; \
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd --user' packaging/rustd/user@.service; \
 	grep -Fq 'ExecStart=/usr/bin/dbus-daemon' packaging/rustd/dbus.service; \
+	grep -Fq 'remove_stock_dbus_aliases' scripts/fedora-vm-guest-cutover.sh; \
+	grep -Fq 'realpath -m' scripts/fedora-vm-guest-cutover.sh; \
+	grep -Fq '/usr/lib/systemd/system/dbus-broker.service' scripts/fedora-vm-guest-cutover.sh; \
+	grep -Fq 'domtrans_pattern(kernel_t, dbusd_exec_t, system_dbusd_t)' dist/fedora/selinux/rustd_fedora.te; \
+	grep -Fq 'domtrans_pattern(kernel_t, NetworkManager_exec_t, NetworkManager_t)' dist/fedora/selinux/rustd_fedora.te; \
+	grep -Fq 'domtrans_pattern(kernel_t, chronyd_exec_t, chronyd_t)' dist/fedora/selinux/rustd_fedora.te; \
+	grep -Fq 'domtrans_pattern(kernel_t, sshd_exec_t, sshd_t)' dist/fedora/selinux/rustd_fedora.te; \
+	grep -Fq 'allow kernel_t boot_t:dir mounton' dist/fedora/selinux/rustd_fedora.te; \
+	grep -Fq 'rustd-hostnamed' dist/fedora/selinux/rustd_fedora.fc; \
+	grep -Fq 'rustd-localed' dist/fedora/selinux/rustd_fedora.fc; \
 	test -f packaging/dbus/io.rustd.Login1.service; \
 	grep -Fq 'Exec=/usr/lib/rustd/rustd-logind' packaging/dbus/io.rustd.Login1.service; \
 	test -f packaging/dbus/org.freedesktop.login1.service; \

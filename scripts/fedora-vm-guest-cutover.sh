@@ -134,6 +134,46 @@ if ((${#residual[@]})); then
         --setopt=clean_requirements_on_remove=False remove "${residual[@]}"
 fi
 
+# Fedora's D-Bus package leaves administrator-level aliases under
+# /etc/systemd/system (and an enabled dbus.socket link).  Those aliases are
+# intentionally outside RPM ownership, so removing systemd does not remove
+# them.  RustD's loader gives /etc/systemd/system precedence over its native
+# /usr/lib/rustd/system directory; if the stale dbus-broker alias survives,
+# RustD starts the broker without the socket activation FD and the bus exits
+# before creating /run/dbus/system_bus_socket.  Remove only symlinks that
+# resolve to the stock Fedora D-Bus units.  Any administrator-owned regular
+# file or unrelated target is a hard migration error rather than something we
+# silently replace.
+remove_stock_dbus_aliases() {
+    local path target
+    while IFS= read -r -d '' path; do
+        [[ -L "$path" ]] || continue
+        # Use lexical canonicalisation rather than readlink -f: the stock
+        # target has already been removed by the exclusive transaction, so
+        # these administrator-owned links are intentionally dangling here.
+        target="$(realpath -m -- "$path" 2>/dev/null || true)"
+        case "$target" in
+            /usr/lib/systemd/system/dbus-broker.service|\
+            /usr/lib/systemd/system/dbus-daemon.service|\
+            /usr/lib/systemd/system/dbus.service|\
+            /usr/lib/systemd/system/dbus.socket)
+                printf 'rustd cutover: removing stale stock D-Bus alias %s -> %s\n' \
+                    "$path" "$target"
+                unlink -- "$path"
+                ;;
+        esac
+    done < <(find /etc/systemd/system -type l -print0 2>/dev/null)
+
+    for path in /etc/systemd/system/dbus.service /etc/systemd/system/dbus.socket; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            echo "administrator D-Bus unit shadows RustD: $path" >&2
+            return 1
+        fi
+    done
+}
+
+remove_stock_dbus_aliases
+
 dnf -q check
 if rpm -qa --qf '%{NAME}\n' | grep -Eq '^systemd($|-)'; then
     echo 'systemd RPM remains after RustD cutover:' >&2

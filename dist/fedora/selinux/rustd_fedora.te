@@ -9,11 +9,26 @@ gen_require(`
     type init_exec_t;
     type init_t;
     type kernel_t;
+    type dbusd_exec_t;
     type system_dbusd_t;
+    type NetworkManager_exec_t;
+    type NetworkManager_t;
+    type chronyd_exec_t;
+    type chronyd_t;
+    type sshd_exec_t;
+    type sshd_t;
+    type systemd_hostnamed_exec_t;
+    type systemd_hostnamed_t;
+    type systemd_localed_exec_t;
+    type systemd_localed_t;
     type systemd_logind_exec_t;
     type systemd_logind_t;
-    type syslogd_var_run_t;
+    type systemd_resolved_exec_t;
     type systemd_resolved_t;
+    type udev_exec_t;
+    type udev_t;
+    type boot_t;
+    type syslogd_var_run_t;
     attribute domain;
     attribute device_node;
 ')
@@ -28,6 +43,28 @@ files_type(rustd_resolved_var_lib_t)
 # the target SELinux policy is not yet active. A newly introduced executable
 # type would otherwise be emitted as unlabeled_t in a live squashfs image.
 can_exec(kernel_t, init_exec_t)
+
+# RustD intentionally keeps its PID-1 process in Fedora's kernel_t domain.
+# Fedora's standard service domains are normally entered from systemd's
+# init_t, so make the equivalent, narrowly scoped transitions explicit for
+# every daemon RustD starts during the Fedora cutover.  This preserves each
+# daemon's existing confinement instead of executing it unconfined in
+# kernel_t.
+domtrans_pattern(kernel_t, dbusd_exec_t, system_dbusd_t)
+domtrans_pattern(kernel_t, NetworkManager_exec_t, NetworkManager_t)
+domtrans_pattern(kernel_t, chronyd_exec_t, chronyd_t)
+domtrans_pattern(kernel_t, sshd_exec_t, sshd_t)
+domtrans_pattern(kernel_t, systemd_hostnamed_exec_t, systemd_hostnamed_t)
+domtrans_pattern(kernel_t, systemd_localed_exec_t, systemd_localed_t)
+domtrans_pattern(kernel_t, systemd_logind_exec_t, systemd_logind_t)
+domtrans_pattern(kernel_t, systemd_resolved_exec_t, systemd_resolved_t)
+domtrans_pattern(kernel_t, udev_exec_t, udev_t)
+
+# Mount units are executed by RustD's kernel_t PID1.  Fedora's init_t policy
+# already permits mounting on boot_t; carry only that directory mountpoint
+# permission across the native manager boundary so /boot/efi and equivalent
+# ESP mounts remain available in enforcing mode.
+allow kernel_t boot_t:dir mounton;
 
 # RustD applies Fedora service hardening in the same child setup phase as
 # systemd, including PR_SET_NO_NEW_PRIVS for units with MemoryDenyWriteExecute,
