@@ -31,6 +31,10 @@ jobs:
         run: |
           case "$CONCLUSION" in
             success) status=pass ;;
+            cancelled|skipped|neutral)
+              echo "VM run concluded $CONCLUSION; no certification result is published."
+              exit 0
+              ;;
             *) status=failure ;;
           esac
           [[ $TESTED_SHA =~ ^[0-9a-f]{40}$ ]]
