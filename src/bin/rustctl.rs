@@ -277,6 +277,9 @@ fn daemon_reexec(options: &Options, units: &[&str]) -> anyhow::Result<i32> {
     if options.root.is_some() {
         anyhow::bail!("daemon-reexec may not be combined with --root");
     }
+    if unsafe { libc::geteuid() } != 0 {
+        anyhow::bail!("daemon-reexec requires root for the system manager");
+    }
 
     let expected_units = loaded_unit_names()?;
     let path = control_socket_path();
@@ -331,6 +334,9 @@ fn machine_transition(
     }
     if options.scope != Scope::System {
         anyhow::bail!("{} is a system-manager operation", transition.name());
+    }
+    if unsafe { libc::geteuid() } != 0 {
+        anyhow::bail!("{} requires root for the system manager", transition.name());
     }
 
     let path = control_socket_path();

@@ -10,6 +10,7 @@
 
 use std::fs;
 use std::io::{Read, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
@@ -69,9 +70,17 @@ impl IpcServer {
 
         let listener = UnixListener::bind(&socket_path)
             .map_err(|error| anyhow::anyhow!("IPC bind {}: {error}", socket_path.display()))?;
-        fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o600)).map_err(|error| {
-            anyhow::anyhow!("IPC permissions {}: {error}", socket_path.display())
-        })?;
+        // System-manager status queries are intentionally available to normal
+        // users, like the standard service-manager CLI. Mutating requests are
+        // still authorized below from SO_PEERCRED; the per-user manager keeps
+        // its owner-only socket because its namespace is already uid-scoped.
+        let socket_mode = match scope {
+            ManagerScope::System => 0o666,
+            ManagerScope::User => 0o600,
+        };
+        fs::set_permissions(&socket_path, fs::Permissions::from_mode(socket_mode)).map_err(
+            |error| anyhow::anyhow!("IPC permissions {}: {error}", socket_path.display()),
+        )?;
         let listener = Arc::new(listener);
         // Spawn server thread.
         let thr_listener = Arc::clone(&listener);
@@ -88,6 +97,7 @@ impl IpcServer {
                     return;
                 }
                 server_loop(
+                    scope,
                     &thr_listener,
                     &thr_snapshot,
                     &thr_jobs,
@@ -114,6 +124,7 @@ impl Drop for IpcServer {
 // ── Server loop ───────────────────────────────────────────────────────────
 
 fn server_loop(
+    scope: ManagerScope,
     listener: &UnixListener,
     snapshot: &Arc<RwLock<Vec<UnitInfo>>>,
     jobs: &Arc<Mutex<JobQueue>>,
@@ -132,9 +143,21 @@ fn server_loop(
                     eprintln!("rustd: native IPC write-timeout setup failed: {error}");
                     continue;
                 }
-                let resp = match read_request_frame(&mut conn) {
+                let resp = match peer_uid(&conn) {
                     Err(error) => IpcResponse::err(error),
-                    Ok(req) => dispatch(req, snapshot, jobs, reload, reset_failed_requests, wake),
+                    Ok(uid) => match read_request_frame(&mut conn) {
+                        Err(error) => IpcResponse::err(error),
+                        Ok(req) => dispatch(
+                            req,
+                            scope,
+                            uid,
+                            snapshot,
+                            jobs,
+                            reload,
+                            reset_failed_requests,
+                            wake,
+                        ),
+                    },
                 };
                 if let Ok(bytes) = encode_response(&resp) {
                     let _ = conn.write_all(&bytes);
@@ -191,12 +214,17 @@ fn read_request_frame(reader: &mut impl Read) -> Result<IpcRequest, String> {
 
 fn dispatch(
     req: IpcRequest,
+    scope: ManagerScope,
+    peer_uid: u32,
     snapshot: &Arc<RwLock<Vec<UnitInfo>>>,
     jobs: &Arc<Mutex<JobQueue>>,
     reload: &Arc<AtomicBool>,
     reset_failed_requests: &ResetFailedRequests,
     wake: &EventLoopWake,
 ) -> IpcResponse {
+    if scope == ManagerScope::System && peer_uid != 0 && !allowed_for_unprivileged(&req) {
+        return IpcResponse::err("permission denied: system-manager mutation requires root");
+    }
     match req {
         IpcRequest::ListUnits => {
             let guard = snapshot
@@ -291,6 +319,53 @@ fn dispatch(
     }
 }
 
+/// Read-only manager observations are safe for normal users. Every operation
+/// that can alter the unit graph, launch/stop a process, reload manager state,
+/// or reset failure state remains root-only. Authentication is performed from
+/// the kernel-provided peer uid rather than the client-supplied JSON frame.
+fn allowed_for_unprivileged(req: &IpcRequest) -> bool {
+    matches!(
+        req,
+        IpcRequest::ListUnits
+            | IpcRequest::ListJobs
+            | IpcRequest::Status { .. }
+            | IpcRequest::IsEnabled { .. }
+            | IpcRequest::IsActive { .. }
+            | IpcRequest::IsFailed { .. }
+    )
+}
+
+fn peer_uid(stream: &std::os::unix::net::UnixStream) -> Result<u32, String> {
+    let mut credentials: libc::ucred = unsafe { std::mem::zeroed() };
+    let mut length: libc::socklen_t = std::mem::size_of::<libc::ucred>()
+        .try_into()
+        .map_err(|_| "peer credential size does not fit socklen_t".to_owned())?;
+    // SAFETY: `credentials` and `length` are valid writable storage for
+    // SO_PEERCRED and live until the syscall returns.
+    let result = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            std::ptr::addr_of_mut!(credentials).cast(),
+            std::ptr::addr_of_mut!(length),
+        )
+    };
+    if result < 0 {
+        return Err(format!(
+            "cannot obtain manager peer credentials: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+    let expected: libc::socklen_t = std::mem::size_of::<libc::ucred>()
+        .try_into()
+        .map_err(|_| "peer credential size does not fit socklen_t".to_owned())?;
+    if length != expected || credentials.uid == u32::MAX {
+        return Err("manager returned invalid peer credentials".to_owned());
+    }
+    Ok(credentials.uid)
+}
+
 fn enqueue_job(
     jobs: &Arc<Mutex<JobQueue>>,
     wake: &EventLoopWake,
@@ -353,5 +428,23 @@ mod tests {
         let mut input = Cursor::new(vec![b' '; FRAME_MAX]);
         let error = read_request_frame(&mut input).expect_err("oversized incomplete request");
         assert!(error.contains("frame limit"));
+    }
+
+    #[test]
+    fn unprivileged_control_is_read_only() {
+        assert!(allowed_for_unprivileged(&IpcRequest::ListUnits));
+        assert!(allowed_for_unprivileged(&IpcRequest::Status {
+            unit: "basic.target".to_owned(),
+        }));
+        assert!(allowed_for_unprivileged(&IpcRequest::IsActive {
+            unit: "sshd.service".to_owned(),
+        }));
+        assert!(!allowed_for_unprivileged(&IpcRequest::Start {
+            unit: "sshd.service".to_owned(),
+        }));
+        assert!(!allowed_for_unprivileged(&IpcRequest::DaemonReload));
+        assert!(!allowed_for_unprivileged(&IpcRequest::ResetFailed {
+            units: vec![]
+        }));
     }
 }

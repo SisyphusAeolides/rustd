@@ -689,10 +689,7 @@ impl Manager {
 
     #[zbus(property)]
     fn n_current_inhibitors(&self) -> u64 {
-        self.inhibitors
-            .lock()
-            .map(|map| map.len() as u64)
-            .unwrap_or(0)
+        self.inhibitors.lock().map_or(0, |map| map.len() as u64)
     }
 
     #[zbus(property)]
