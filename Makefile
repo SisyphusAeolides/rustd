@@ -262,6 +262,8 @@ check-packaging:
 	test -f packaging/tmpfiles/rustd.conf; \
 	grep -Fq '/run/rustd' packaging/tmpfiles/rustd.conf; \
 	grep -Fq '/run/user' packaging/tmpfiles/rustd.conf; \
+	grep -Fq '/var/lib/systemd' packaging/tmpfiles/rustd.conf; \
+	grep -Fq '/var/lib/systemd/random-seed' packaging/tmpfiles/rustd.conf; \
 	! grep -Fq '/run/systemd' packaging/tmpfiles/rustd.conf; \
 	test -d packaging/rustd; \
 	test ! -e packaging/systemd; \
@@ -274,6 +276,8 @@ check-packaging:
 	grep -Fq 'Wants=dbus.service' packaging/rustd/rustd-logind.service; \
 	grep -Fq 'ConditionPathExists=/sys' packaging/rustd/rustd-udevd.service; \
 	! grep -Fq 'ConditionPathIsReadWrite=/sys' packaging/rustd/rustd-udevd.service; \
+	grep -Fxq 'After=rustd-tmpfiles-setup.service' packaging/rustd/rustd-random-seed.service; \
+	grep -Fxq 'Requires=rustd-tmpfiles-setup.service' packaging/rustd/rustd-random-seed.service; \
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd --user' packaging/rustd/user@.service; \
 	grep -Fq 'ExecStart=/usr/bin/dbus-daemon' packaging/rustd/dbus.service; \
 	grep -Fq 'remove_stock_dbus_aliases' scripts/fedora-vm-guest-cutover.sh; \

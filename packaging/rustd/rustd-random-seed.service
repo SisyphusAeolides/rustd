@@ -2,6 +2,8 @@
 Description=RustD Random Seed
 DefaultDependencies=no
 Before=sysinit.target shutdown.target
+After=rustd-tmpfiles-setup.service
+Requires=rustd-tmpfiles-setup.service
 
 [Service]
 Type=oneshot
