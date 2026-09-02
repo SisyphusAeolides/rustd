@@ -3,8 +3,15 @@
 
 use std::env;
 use std::ffi::OsString;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
+use std::net::Shutdown;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::net::UnixStream;
+use std::time::Duration;
+
+use rustd::ipc::{
+    control_socket_path, decode_response, encode_request, IpcData, IpcRequest, IpcResponse,
+};
 
 const HELP: &str = concat!(
     "rustd-boot-check-no-failures [OPTIONS...]\n\n",
@@ -137,31 +144,54 @@ fn log_enabled(priority: u8) -> bool {
 }
 
 fn failed_units_from_manager() -> Result<u32, String> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_io()
-        .build()
-        .map_err(|error| format!("Failed to connect to manager bus: {error}"))?;
-    runtime.block_on(async {
-        // Temporary bridge while RustD's native manager IPC replaces the old
-        // freedesktop manager bus surface. The executable and user-facing
-        // contract are RustD-native; this call site is tracked as protocol
-        // migration debt in the top-level README.
-        let connection = zbus::Connection::system()
-            .await
-            .map_err(|error| format!("Failed to connect to manager bus: {error}"))?;
-        let proxy = zbus::Proxy::new(
-            &connection,
-            "io.rustd.Manager1",
-            "/io/rustd/Manager1",
-            "io.rustd.Manager1.Manager",
+    let path = control_socket_path();
+    let mut stream = UnixStream::connect(&path).map_err(|error| {
+        format!(
+            "Failed to connect to RustD manager at {}: {error}",
+            path.display()
         )
-        .await
-        .map_err(|error| format!("Failed to get failed units counter: {error}"))?;
-        proxy
-            .get_property::<u32>("NFailedUnits")
-            .await
-            .map_err(|error| format!("Failed to get failed units counter: {error}"))
-    })
+    })?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .map_err(|error| format!("Failed to configure RustD manager read timeout: {error}"))?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(5)))
+        .map_err(|error| format!("Failed to configure RustD manager write timeout: {error}"))?;
+    let request = encode_request(&IpcRequest::ListUnits)
+        .map_err(|error| format!("Failed to encode RustD manager request: {error}"))?;
+    stream
+        .write_all(&request)
+        .map_err(|error| format!("Failed to send RustD manager request: {error}"))?;
+    stream
+        .shutdown(Shutdown::Write)
+        .map_err(|error| format!("Failed to finish RustD manager request: {error}"))?;
+    let mut reply = Vec::new();
+    stream
+        .read_to_end(&mut reply)
+        .map_err(|error| format!("Failed to read RustD manager response: {error}"))?;
+    let response = decode_response(&reply)
+        .map_err(|error| format!("Failed to decode RustD manager response: {error}"))?;
+    failed_units_from_response(response)
+}
+
+fn failed_units_from_response(response: IpcResponse) -> Result<u32, String> {
+    if !response.ok {
+        return Err(response
+            .error
+            .unwrap_or_else(|| String::from("RustD manager request failed")));
+    }
+    let Some(IpcData::Units(units)) = response.data else {
+        return Err(String::from(
+            "RustD manager returned an invalid list-units response",
+        ));
+    };
+    u32::try_from(
+        units
+            .iter()
+            .filter(|unit| unit.active_state == "failed")
+            .count(),
+    )
+    .map_err(|_| String::from("RustD manager returned too many units"))
 }
 
 #[cfg(test)]
@@ -181,5 +211,41 @@ mod tests {
     fn native_identity_is_exposed() {
         assert!(HELP.starts_with("rustd-boot-check-no-failures"));
         assert_eq!(VERSION, "rustd-boot-check-no-failures 0.1.0\n");
+    }
+
+    #[test]
+    fn native_ipc_response_counts_failed_units() {
+        let unit = |name: &str, active_state: &str| rustd::ipc::UnitInfo {
+            name: name.to_owned(),
+            load_state: String::from("loaded"),
+            active_state: active_state.to_owned(),
+            sub_state: active_state.to_owned(),
+            description: String::new(),
+            main_pid: None,
+            unit_type: String::from("service"),
+            service_type: Some(String::from("simple")),
+            restart_policy: Some(String::from("no")),
+            service_runtime: Box::default(),
+        };
+        let response = IpcResponse::with_data(IpcData::Units(vec![
+            unit("healthy.service", "active"),
+            unit("failed.service", "failed"),
+            unit("stopped.service", "inactive"),
+        ]));
+        assert_eq!(failed_units_from_response(response), Ok(1));
+    }
+
+    #[test]
+    fn native_ipc_response_rejects_errors_and_wrong_payloads() {
+        assert_eq!(
+            failed_units_from_response(IpcResponse::err("manager unavailable")),
+            Err(String::from("manager unavailable"))
+        );
+        assert_eq!(
+            failed_units_from_response(IpcResponse::ok()),
+            Err(String::from(
+                "RustD manager returned an invalid list-units response"
+            ))
+        );
     }
 }
