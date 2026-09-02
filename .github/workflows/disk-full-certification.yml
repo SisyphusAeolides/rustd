@@ -16,7 +16,7 @@ concurrency:
 jobs:
   disk-full-certification:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -27,8 +27,8 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
-          timeout 8m sudo apt-get -o Acquire::Retries=3 update
-          timeout 8m sudo apt-get -o Acquire::Retries=3 install --yes --no-install-recommends \
+          timeout 12m sudo apt-get -o Acquire::Retries=3 update
+          timeout 20m sudo apt-get -o Acquire::Retries=3 install --yes --no-install-recommends \
             busybox-static cpio gfortran linux-image-generic qemu-system-x86
           kernel="$(ls -1v /boot/vmlinuz-*-generic | tail -1)"
           sudo cp -L "$kernel" "$RUNNER_TEMP/rustd-ci-vmlinuz"
