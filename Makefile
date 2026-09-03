@@ -289,6 +289,7 @@ check-packaging:
 	grep -Fq 'domtrans_pattern(kernel_t, sshd_exec_t, sshd_t)' dist/fedora/selinux/rustd_fedora.te; \
 	grep -Fq 'systemd_manage_random_seed(init_t)' dist/fedora/selinux/rustd_fedora.te; \
 	grep -Fq '%dir %{_sharedstatedir}/systemd' dist/fedora/rustd-fedora-compat.spec; \
+	grep -Fq '%{buildroot}%{_sharedstatedir}/systemd' dist/fedora/rustd-fedora-compat.spec; \
 	grep -Fq '%ghost %{_sharedstatedir}/systemd/random-seed' dist/fedora/rustd-fedora-compat.spec; \
 	grep -Fq '%ghost %{_sharedstatedir}/.ssh-host-keys-migration' dist/fedora/rustd-fedora-compat.spec; \
 	grep -Fq 'files_var_lib_filetrans(init_t, rustd_ssh_marker_t, file' dist/fedora/selinux/rustd_fedora.te; \

@@ -13,7 +13,7 @@
 
 Name:           rustd-fedora-compat
 Version:        0.1.2
-Release:        17%{?dist}
+Release:        18%{?dist}
 Summary:        Fedora RPM transaction compatibility frontends backed by RustD
 License:        LGPL-2.1-or-later
 URL:            https://github.com/SisyphusAeolides/rustd
@@ -171,6 +171,7 @@ install -d %{buildroot}%{_bindir} \
            %{buildroot}%{_prefix}/sbin \
            %{buildroot}%{_prefix}/lib/rustd \
            %{buildroot}%{_prefix}/lib/systemd \
+           %{buildroot}%{_sharedstatedir}/systemd \
            %{buildroot}%{_sysconfdir}/rustd/system/avahi-daemon.service.d \
            %{buildroot}%{_sysconfdir}/rustd/system/auditd.service.d \
            %{buildroot}%{_sysconfdir}/rustd/system/chronyd.service.d \
