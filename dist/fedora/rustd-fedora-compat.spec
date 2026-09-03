@@ -328,11 +328,11 @@ done
 - Provide RustD's systemd-initrd dracut compatibility contract
 - Keep RLC live-image squash support free of systemd implementation modules
 
-* Sun Aug 30 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-2
+* Sun Aug 30 2026 Kenny Glauner <SisyphusAeolides@pm.me> - 0.1.2-2
 - Install a regular initramfs-safe udev compatibility wrapper
 - Explicitly include RustD's udev daemon in dracut images
 
-* Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
+* Tue Aug 18 2026 Kenny Glauner <SisyphusAeolides@pm.me> - 0.1.2-1
 - Require a validated staged PAM and NSS migration before the exclusive swap
 - Own the final /usr/sbin/init path in the conflicting compatibility package
 - Provide exact Fedora manager and udev compatibility capabilities

@@ -111,8 +111,8 @@ install -D -m0644 selinux-build/%{modulename}.pp.bz2 \
 * Sun Aug 30 2026 Sisyphus Aeolides <SisyphusAeolides@pm.me> - 0.1.2-3
 - Bump the coordinated RustD package release for the dracut compatibility module
 
-* Sun Aug 30 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-2
+* Sun Aug 30 2026 Kenny Glauner <SisyphusAeolides@pm.me> - 0.1.2-2
 - Bump the coordinated RustD package release for the initramfs udev fix
 
-* Tue Aug 18 2026 Kenny Glowner <SisyphusAeolides@pm.me> - 0.1.2-1
+* Tue Aug 18 2026 Kenny Glauner <SisyphusAeolides@pm.me> - 0.1.2-1
 - Add Fedora enforcing-mode RustD SELinux policy extension
