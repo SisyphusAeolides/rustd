@@ -13,9 +13,15 @@ FAIL=0
 PENDING=0
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/rustd-cutover.XXXXXXXX")
 cleanup() {
+    local status=$?
+    trap - EXIT HUP INT TERM
     find "$work_dir" -depth -delete 2>/dev/null || :
+    exit "$status"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 usage() {
     cat <<'EOF'
