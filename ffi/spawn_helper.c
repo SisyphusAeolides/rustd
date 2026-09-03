@@ -79,6 +79,31 @@ static void helper_log_kmsg(int error_number, const char *step, int step_line) {
     close(fd);
 }
 
+static void helper_log_stderr(int error_number, const char *step, int step_line) {
+    char line[256];
+    int length = snprintf(
+            line,
+            sizeof(line),
+            "rustd-spawn-helper: %s+%d failed: %s\n",
+            step,
+            step_line,
+            strerror(error_number));
+    if (length <= 0)
+        return;
+
+    size_t offset = 0;
+    while (offset < (size_t)length) {
+        ssize_t written = write(STDERR_FILENO, line + offset, (size_t)length - offset);
+        if (written > 0) {
+            offset += (size_t)written;
+            continue;
+        }
+        if (written < 0 && errno == EINTR)
+            continue;
+        break;
+    }
+}
+
 #define helper_fail(error_number, exit_status) \
     helper_fail_at((error_number), (exit_status), __func__, __LINE__)
 
@@ -94,6 +119,7 @@ static _Noreturn void helper_fail_at(
         } while (written < 0 && errno == EINTR);
     }
     helper_log_kmsg(error_number, step, step_line);
+    helper_log_stderr(error_number, step, step_line);
     _exit(exit_status);
 }
 

@@ -279,7 +279,7 @@ check-packaging:
 	grep -Fxq 'After=rustd-tmpfiles-setup.service' packaging/rustd/rustd-random-seed.service; \
 	grep -Fxq 'Requires=rustd-tmpfiles-setup.service' packaging/rustd/rustd-random-seed.service; \
 	grep -Fq 'ExecStart=/usr/lib/rustd/rustd --user' packaging/rustd/user@.service; \
-	grep -Fq 'ExecStart=/usr/bin/dbus-daemon' packaging/rustd/dbus.service; \
+	grep -Fq 'ExecStart=/usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --nofork --nopidfile' packaging/rustd/dbus.service; \
 	grep -Fq 'remove_stock_dbus_aliases' scripts/fedora-vm-guest-cutover.sh; \
 	grep -Fq 'realpath -m' scripts/fedora-vm-guest-cutover.sh; \
 	grep -Fq '/usr/lib/systemd/system/dbus-broker.service' scripts/fedora-vm-guest-cutover.sh; \
@@ -287,6 +287,11 @@ check-packaging:
 	grep -Fq 'domtrans_pattern(kernel_t, NetworkManager_exec_t, NetworkManager_t)' dist/fedora/selinux/rustd_fedora.te; \
 	grep -Fq 'domtrans_pattern(kernel_t, chronyd_exec_t, chronyd_t)' dist/fedora/selinux/rustd_fedora.te; \
 	grep -Fq 'domtrans_pattern(kernel_t, sshd_exec_t, sshd_t)' dist/fedora/selinux/rustd_fedora.te; \
+	grep -Fq 'systemd_manage_random_seed(init_t)' dist/fedora/selinux/rustd_fedora.te; \
+	grep -Fq '%dir %{_sharedstatedir}/systemd' dist/fedora/rustd-fedora-compat.spec; \
+	grep -Fq '%ghost %{_sharedstatedir}/systemd/random-seed' dist/fedora/rustd-fedora-compat.spec; \
+	grep -Fq '%ghost %{_sharedstatedir}/.ssh-host-keys-migration' dist/fedora/rustd-fedora-compat.spec; \
+	grep -Fq 'files_var_lib_filetrans(init_t, rustd_ssh_marker_t, file' dist/fedora/selinux/rustd_fedora.te; \
 	grep -Fq 'allow kernel_t boot_t:dir mounton' dist/fedora/selinux/rustd_fedora.te; \
 	grep -Fq 'rustd-hostnamed' dist/fedora/selinux/rustd_fedora.fc; \
 	grep -Fq 'rustd-localed' dist/fedora/selinux/rustd_fedora.fc; \

@@ -240,6 +240,9 @@ done
 
 %files
 %license LICENSE*
+%dir %{_sharedstatedir}/systemd
+%ghost %{_sharedstatedir}/systemd/random-seed
+%ghost %{_sharedstatedir}/.ssh-host-keys-migration
 %{_prefix}/sbin/init
 %{_prefix}/sbin/halt
 %{_prefix}/sbin/poweroff

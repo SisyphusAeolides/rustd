@@ -35,6 +35,8 @@ gen_require(`
 
 type rustd_resolved_var_lib_t;
 files_type(rustd_resolved_var_lib_t)
+type rustd_ssh_marker_t;
+files_type(rustd_ssh_marker_t)
 
 # RustD remains Fedora's PID 1 implementation and therefore runs in kernel_t.
 # Its compatibility generators are invoked directly by that PID 1 path, so
@@ -86,6 +88,18 @@ dbus_system_bus_client(kernel_t)
 # name explicitly for both labels used during the PID-1 handoff.
 dbus_connect_system_bus(init_t)
 dbus_connect_system_bus(kernel_t)
+
+# Keep the standard random-seed state usable after the compatibility package
+# replaces Fedora's systemd implementation.  The directory and seed file are
+# deliberately kept at their documented paths so existing tooling continues
+# to work, while the access remains restricted to the init domain.
+systemd_manage_random_seed(init_t)
+
+# Fedora's OpenSSH migration unit records completion in /var/lib.  Keep that
+# marker confined to its own file type while granting init only the directory
+# transition and file operations required to create and update it.
+files_var_lib_filetrans(init_t, rustd_ssh_marker_t, file, ".ssh-host-keys-migration")
+manage_files_pattern(init_t, rustd_ssh_marker_t, rustd_ssh_marker_t)
 
 # The standard login1 D-Bus service is activated by the confined system bus.
 # RustD logind is labeled with Fedora's existing logind entrypoint type, so it

@@ -13,7 +13,7 @@ StandardOutput=null
 StandardError=null
 ExecStartPre=/usr/bin/mkdir -p /run/dbus
 ExecStartPre=/usr/sbin/restorecon -F /run/dbus
-ExecStart=/usr/bin/dbus-daemon --system --nofork --nopidfile
+ExecStart=/usr/bin/dbus-daemon --config-file=/usr/share/dbus-1/system.conf --nofork --nopidfile
 ExecReload=/usr/bin/dbus-send --print-reply --system --type=method_call --dest=org.freedesktop.DBus / org.freedesktop.DBus.ReloadConfig
 OOMScoreAdjust=-900
 LimitNOFILE=16384

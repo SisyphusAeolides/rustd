@@ -289,6 +289,11 @@ jobs:
             done
             [[ $ready == 1 ]] || { tail -n 300 "$serial" >&2 || true; kill "$qemu_pid" || true; exit 1; }
 
+            # Keep the strict assertion below small, but always capture the
+            # state that explains a service failure. This is read-only and
+            # intentionally non-fatal.
+            "${ssh_cmd[@]}" 'set +e; echo "RUSTD_FEDORA_BOOT_DIAGNOSTIC_BEGIN"; rustctl --no-pager --plain status dbus.service chronyd.service ssh-host-keys-migration.service rustd-random-seed.service; rustctl --no-pager --plain list-jobs; sudo ls -ldZ /run/dbus /run/dbus/system_bus_socket /var/lib /var/lib/systemd /var/lib/systemd/random-seed /var/lib/.ssh-host-keys-migration 2>&1; sudo ausearch -m avc -ts boot 2>/dev/null | tail -n 40; echo "RUSTD_FEDORA_BOOT_DIAGNOSTIC_END"' || true
+
             "${ssh_cmd[@]}" 'set -euo pipefail; test "$(sudo readlink -f /proc/1/exe)" = /usr/lib/rustd/rustd; test "$(getenforce)" = Enforcing; sudo dnf -q check; authselect check >/dev/null; if rpm -qa --qf "%{NAME}\n" | grep -Eq "^systemd($|-)"; then exit 1; fi; ! grep -Eq "^[[:alpha:]_][[:alnum:]_-]*:.*[[:space:]](myhostname|resolve|systemd)([[:space:]]|$)" /etc/nsswitch.conf; ! grep -R -E -q "pam_systemd(_home|_loadkey)?\\.so" /etc/pam.d; rustctl --quiet is-active dbus.service; rustctl --quiet is-active NetworkManager.service; rustctl --quiet is-active sshd.service; rustctl --quiet is-active rustd-resolved.service; rustctl --quiet is-active multi-user.target; sudo /usr/lib/rustd/rustd-boot-check-no-failures; getent hosts localhost >/dev/null; getent ahosts fedoraproject.org >/dev/null; rustd-resolvectl status >/dev/null; sudo dnf -q makecache'
 
             if [[ $attempt -eq 1 ]]; then

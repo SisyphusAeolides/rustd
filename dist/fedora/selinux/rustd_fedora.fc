@@ -21,3 +21,6 @@
 
 /var/lib/rustd(/.*)?                             gen_context(system_u:object_r:init_var_lib_t,s0)
 /var/lib/rustd/resolved(/.*)?                    gen_context(system_u:object_r:rustd_resolved_var_lib_t,s0)
+/var/lib/systemd(/.*)?                           gen_context(system_u:object_r:init_var_lib_t,s0)
+/var/lib/systemd/random-seed                     gen_context(system_u:object_r:random_seed_t,s0)
+/var/lib/.ssh-host-keys-migration                -- gen_context(system_u:object_r:rustd_ssh_marker_t,s0)
