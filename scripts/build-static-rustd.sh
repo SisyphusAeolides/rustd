@@ -26,7 +26,7 @@ fi
 "$cargo_bin" build \
     --locked \
     --release \
-    --all-features \
+    --features default \
     --bin rustd \
     --manifest-path "$root/Cargo.toml" \
     --target "$target_spec" \
