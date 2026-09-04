@@ -12,11 +12,10 @@ supported where they make sense, but another init system is not RustD's
 reference architecture and implementation parity is not a release gate.
 
 For ArachOS, RustD is the measured PID 1 payload loaded by GRUB into Arach
-Kernel. ArachOS owns the release, repository, and installer while using an
-Fedora 45-compatible RPM/DNF package pool for package interoperability. That
-bootstrap path is release-qualified only when Arach Kernel provides the complete Linux process,
-filesystem, cgroup, device, IPC, and networking contracts exercised by the
-packaged RustD service graph.
+Kernel. ArachOS owns the release, pacman repository, ArchISO image, and
+Calamares installer. That path is release-qualified only when Arach Kernel
+provides the complete Linux process, filesystem, cgroup, device, IPC, and
+networking contracts exercised by the packaged RustD service graph.
 
 The default manager scheduler includes a bounded nonlinear policy weave using
 Lorenz and Mandelbrot features plus Rössler, logistic-map, Lyapunov, and
@@ -25,12 +24,12 @@ they cannot bypass transaction ordering or configured critical operations.
 Their boundedness and ordering invariants are covered by unit tests, while any
 performance claim still requires boot and workload benchmarks.
 
-> **Current status (2026-08-31):** RustD's native, build, packaging, and
+> **Current status (2026-09-04):** RustD's native, build, packaging, and
 > compatibility-library gates are passing, including 107 native targets and
 > complete validation of the 336-entry compatibility surface. The bounded
 > nonlinear scheduler passes its ordering and bounds tests. The pinned RustD
-> and RustD-resolved revisions also pass the staged Fedora 45 RPM build, `%check`,
-> and ArachOS candidate-repository validation. The final Arach-Kernel image and
+> and RustD-resolved revisions also pass the ArachOS pacman package build and
+> candidate-repository validation. The final Arach-Kernel image and
 > installed-system runtime certificate remain open gates.
 >
 > **Production boundary:** this is not a claim that RustD is a 100% certified,
@@ -135,60 +134,20 @@ and the paired RustD-Resolved release certificate.
 ## Supported platform
 
 ArachOS is the current integration and release-certification target. Its final
-gate uses Arach Kernel, GRUB, RustD PID 1, RustD-resolved, and the RPM/DNF
-userspace selected by graphical Anaconda. The supplied Fedora 45 netinst image
-and package pool are bootstrap inputs for that target, while Arch Linux and
-compatible Arch-based distributions remain supported build and native-install
-targets; neither substitutes for the ArachOS installed-system gate.
+gate uses Arach Kernel, GRUB, RustD PID 1, RustD-resolved, pacman packages,
+ArchISO, and graphical Calamares. Arch Linux and compatible distributions are
+also supported build environments, but they do not substitute for the ArachOS
+installed-system gate.
 
-## ArachOS zero-systemd cutover
+## ArachOS integration
 
-The ArachOS target is deliberately stronger than an installroot dependency
-solver. A release candidate is not certified until
-`certification/fedora-full-vm-latest.txt` records `status=pass` for the exact
-RustD SHA and its pinned RustD-Resolved SHA.
-
-The campaign performs a destructive conversion of a disposable ArachOS VM and
-requires all of the following:
-
-- build RustD, RustD-Resolved, compatibility libraries, RPM transaction
-  frontends, and SELinux policy from one pinned source pair;
-- bind the replacement RPM capabilities to the exact bootstrap `systemd`,
-  `systemd-libs`, and `systemd-udev` EVR measured in the build environment;
-- stage only `rustd-cutover-tools` and `rustd-resolved-nss` first, with no
-  `--allowerasing`, and prove that no pre-existing package was removed or
-  replaced while systemd remains installed and continues to own PID 1;
-- migrate authselect-managed PAM and NSS configuration while the original stack
-  is still present, preserving the selected profile/features and creating a
-  rollback backup;
-- require the final `rustd-fedora-compat` RPM transaction to repeat the PAM,
-  NSS, authselect, and file checks in a fail-closed `%pretrans` guard before it
-  is allowed to erase the old stack;
-- reject unsupported `systemd-homed` and `pam_systemd_loadkey` configurations
-  before the destructive phase rather than silently dropping their semantics;
-- remove every installed RPM whose name is `systemd` or begins `systemd-` and
-  pass `dnf check` afterward;
-- require `/usr/sbin/init` and the legacy transaction entry points to be
-  owned by `rustd-fedora-compat`, compatibility SONAMEs to be owned by
-  `rustd-compat-libs`, the PAM migration helper and module to be owned by
-  `rustd-cutover-tools`, and the DNS NSS module to be owned by
-  `rustd-resolved-nss`;
-- require `/usr/sbin/init` to resolve to `/usr/lib/rustd/rustd` and the legacy
-  udev daemon pathname to be an executable wrapper for RustD's native
-  `rustd-udevd`;
-- rebuild the ArachOS initramfs without systemd implementation modules or
-  executables, while allowing only explicitly tested compatibility pathnames
-  that resolve to RustD code;
-- cold-boot the converted filesystem three times with RustD as PID 1;
-- keep SELinux enforcing and prove D-Bus, NetworkManager, OpenSSH,
-  RustD-Resolved, NSS/DNS, DNF, udev settling, service control, and RustD
-  poweroff remain functional.
-
-The cutover helper is installed as `/usr/sbin/rustd-fedora-cutover` by the
-nonconflicting `rustd-cutover-tools` package. It is a fail-closed migration tool
-for the disposable certification machine and for administrators who deliberately
-choose the same conversion path; it is not a reason to perform an unverified
-in-place conversion on an irreplaceable host.
+ArachOS builds RustD and RustD-resolved from revisions pinned in
+`sources.lock`. The Podman build creates the pacman repository and ArchISO
+image. Disposable QEMU disks are then used to test BIOS and UEFI installer
+boots, installation, cold boot, reboot, shutdown, rescue and emergency modes,
+networking, login, DNS, package transactions, udev settling, and service
+control. A release remains blocked until the exact installed image passes the
+complete campaign with RustD as its only PID 1.
 
 ## Language boundaries
 
