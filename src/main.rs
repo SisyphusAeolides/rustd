@@ -200,6 +200,14 @@ fn main() -> anyhow::Result<()> {
         manager.enqueue_start(&target)?;
     }
 
+    // This line is emitted only after the kernel API mounts, manager graph,
+    // initial sockets, and selected boot target have all been accepted. It is
+    // consumed by the release VM gate as the boundary between boot setup and
+    // the long-running manager event loop.
+    if !user_mode && std::process::id() == 1 {
+        println!("ArachOS: runtime ready");
+    }
+
     // 5. Run until a terminal result.
     let result = manager.run()?;
     let exit_code = manager.exit_code();
