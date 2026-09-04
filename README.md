@@ -101,10 +101,10 @@ The repository now uses RustD identity through its compiled and packaged core:
 - the installer ships native RustD executable names as the authoritative
   interfaces;
 - the supported build surface is native RustD targets;
-- RPM compatibility capabilities, selected legacy executable pathnames,
-  and compatibility SONAMEs are isolated external boundaries backed by RustD
-  code; they are not a second implementation and do not permit systemd RPMs or
-  systemd executable code in a certified cutover;
+- Legacy package capabilities, selected compatibility pathnames, and
+  compatibility SONAMEs are isolated external boundaries backed by RustD code;
+  they are not a second implementation and do not permit foreign init-system
+  executables in a certified cutover;
 - native C/Fortran objects and the static ABI archive use RustD names and
   `librustd_native.a`;
 - manager configuration uses `RUSTD_MANAGER_CONFIG`,
@@ -254,17 +254,17 @@ ultimately demonstrate all of the following:
 6. integrate `rustd-resolved` through native RustD service/runtime paths and
    survive resolver/network restart and reconfiguration;
 7. keep native RustD interfaces authoritative while limiting compatibility
-   pathnames, RPM capabilities, and SONAMEs to measured external boundaries
-   implemented by RustD code;
+   pathnames, package capabilities, and SONAMEs to measured external
+   boundaries implemented by RustD code;
 8. reproduce release artifacts from the locked source tree and pass long-running
    soak/fault-injection tests;
 9. pass `make certify` on the installed candidate while RustD is PID 1;
 10. pass the ArachOS full-VM zero-systemd certificate with zero `systemd*`
-    RPMs, no systemd implementation code in the rebuilt initramfs, SELinux
-    enforcing, and the required networking/login/DNS/package-management stack
-    operational.
+    packages, no foreign init-system implementation code in the rebuilt
+    initramfs, SELinux enforcing, and the required
+    networking/login/DNS/package-management stack operational.
 
-Passing source CI, an RPM dependency solve, or a compatibility symbol count
+Passing source CI, a package dependency solve, or a compatibility symbol count
 alone is deliberately not represented as proof that PID 1 is
 production-certified.
 
