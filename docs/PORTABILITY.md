@@ -22,13 +22,18 @@ Core source under `src/`, `ffi/`, `libs/`, and `nss/` must not hard-code:
 
 ## Distro adapters
 
-Thin packaging and migration assets live outside the portable runtime contract:
+Thin packaging and migration assets live outside the portable runtime contract.
+The authoritative production adapter is the ArachOS ArchISO package set:
 
-| Family | Adapter location |
-|---|---|
-| Arch / CachyOS | `Sisyphus-Repo/rustd`, `Sisyphus-Repo/rustd-resolved` |
-| Fedora / RHEL | `packaging/rpm` (planned) |
-| Debian / Ubuntu | `packaging/debian` (resolver already has stubs) |
+| Family | Adapter location | Release status |
+|---|---|---|
+| Arch / CachyOS | `ArachOS/packaging/pkgbuild/rustd` and `rustd-resolved` | Production path |
+| Fedora / RHEL | `dist/fedora` and compatibility metadata | Legacy compatibility only |
+| Debian / Ubuntu | `packaging/debian` compatibility metadata | Legacy compatibility only |
+
+The ArachOS release does not run DNF, RPM, or Debian package transactions.
+Legacy adapters remain isolated for downstream interoperability and are not
+part of the RustD PID 1 or RustD-resolved production cutover.
 
 Adapters own:
 
