@@ -264,11 +264,13 @@ fn standard_user_unit_search_dirs() -> Vec<PathBuf> {
     paths.push(config_home.join("rustd/user.attached"));
     paths.extend(xdg_search_dirs("XDG_CONFIG_DIRS", "/etc/xdg", "rustd/user"));
     paths.push(PathBuf::from("/etc/rustd/user"));
+    paths.push(PathBuf::from("/etc/systemd/user"));
     if let Some(runtime) = &runtime {
         paths.push(runtime.join("rustd/user"));
         paths.push(runtime.join("rustd/user.attached"));
     }
     paths.push(PathBuf::from("/run/rustd/user"));
+    paths.push(PathBuf::from("/run/systemd/user"));
     if let Some(runtime) = &runtime {
         paths.push(runtime.join("rustd/generator"));
     }
@@ -283,6 +285,13 @@ fn standard_user_unit_search_dirs() -> Vec<PathBuf> {
         PathBuf::from("/usr/local/share/rustd/user"),
         PathBuf::from("/usr/lib/rustd/user"),
         PathBuf::from("/usr/share/rustd/user"),
+        // Third-party Arch packages still install user units under the
+        // conventional systemd directories. Keep them behind native RustD
+        // paths so an administrator's RustD unit always wins.
+        PathBuf::from("/usr/local/lib/systemd/user"),
+        PathBuf::from("/usr/local/share/systemd/user"),
+        PathBuf::from("/usr/lib/systemd/user"),
+        PathBuf::from("/usr/share/systemd/user"),
     ]);
     if let Some(runtime) = runtime {
         paths.push(runtime.join("rustd/generator.late"));

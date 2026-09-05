@@ -1,0 +1,12 @@
+#!/bin/sh
+# RustD compatibility entry point for Arch package transactions.
+set -eu
+
+for candidate in "${RUSTCTL:-}" /usr/bin/rustctl /usr/lib/rustd/rustctl; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+        exec "$candidate" "$@"
+    fi
+done
+
+printf '%s\n' 'systemctl: RustD control client is not installed' >&2
+exit 127

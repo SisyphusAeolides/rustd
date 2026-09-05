@@ -27,6 +27,8 @@ const REEXEC_POLL_INTERVAL: Duration = Duration::from_millis(20);
 enum Scope {
     System,
     User,
+    /// Operate on the global unit files used by every RustD user manager.
+    GlobalUser,
 }
 
 #[derive(Debug)]
@@ -107,11 +109,22 @@ fn run() -> anyhow::Result<i32> {
     if options.now && options.root.is_some() {
         anyhow::bail!("--now may not be combined with --root");
     }
-    if options.scope == Scope::User {
+    if options.scope == Scope::GlobalUser && options.now {
+        anyhow::bail!("--global and --now may not be combined");
+    }
+    let command = positional.first().map_or("help", String::as_str);
+    if options.scope == Scope::GlobalUser
+        && !matches!(
+            command,
+            "enable" | "disable" | "reenable" | "mask" | "unmask" | "is-enabled"
+        )
+    {
+        anyhow::bail!("--global is only valid with unit-file operations");
+    }
+    if matches!(options.scope, Scope::User | Scope::GlobalUser) {
         std::env::set_var("RUSTD_CONTROL_SOCKET", user_control_socket_path());
     }
 
-    let command = positional.first().map_or("help", String::as_str);
     let units: Vec<&str> = positional.iter().skip(1).map(String::as_str).collect();
 
     match command {
@@ -129,6 +142,7 @@ fn run() -> anyhow::Result<i32> {
         "reload" => run_jobs(&units, JobVerb::Reload),
         "enable" => enable_disable(&units, &options, true),
         "disable" => enable_disable(&units, &options, false),
+        "reenable" => reenable(&units, &options),
         "mask" => mask_unmask(&units, &options, true),
         "unmask" => mask_unmask(&units, &options, false),
         "is-enabled" => is_enabled(&units, &options),
@@ -164,6 +178,7 @@ fn parse_args(args: &[String]) -> anyhow::Result<(Options, Vec<String>)> {
                 break;
             }
             "--user" => options.scope = Scope::User,
+            "--global" => options.scope = Scope::GlobalUser,
             "--system" => options.scope = Scope::System,
             "--runtime" => options.runtime = true,
             "--now" => options.now = true,
@@ -505,10 +520,10 @@ fn oneshot_finished(info: &UnitInfo) -> bool {
 fn enable_disable(units: &[&str], options: &Options, enable: bool) -> anyhow::Result<i32> {
     require_units(units)?;
     let root = options.root.as_deref().unwrap_or_else(|| Path::new("/"));
-    let loader = if options.scope == Scope::User {
-        UnitLoader::user()
-    } else {
-        UnitLoader::with_dirs(system_search_dirs(root))
+    let loader = match options.scope {
+        Scope::System => UnitLoader::with_dirs(system_search_dirs(root)),
+        Scope::User => UnitLoader::user(),
+        Scope::GlobalUser => UnitLoader::with_dirs(global_user_search_dirs(root)),
     };
     let control = control_dir(options);
     let mut code = 0;
@@ -534,6 +549,15 @@ fn enable_disable(units: &[&str], options: &Options, enable: bool) -> anyhow::Re
         )?;
     }
     Ok(code)
+}
+
+fn reenable(units: &[&str], options: &Options) -> anyhow::Result<i32> {
+    require_units(units)?;
+    let disabled = enable_disable(units, options, false)?;
+    if disabled != 0 {
+        return Ok(disabled);
+    }
+    enable_disable(units, options, true)
 }
 
 fn set_enabled(
@@ -566,8 +590,11 @@ fn set_enabled(
     for required in &install.required_by {
         destinations.insert(control.join(format!("{required}.requires")).join(unit));
     }
+    for alias in &install.alias {
+        destinations.insert(control.join(alias));
+    }
     if destinations.is_empty() {
-        anyhow::bail!("unit has no [Install] WantedBy= or RequiredBy= entries");
+        anyhow::bail!("unit has no [Install] WantedBy=, RequiredBy=, or Alias= entries");
     }
     for destination in destinations {
         if let Some(parent) = destination.parent() {
@@ -593,11 +620,20 @@ fn remove_enable_links(control: &Path, unit: &str) -> anyhow::Result<()> {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if !(name.ends_with(".wants") || name.ends_with(".requires")) || !path.is_dir() {
+        if name.ends_with(".wants") || name.ends_with(".requires") {
+            if path.is_dir() {
+                let link = path.join(unit);
+                if link.is_symlink() {
+                    fs::remove_file(link)?;
+                }
+            }
             continue;
         }
-        let link = path.join(unit);
-        if link.is_symlink() {
+        let link = path;
+        if link.is_symlink()
+            && fs::read_link(&link)
+                .is_ok_and(|target| target.file_name().and_then(|name| name.to_str()) == Some(unit))
+        {
             fs::remove_file(link)?;
         }
     }
@@ -644,10 +680,10 @@ fn set_masked(control: &Path, unit: &str, mask: bool) -> anyhow::Result<()> {
 fn is_enabled(units: &[&str], options: &Options) -> anyhow::Result<i32> {
     require_units(units)?;
     let root = options.root.as_deref().unwrap_or_else(|| Path::new("/"));
-    let search = if options.scope == Scope::User {
-        UnitLoader::user().search_dirs
-    } else {
-        system_search_dirs(root)
+    let search = match options.scope {
+        Scope::User => UnitLoader::user().search_dirs,
+        Scope::GlobalUser => global_user_search_dirs(root),
+        Scope::System => system_search_dirs(root),
     };
     let mut code = 0;
     for unit in units {
@@ -764,7 +800,28 @@ fn system_search_dirs(root: &Path) -> Vec<PathBuf> {
     ]
 }
 
+fn global_user_search_dirs(root: &Path) -> Vec<PathBuf> {
+    vec![
+        root.join("etc/rustd/user"),
+        root.join("run/rustd/user"),
+        root.join("usr/local/lib/rustd/user"),
+        root.join("usr/lib/rustd/user"),
+        root.join("etc/systemd/user"),
+        root.join("run/systemd/user"),
+        root.join("usr/local/lib/systemd/user"),
+        root.join("usr/lib/systemd/user"),
+    ]
+}
+
 fn control_dir(options: &Options) -> PathBuf {
+    if options.scope == Scope::GlobalUser {
+        let root = options.root.as_deref().unwrap_or_else(|| Path::new("/"));
+        return root.join(if options.runtime {
+            "run/rustd/user"
+        } else {
+            "etc/rustd/user"
+        });
+    }
     if options.scope == Scope::User {
         let base = if options.runtime {
             std::env::var_os("XDG_RUNTIME_DIR").map_or_else(
@@ -828,6 +885,7 @@ fn print_help() {
     println!("  reload UNIT...                     Reload units");
     println!("  enable [--now] UNIT...             Enable units, optionally start now");
     println!("  disable [--now] UNIT...            Disable units, optionally stop now");
+    println!("  reenable UNIT...                    Recreate unit-file enablement links");
     println!("  mask UNIT...                       Mask units");
     println!("  unmask UNIT...                     Unmask units");
     println!("  is-enabled UNIT...                 Check enablement");
@@ -844,6 +902,7 @@ fn print_help() {
     println!("Options:");
     println!("  --system                           Operate on the system manager (default)");
     println!("  --user                             Operate on the user manager");
+    println!("  --global                           Operate on global user unit files");
     println!("  --runtime                          Make unit-file changes under /run");
     println!("  --now                              Start after enable; stop after disable");
     println!("  --root=PATH                        Operate on an alternate root");
@@ -862,6 +921,58 @@ mod tests {
         let (options, positional) = parse_args(&args).unwrap();
         assert!(options.now);
         assert_eq!(positional, ["enable", "demo.service"]);
+    }
+
+    #[test]
+    fn parses_global_unit_file_scope() {
+        let args = ["--global", "enable", "demo.service"].map(str::to_owned);
+        let (options, positional) = parse_args(&args).unwrap();
+        assert_eq!(options.scope, Scope::GlobalUser);
+        assert_eq!(positional, ["enable", "demo.service"]);
+    }
+
+    #[test]
+    fn global_user_search_path_keeps_native_units_ahead_of_compatibility_units() {
+        let dirs = global_user_search_dirs(Path::new("/"));
+        assert!(
+            dirs.iter()
+                .position(|path| path == Path::new("/usr/lib/rustd/user"))
+                < dirs
+                    .iter()
+                    .position(|path| path == Path::new("/usr/lib/systemd/user"))
+        );
+    }
+
+    #[test]
+    fn global_enable_creates_and_removes_install_aliases() {
+        let root = tempfile::tempdir().unwrap();
+        let vendor = root.path().join("usr/lib/systemd/user");
+        let control = root.path().join("etc/rustd/user");
+        fs::create_dir_all(&vendor).unwrap();
+        fs::write(
+            vendor.join("audio.service"),
+            "[Service]\nExecStart=/bin/true\n[Install]\nWantedBy=default.target\nAlias=pipewire-session-manager.service\n",
+        )
+        .unwrap();
+        let loader = UnitLoader::with_dirs(global_user_search_dirs(root.path()));
+        set_enabled(
+            &loader,
+            root.path(),
+            &control,
+            "audio.service",
+            true,
+            Scope::GlobalUser,
+        )
+        .unwrap();
+        assert!(control
+            .join("pipewire-session-manager.service")
+            .is_symlink());
+        assert!(control
+            .join("default.target.wants/audio.service")
+            .is_symlink());
+        remove_enable_links(&control, "audio.service").unwrap();
+        assert!(!control.join("pipewire-session-manager.service").exists());
+        assert!(!control.join("default.target.wants/audio.service").exists());
     }
 
     #[test]
