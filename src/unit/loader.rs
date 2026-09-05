@@ -1241,9 +1241,12 @@ mod tests {
         let LoadedUnit::Service(svc) = unit else {
             panic!("expected Service variant");
         };
-        assert!(!svc.unit.description.is_empty());
+        assert_ne!(svc.unit.description, "");
         assert_eq!(svc.specific.service_type, ServiceType::NotifyReload);
-        assert!(!svc.specific.exec_start.is_empty());
+        assert_ne!(
+            svc.specific.exec_start,
+            [] as [crate::unit::section_service::ExecCommand; 0]
+        );
     }
 
     #[test]

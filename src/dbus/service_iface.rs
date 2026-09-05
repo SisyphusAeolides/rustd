@@ -3223,7 +3223,10 @@ mod tests {
                 ("/var/log/example.log".into(), "example.log".into(), 10),
             ]
         );
-        assert!(open_file_properties(&[]).is_empty());
+        assert_eq!(
+            open_file_properties(&[]),
+            [] as [(std::string::String, std::string::String, u64); 0]
+        );
     }
 
     #[test]
@@ -3289,7 +3292,10 @@ mod tests {
                 (libc::AF_UNSPEC, Vec::new(), 0),
             ]
         );
-        assert!(ip_address_properties(&["192.0.2.1/not-a-prefix".into()]).is_empty());
+        assert_eq!(
+            ip_address_properties(&["192.0.2.1/not-a-prefix".into()]),
+            [] as [(i32, std::vec::Vec<u8>, u32); 0]
+        );
     }
 
     #[test]
@@ -3371,8 +3377,11 @@ mod tests {
         assert!(iface.guess_main_pid());
         assert_eq!(iface.file_descriptor_store_max(), 0);
         assert_eq!(iface.n_file_descriptor_store(), 0);
-        assert!(iface.open_file().is_empty());
-        assert!(iface.refresh_on_reload().is_empty());
+        assert_eq!(
+            iface.open_file(),
+            [] as [(std::string::String, std::string::String, u64); 0]
+        );
+        assert_eq!(iface.refresh_on_reload(), [] as [std::string::String; 0]);
         assert_eq!(iface.status_bus_error(), "");
         assert_eq!(iface.status_varlink_error(), "");
         assert_eq!(iface.reload_result(), "success");
@@ -3380,13 +3389,16 @@ mod tests {
         assert_eq!(iface.live_mount_result(), "success");
         assert_eq!(iface.file_descriptor_store_preserve(), "restart");
         assert_eq!(iface.root_directory(), "");
-        assert!(iface.environment().is_empty());
-        assert!(iface.environment_files().is_empty());
-        assert!(iface.import_credential().is_empty());
+        assert_eq!(iface.environment(), [] as [std::string::String; 0]);
+        assert_eq!(
+            iface.environment_files(),
+            [] as [(std::string::String, bool); 0]
+        );
+        assert_eq!(iface.import_credential(), [] as [std::string::String; 0]);
         assert!(!iface.set_login_environment());
-        assert!(iface.pass_environment().is_empty());
-        assert!(iface.unset_environment().is_empty());
-        assert!(iface.supplementary_groups().is_empty());
+        assert_eq!(iface.pass_environment(), [] as [std::string::String; 0]);
+        assert_eq!(iface.unset_environment(), [] as [std::string::String; 0]);
+        assert_eq!(iface.supplementary_groups(), [] as [std::string::String; 0]);
         assert_eq!(iface.pam_name(), "");
         assert_eq!(iface.nice(), 0);
         assert_eq!(iface.oom_score_adjust(), 0);
@@ -3395,47 +3407,295 @@ mod tests {
         assert_eq!(iface.cpu_scheduling_policy(), libc::SCHED_OTHER);
         assert_eq!(iface.cpu_scheduling_priority(), 0);
         assert!(!iface.cpu_scheduling_reset_on_fork());
-        assert!(iface.cpu_affinity().is_empty());
-        assert!(iface.runtime_directory().is_empty());
-        assert!(iface.state_directory().is_empty());
-        assert!(iface.cache_directory().is_empty());
-        assert!(iface.logs_directory().is_empty());
-        assert!(iface.configuration_directory().is_empty());
-        assert!(iface.read_write_paths().is_empty());
-        assert!(iface.read_only_paths().is_empty());
-        assert!(iface.inaccessible_paths().is_empty());
-        assert!(iface.exec_paths().is_empty());
-        assert!(iface.no_exec_paths().is_empty());
+        assert_eq!(iface.cpu_affinity(), [] as [u8; 0]);
+        assert_eq!(iface.runtime_directory(), [] as [std::string::String; 0]);
+        assert_eq!(iface.state_directory(), [] as [std::string::String; 0]);
+        assert_eq!(iface.cache_directory(), [] as [std::string::String; 0]);
+        assert_eq!(iface.logs_directory(), [] as [std::string::String; 0]);
+        assert_eq!(
+            iface.configuration_directory(),
+            [] as [std::string::String; 0]
+        );
+        assert_eq!(iface.read_write_paths(), [] as [std::string::String; 0]);
+        assert_eq!(iface.read_only_paths(), [] as [std::string::String; 0]);
+        assert_eq!(iface.inaccessible_paths(), [] as [std::string::String; 0]);
+        assert_eq!(iface.exec_paths(), [] as [std::string::String; 0]);
+        assert_eq!(iface.no_exec_paths(), [] as [std::string::String; 0]);
         assert_eq!(iface.restrict_file_systems(), (true, Vec::new()));
-        assert!(iface.bind_paths().is_empty());
-        assert!(iface.bind_read_only_paths().is_empty());
-        assert!(iface.temporary_file_system().is_empty());
-        assert!(iface.system_call_architectures().is_empty());
+        assert_eq!(
+            iface.bind_paths(),
+            [] as [(std::string::String, std::string::String, bool, u64); 0]
+        );
+        assert_eq!(
+            iface.bind_read_only_paths(),
+            [] as [(std::string::String, std::string::String, bool, u64); 0]
+        );
+        assert_eq!(
+            iface.temporary_file_system(),
+            [] as [(std::string::String, std::string::String); 0]
+        );
+        assert_eq!(
+            iface.system_call_architectures(),
+            [] as [std::string::String; 0]
+        );
         assert_eq!(iface.system_call_error_number(), 0);
         assert_eq!(iface.restrict_address_families(), (true, Vec::new()));
-        assert!(iface.ip_address_allow().is_empty());
-        assert!(iface.ip_address_deny().is_empty());
-        assert!(iface.exec_condition().is_empty());
-        assert!(iface.exec_condition_ex().is_empty());
-        assert!(iface.exec_search_path().is_empty());
-        assert!(iface.exec_start_pre().is_empty());
-        assert!(iface.exec_start_pre_ex().is_empty());
-        assert!(iface.exec_start().is_empty());
-        assert!(iface.exec_start_ex().is_empty());
-        assert!(iface.exec_start_post().is_empty());
-        assert!(iface.exec_start_post_ex().is_empty());
-        assert!(iface.exec_reload().is_empty());
-        assert!(iface.exec_reload_ex().is_empty());
-        assert!(iface.exec_reload_post().is_empty());
-        assert!(iface.exec_reload_post_ex().is_empty());
-        assert!(iface.exec_stop().is_empty());
-        assert!(iface.exec_stop_ex().is_empty());
-        assert!(iface.exec_stop_post().is_empty());
-        assert!(iface.exec_stop_post_ex().is_empty());
+        assert_eq!(
+            iface.ip_address_allow(),
+            [] as [(i32, std::vec::Vec<u8>, u32); 0]
+        );
+        assert_eq!(
+            iface.ip_address_deny(),
+            [] as [(i32, std::vec::Vec<u8>, u32); 0]
+        );
+        assert_eq!(
+            iface.exec_condition(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                bool,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_condition_ex(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                std::vec::Vec<std::string::String>,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(iface.exec_search_path(), [] as [std::string::String; 0]);
+        assert_eq!(
+            iface.exec_start_pre(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                bool,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_start_pre_ex(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                std::vec::Vec<std::string::String>,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_start(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                bool,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_start_ex(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                std::vec::Vec<std::string::String>,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_start_post(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                bool,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_start_post_ex(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                std::vec::Vec<std::string::String>,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_reload(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                bool,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_reload_ex(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                std::vec::Vec<std::string::String>,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_reload_post(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                bool,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_reload_post_ex(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                std::vec::Vec<std::string::String>,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_stop(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                bool,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_stop_ex(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                std::vec::Vec<std::string::String>,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_stop_post(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                bool,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
+        assert_eq!(
+            iface.exec_stop_post_ex(),
+            [] as [(
+                std::string::String,
+                std::vec::Vec<std::string::String>,
+                std::vec::Vec<std::string::String>,
+                u64,
+                u64,
+                u64,
+                u64,
+                u32,
+                i32,
+                i32
+            ); 0]
+        );
         assert_eq!(iface.system_call_filter(), (false, Vec::new()));
         assert_eq!(iface.system_call_log(), (false, Vec::new()));
         assert_eq!(iface.device_policy(), "auto");
-        assert!(iface.device_allow().is_empty());
+        assert_eq!(
+            iface.device_allow(),
+            [] as [(std::string::String, std::string::String); 0]
+        );
         assert_eq!(iface.slice(), "system.slice");
         assert_eq!(iface.cpu_weight(), u64::MAX);
         assert_eq!(iface.cpu_quota_per_sec_u_sec(), u64::MAX);
@@ -3475,15 +3735,15 @@ mod tests {
         assert_eq!(iface.log_level_max(), -1);
         assert_eq!(iface.log_rate_limit_interval_u_sec(), 0);
         assert_eq!(iface.log_rate_limit_burst(), 0);
-        assert!(iface.log_extra_fields().is_empty());
+        assert_eq!(iface.log_extra_fields(), [] as [std::vec::Vec<u8>; 0]);
         assert_eq!(iface.log_namespace(), "");
         assert_eq!(iface.secure_bits(), 0);
         assert_eq!(iface.coredump_filter(), default_coredump_filter());
         assert_eq!(iface.personality(), "");
         assert!(!iface.delegate());
-        assert!(iface.delegate_controllers().is_empty());
+        assert_eq!(iface.delegate_controllers(), [] as [std::string::String; 0]);
         assert_eq!(iface.delegate_subgroup(), "");
-        assert!(iface.disable_controllers().is_empty());
+        assert_eq!(iface.disable_controllers(), [] as [std::string::String; 0]);
         assert_eq!(iface.cpuset_partition(), "");
         assert!(!iface.ignore_sigpipe());
         assert!(!iface.private_ipc());
@@ -3526,8 +3786,8 @@ mod tests {
         assert_eq!(iface.memory_swap_peak(), u64::MAX);
         assert_eq!(iface.memory_zswap_current(), u64::MAX);
         assert!(iface.memory_available() > 0);
-        assert!(iface.effective_cpus().is_empty());
-        assert!(iface.effective_memory_nodes().is_empty());
+        assert_eq!(iface.effective_cpus(), [] as [u8; 0]);
+        assert_eq!(iface.effective_memory_nodes(), [] as [u8; 0]);
         assert_eq!(iface.cpu_usage_nsec(), u64::MAX);
         assert_eq!(iface.tasks_current(), u64::MAX);
         assert_eq!(iface.oom_kills(), u64::MAX);

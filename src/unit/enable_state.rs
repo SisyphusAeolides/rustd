@@ -2220,10 +2220,24 @@ mod tests {
                 "/dev/null".to_owned()
             )]
         );
-        assert!(mask_unit_files(&names, false, &config).unwrap().is_empty());
+        assert_eq!(
+            mask_unit_files(&names, false, &config).unwrap(),
+            [] as [(
+                std::string::String,
+                std::string::String,
+                std::string::String
+            ); 0]
+        );
         let changes = unmask_unit_files(&names, &config).unwrap();
         assert_eq!(changes[0].0, "unlink");
-        assert!(unmask_unit_files(&names, &config).unwrap().is_empty());
+        assert_eq!(
+            unmask_unit_files(&names, &config).unwrap(),
+            [] as [(
+                std::string::String,
+                std::string::String,
+                std::string::String
+            ); 0]
+        );
     }
 
     #[test]
@@ -2396,7 +2410,14 @@ mod tests {
         )
         .unwrap();
         assert!(!carries);
-        assert!(changes.is_empty());
+        assert_eq!(
+            changes,
+            [] as [(
+                std::string::String,
+                std::string::String,
+                std::string::String
+            ); 0]
+        );
         assert_eq!(PresetMode::parse(""), Some(PresetMode::Full));
         assert_eq!(
             PresetMode::parse("enable-only"),
@@ -2435,7 +2456,14 @@ mod tests {
             &[presets],
         )
         .unwrap();
-        assert!(changes.is_empty());
+        assert_eq!(
+            changes,
+            [] as [(
+                std::string::String,
+                std::string::String,
+                std::string::String
+            ); 0]
+        );
         assert!(!config.join("default.target.wants/all.service").exists());
     }
 
@@ -2477,16 +2505,22 @@ mod tests {
             std::fs::read_link(config.join("real.target.wants/real.service")).unwrap(),
             vendor.join("real.service")
         );
-        assert!(add_dependency_unit_files(
-            &["alias.service".to_owned()],
-            "alias.target",
-            false,
-            false,
-            &config,
-            &search,
-        )
-        .unwrap()
-        .is_empty());
+        assert_eq!(
+            add_dependency_unit_files(
+                &["alias.service".to_owned()],
+                "alias.target",
+                false,
+                false,
+                &config,
+                &search,
+            )
+            .unwrap(),
+            [] as [(
+                std::string::String,
+                std::string::String,
+                std::string::String
+            ); 0]
+        );
 
         let linked_source = root.path().join("linked-real.service");
         let linked_alias = root.path().join("linked-alias.service");
@@ -2773,10 +2807,9 @@ mod tests {
     #[test]
     fn rooted_unit_file_links_keep_missing_units_empty_and_reject_bad_names() {
         let root = tempfile::tempdir().unwrap();
-        assert!(
-            get_root_unit_file_links("missing.service", false, root.path())
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            get_root_unit_file_links("missing.service", false, root.path()).unwrap(),
+            [] as [std::path::PathBuf; 0]
         );
         assert!(matches!(
             get_root_unit_file_links("../bad.service", false, root.path()),

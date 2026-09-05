@@ -606,7 +606,7 @@ mod tests {
         let guard = ring.lock().unwrap();
         let entries = guard.drain_since(0);
         assert_eq!(entries.len(), 1);
-        assert!(entries[0].unit().is_empty());
+        assert_eq!(entries[0].unit(), "");
         assert_eq!(entries[0].pid_str(), "9");
     }
 

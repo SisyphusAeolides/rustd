@@ -719,7 +719,7 @@ mod tests {
     fn missing_restorecon_paths_are_ignored() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("missing");
-        assert!(restorecon_targets(&path).is_empty());
+        assert_eq!(restorecon_targets(&path), [] as [std::path::PathBuf; 0]);
     }
 
     #[test]

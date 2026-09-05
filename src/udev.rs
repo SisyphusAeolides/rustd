@@ -1239,7 +1239,7 @@ mod tests {
         assert_eq!(device.property("ID_FS_LABEL_ENC"), "root\\x20fs");
         assert_eq!(device.property("ID_PART_TABLE_TYPE"), "gpt");
         assert_eq!(device.property("ID_PART_ENTRY_NUMBER"), "1");
-        assert!(device.property("DEVNAME").is_empty());
+        assert_eq!(device.property("DEVNAME"), "");
     }
 
     #[test]

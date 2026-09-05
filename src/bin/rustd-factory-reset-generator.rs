@@ -149,10 +149,7 @@ fn efi_request_for_current_boot() -> Result<bool, String> {
     }
 
     let boot = fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
-    if normalize_id(request_boot) == normalize_id(boot.trim()) {
-        return Ok(false);
-    }
-    Ok(true)
+    Ok(normalize_id(request_boot) != normalize_id(boot.trim()))
 }
 
 fn decode_efi_string(bytes: &[u8]) -> String {

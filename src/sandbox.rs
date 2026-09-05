@@ -403,7 +403,7 @@ mod tests {
         assert!(!ctx.no_new_privileges);
         assert!(!ctx.private_tmp);
         assert_eq!(ctx.protect_system, PROTECT_SYSTEM_NO);
-        assert!(ctx.read_write_paths.is_empty());
+        assert_eq!(ctx.read_write_paths, [] as [std::string::String; 0]);
     }
 
     #[test]

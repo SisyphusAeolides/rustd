@@ -7832,12 +7832,28 @@ mod tests {
                 unit_path("prerequisite.service").unwrap(),
             )],)
         );
-        assert!(interface.get_job_after(dependent.id).unwrap().0.is_empty());
-        assert!(interface
-            .get_job_before(prerequisite.id)
-            .unwrap()
-            .0
-            .is_empty());
+        assert_eq!(
+            interface.get_job_after(dependent.id).unwrap().0,
+            [] as [(
+                u32,
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                zbus::zvariant::OwnedObjectPath,
+                zbus::zvariant::OwnedObjectPath
+            ); 0]
+        );
+        assert_eq!(
+            interface.get_job_before(prerequisite.id).unwrap().0,
+            [] as [(
+                u32,
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                zbus::zvariant::OwnedObjectPath,
+                zbus::zvariant::OwnedObjectPath
+            ); 0]
+        );
     }
 
     #[test]
@@ -9118,7 +9134,7 @@ mod tests {
         let (missing,) = interface
             .get_unit_file_links("no-such-unit-for-parity.service".into(), false)
             .unwrap();
-        assert!(missing.is_empty());
+        assert_eq!(missing, [] as [std::string::String; 0]);
 
         let invalid = interface
             .get_unit_file_links("../invalid.service".into(), false)
@@ -9358,12 +9374,14 @@ mod tests {
                 "enabled".to_owned(),
             )]
         );
-        assert!(filter_unit_file_entries(
-            entries,
-            &[],
-            &["/usr/lib/systemd/system/alpha.service".to_owned()],
-        )
-        .is_empty());
+        assert_eq!(
+            filter_unit_file_entries(
+                entries,
+                &[],
+                &["/usr/lib/systemd/system/alpha.service".to_owned()],
+            ),
+            [] as [(std::string::String, std::string::String); 0]
+        );
     }
 
     #[test]
@@ -9418,21 +9436,47 @@ mod tests {
                 .len(),
             2
         );
-        assert!(interface
-            .list_units_filtered(vec!["no-such-state".into()])
-            .unwrap()
-            .0
-            .is_empty());
+        assert_eq!(
+            interface
+                .list_units_filtered(vec!["no-such-state".into()])
+                .unwrap()
+                .0,
+            [] as [(
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                zbus::zvariant::OwnedObjectPath,
+                u32,
+                std::string::String,
+                zbus::zvariant::OwnedObjectPath
+            ); 0]
+        );
         let (matching,) = interface
             .list_units_by_patterns(vec!["loaded".into()], vec!["active*.service".into()])
             .unwrap();
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].0, "active.service");
-        assert!(interface
-            .list_units_by_patterns(vec!["active".into()], vec!["failed-*.service".into()])
-            .unwrap()
-            .0
-            .is_empty());
+        assert_eq!(
+            interface
+                .list_units_by_patterns(vec!["active".into()], vec!["failed-*.service".into()])
+                .unwrap()
+                .0,
+            [] as [(
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                std::string::String,
+                zbus::zvariant::OwnedObjectPath,
+                u32,
+                std::string::String,
+                zbus::zvariant::OwnedObjectPath
+            ); 0]
+        );
         assert!(matches!(
             interface.list_units_filtered(vec!["active".into(); MAX_STATES_PER_CALL + 1]),
             Err(zbus::fdo::Error::LimitsExceeded(_))

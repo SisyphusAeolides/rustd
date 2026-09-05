@@ -1414,8 +1414,8 @@ mod tests {
         assert_eq!(section.cpuset_partition, "root");
         section.apply("DelegateControllers", "");
         section.apply("DisableControllers", "");
-        assert!(section.delegate_controllers.is_empty());
-        assert!(section.disable_controllers.is_empty());
+        assert_eq!(section.delegate_controllers, [] as [std::string::String; 0]);
+        assert_eq!(section.disable_controllers, [] as [std::string::String; 0]);
     }
 
     #[test]

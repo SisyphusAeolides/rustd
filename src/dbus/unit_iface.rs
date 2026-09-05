@@ -1004,7 +1004,7 @@ mod tests {
         assert_eq!(iface.names(), vec!["foo.service"]);
         assert_eq!(iface.description(), "Test service");
         assert_eq!(iface.active_state(), "active");
-        assert!(iface.invocation_id().is_empty());
+        assert_eq!(iface.invocation_id(), [] as [u8; 0]);
         assert!(iface.can_start());
         assert!(iface.can_stop());
     }
@@ -1055,26 +1055,29 @@ mod tests {
     fn unit_policy_properties_match_v261_defaults() {
         let iface = make_interface("missing.service", Vec::new());
 
-        assert!(iface.documentation().is_empty());
-        assert!(iface.source_path().is_empty());
-        assert!(iface.requires().is_empty());
-        assert!(iface.requisite().is_empty());
-        assert!(iface.wants().is_empty());
-        assert!(iface.binds_to().is_empty());
-        assert!(iface.part_of().is_empty());
-        assert!(iface.upholds().is_empty());
-        assert!(iface.conflicts().is_empty());
-        assert!(iface.before().is_empty());
-        assert!(iface.after().is_empty());
-        assert!(iface.on_success().is_empty());
-        assert!(iface.on_failure().is_empty());
-        assert!(iface.propagates_reload_to().is_empty());
-        assert!(iface.reload_propagated_from().is_empty());
-        assert!(iface.propagates_stop_to().is_empty());
-        assert!(iface.stop_propagated_from().is_empty());
-        assert!(iface.joins_namespace_of().is_empty());
-        assert!(iface.requires_mounts_for().is_empty());
-        assert!(iface.wants_mounts_for().is_empty());
+        assert_eq!(iface.documentation(), [] as [std::string::String; 0]);
+        assert_eq!(iface.source_path(), "");
+        assert_eq!(iface.requires(), [] as [std::string::String; 0]);
+        assert_eq!(iface.requisite(), [] as [std::string::String; 0]);
+        assert_eq!(iface.wants(), [] as [std::string::String; 0]);
+        assert_eq!(iface.binds_to(), [] as [std::string::String; 0]);
+        assert_eq!(iface.part_of(), [] as [std::string::String; 0]);
+        assert_eq!(iface.upholds(), [] as [std::string::String; 0]);
+        assert_eq!(iface.conflicts(), [] as [std::string::String; 0]);
+        assert_eq!(iface.before(), [] as [std::string::String; 0]);
+        assert_eq!(iface.after(), [] as [std::string::String; 0]);
+        assert_eq!(iface.on_success(), [] as [std::string::String; 0]);
+        assert_eq!(iface.on_failure(), [] as [std::string::String; 0]);
+        assert_eq!(iface.propagates_reload_to(), [] as [std::string::String; 0]);
+        assert_eq!(
+            iface.reload_propagated_from(),
+            [] as [std::string::String; 0]
+        );
+        assert_eq!(iface.propagates_stop_to(), [] as [std::string::String; 0]);
+        assert_eq!(iface.stop_propagated_from(), [] as [std::string::String; 0]);
+        assert_eq!(iface.joins_namespace_of(), [] as [std::string::String; 0]);
+        assert_eq!(iface.requires_mounts_for(), [] as [std::string::String; 0]);
+        assert_eq!(iface.wants_mounts_for(), [] as [std::string::String; 0]);
         assert!(!iface.stop_when_unneeded());
         assert!(!iface.refuse_manual_start());
         assert!(!iface.refuse_manual_stop());
@@ -1087,12 +1090,18 @@ mod tests {
         assert_eq!(iface.on_failure_job_mode(), "replace");
         assert!(iface.condition_result());
         assert!(iface.assert_result());
-        assert!(iface.conditions().is_empty());
-        assert!(iface.asserts().is_empty());
+        assert_eq!(
+            iface.conditions(),
+            [] as [(std::string::String, bool, bool, std::string::String, i32); 0]
+        );
+        assert_eq!(
+            iface.asserts(),
+            [] as [(std::string::String, bool, bool, std::string::String, i32); 0]
+        );
         assert_eq!(iface.job_timeout_u_sec(), u64::MAX);
         assert_eq!(iface.job_running_timeout_u_sec(), u64::MAX);
         assert_eq!(iface.job_timeout_action(), "none");
-        assert!(iface.job_timeout_reboot_argument().is_empty());
+        assert_eq!(iface.job_timeout_reboot_argument(), "");
         assert_eq!(iface.start_limit_interval_u_sec(), 10_000_000);
         assert_eq!(iface.start_limit_burst(), 5);
         assert_eq!(iface.start_limit_action(), "none");
@@ -1100,7 +1109,7 @@ mod tests {
         assert_eq!(iface.success_action(), "none");
         assert_eq!(iface.failure_action_exit_status(), 0);
         assert_eq!(iface.success_action_exit_status(), 0);
-        assert!(iface.reboot_argument().is_empty());
+        assert_eq!(iface.reboot_argument(), "");
 
         let mut xml = String::new();
         zbus::Interface::introspect_to_writer(&iface, &mut xml, 0);
