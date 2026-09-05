@@ -10,7 +10,7 @@ cargo_bin=${CARGO:-cargo}
 fail() { printf 'RustD static build: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || fail "missing command: $1"; }
 
-for command in "$cargo_bin" readelf file; do need "$command"; done
+for command in "$cargo_bin" readelf file strings; do need "$command"; done
 [[ -f $target_spec ]] || fail "target specification is missing: $target_spec"
 
 mkdir -p "$target_dir"
@@ -40,6 +40,12 @@ readelf -hW "$image" | grep -Fq 'Type:                              DYN' \
     || fail "RustD image is not a position-independent ELF executable: $image"
 if readelf -lW "$image" | grep -Fq ' INTERP '; then
     fail "RustD image has a dynamic loader and cannot be PID 1: $image"
+fi
+if [[ ${RUSTD_DISABLE_SELINUX:-0} == 1 ]]; then
+    if strings "$image" | grep -Eiq \
+        'libselinux|selinux_init_load_policy|selinux_restorecon|security_setenforce|/etc/selinux'; then
+        fail "RustD image contains SELinux support although it was disabled: $image"
+    fi
 fi
 
 printf 'RustD static image: %s\n' "$image"

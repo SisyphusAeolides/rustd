@@ -15,7 +15,9 @@ For ArachOS, RustD is the measured PID 1 payload loaded by GRUB into Arach
 Kernel. ArachOS owns the release, pacman repository, ArchISO image, and
 Calamares installer. That path is release-qualified only when Arach Kernel
 provides the complete Linux process, filesystem, cgroup, device, IPC, and
-networking contracts exercised by the packaged RustD service graph.
+networking contracts exercised by the packaged RustD service graph. The
+SELinux compatibility feature is opt-in and is disabled in the ArachOS build;
+Fedora deployments may enable it explicitly.
 
 The default manager scheduler includes a bounded nonlinear policy weave using
 Lorenz and Mandelbrot features plus Rössler, logistic-map, Lyapunov, and
@@ -36,7 +38,8 @@ performance claim still requires boot and workload benchmarks.
 > drop-in replacement for systemd. Repeated installed-system VM campaigns as
 > sole PID 1—covering cold boot, reboot, shutdown, rescue/emergency paths,
 > re-exec, crash/fault recovery, networking, login, DNS, package management,
-> SELinux, and initramfs behavior—remain required for the exact release image.
+> SELinux (for Fedora profiles), and initramfs behavior—remain required for
+> the exact release image.
 > Until those gates pass, retain a known-good recovery path and use a
 > snapshot-backed VM or equivalent recoverable environment before making RustD
 > the only boot path.

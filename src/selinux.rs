@@ -6,14 +6,39 @@
 //! same fail-closed responsibility when it is invoked directly or an initramfs
 //! omits that handoff.
 
+#[cfg(feature = "selinux")]
 use std::ffi::{CStr, CString};
+#[cfg(feature = "selinux")]
 use std::fs;
+#[cfg(feature = "selinux")]
 use std::io;
+#[cfg(feature = "selinux")]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(feature = "selinux")]
 use std::path::Path;
 
+#[cfg(feature = "selinux")]
 use anyhow::{anyhow, Context};
 
+#[cfg(not(feature = "selinux"))]
+/// ArachOS does not ship an SELinux policy or loader. Keep the call surface
+/// available to the service, udev, journal, and tmpfiles code while making
+/// the disabled build a true no-op with no dynamic SELinux dependency.
+pub fn load_initial_policy() -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(feature = "selinux"))]
+pub fn restorecon_path(_path: &std::path::Path) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(not(feature = "selinux"))]
+pub fn restorecon_tree(_path: &std::path::Path) -> anyhow::Result<()> {
+    Ok(())
+}
+
+#[cfg(feature = "selinux")]
 const SELINUX_CONFIG: &str = "/etc/selinux/config";
 
 /// Load the configured SELinux policy when SELinux is enabled for this host.
@@ -25,6 +50,7 @@ const SELINUX_CONFIG: &str = "/etc/selinux/config";
 ///
 /// # Errors
 /// Returns an error when configured SELinux policy loading cannot be completed.
+#[cfg(feature = "selinux")]
 pub fn load_initial_policy() -> anyhow::Result<()> {
     let config = match fs::read_to_string(SELINUX_CONFIG) {
         Ok(config) => config,
@@ -98,6 +124,7 @@ pub fn load_initial_policy() -> anyhow::Result<()> {
 /// # Errors
 /// Returns an error if the path contains a NUL byte, libselinux cannot be
 /// loaded, the restorecon symbol cannot be resolved, or relabeling fails.
+#[cfg(feature = "selinux")]
 pub fn restorecon_path(path: &Path) -> anyhow::Result<()> {
     if !Path::new("/sys/fs/selinux/enforce").exists() {
         return Ok(());
@@ -144,6 +171,7 @@ pub fn restorecon_path(path: &Path) -> anyhow::Result<()> {
 /// # Errors
 /// Returns an error if a path cannot be labeled or its directory entries
 /// cannot be read.
+#[cfg(feature = "selinux")]
 pub fn restorecon_tree(path: &Path) -> anyhow::Result<()> {
     restorecon_path(path)?;
     let metadata = match fs::symlink_metadata(path) {
@@ -168,6 +196,7 @@ pub fn restorecon_tree(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "selinux")]
 fn set_enforcing(enforcing: bool) -> anyhow::Result<()> {
     let library = CString::new("libselinux.so.1")?;
     let symbol = CString::new("security_setenforce")?;
@@ -202,17 +231,20 @@ fn set_enforcing(enforcing: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "selinux")]
 fn selinux_disabled_on_kernel_command_line() -> anyhow::Result<bool> {
     let command_line = fs::read_to_string("/proc/cmdline").context("read /proc/cmdline")?;
     Ok(command_line_disables_selinux(&command_line))
 }
 
+#[cfg(feature = "selinux")]
 fn command_line_disables_selinux(command_line: &str) -> bool {
     command_line
         .split_ascii_whitespace()
         .any(|word| word == "selinux=0")
 }
 
+#[cfg(feature = "selinux")]
 fn selinux_disabled_in_config(config: &str) -> bool {
     config.lines().any(|line| {
         let line = line.trim();
@@ -223,6 +255,7 @@ fn selinux_disabled_in_config(config: &str) -> bool {
     })
 }
 
+#[cfg(feature = "selinux")]
 fn selinux_mode(config: &str) -> Option<&str> {
     config.lines().find_map(|line| {
         let line = line.trim();
@@ -234,6 +267,7 @@ fn selinux_mode(config: &str) -> Option<&str> {
     })
 }
 
+#[cfg(feature = "selinux")]
 fn dl_error(operation: &str) -> String {
     // Safety: `dlerror` returns either NULL or a NUL-terminated diagnostic
     // valid until the next dynamic-loader call on this thread.
@@ -248,6 +282,7 @@ fn dl_error(operation: &str) -> String {
 }
 
 #[cfg(test)]
+#[cfg(feature = "selinux")]
 mod tests {
     use super::*;
 
@@ -281,5 +316,15 @@ mod tests {
             Some("enforcing")
         );
         assert_eq!(selinux_mode("SELINUX=disabled\n"), Some("disabled"));
+    }
+}
+
+#[cfg(all(test, not(feature = "selinux")))]
+mod disabled_tests {
+    #[test]
+    fn disabled_build_keeps_the_service_call_surface() {
+        assert!(super::load_initial_policy().is_ok());
+        assert!(super::restorecon_path(std::path::Path::new("/dev")).is_ok());
+        assert!(super::restorecon_tree(std::path::Path::new("/run")).is_ok());
     }
 }

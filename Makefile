@@ -29,6 +29,12 @@ LIB_LDFLAGS := -Wl,-z,relro,-z,now
 COMPAT_CFLAGS := $(shell pkg-config --cflags dbus-1 json-c 2>/dev/null)
 IDRIS2 ?= $(shell command -v idris2 2>/dev/null || find $(HOME)/.local/state/pack -name idris2 -type f -executable 2>/dev/null | head -1)
 
+ifeq ($(RUSTD_DISABLE_SELINUX),1)
+RUSTD_FEATURE_ARGS := --features default
+else
+RUSTD_FEATURE_ARGS := --all-features
+endif
+
 SHARED_LIBS := \
 	$(LIBS_DIR)/librustd_service.so.1 \
 	$(LIBS_DIR)/librustd_journal.so.1 \
@@ -45,7 +51,7 @@ COMPAT_LIBS := \
 all: build libs
 
 build:
-	CARGO_TARGET_DIR=$(TARGET_DIR) cargo build --release --all-features --locked
+	CARGO_TARGET_DIR=$(TARGET_DIR) cargo build --release $(RUSTD_FEATURE_ARGS) --locked
 
 build-static:
 	bash scripts/build-static-rustd.sh

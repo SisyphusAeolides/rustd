@@ -486,6 +486,10 @@ kalman = []
 formal-crosscheck = []
 obs = []
 supremacy = ["obs"]
+# SELinux support is kept as an opt-in compatibility feature for Fedora
+# deployments. ArachOS builds leave it disabled and do not carry the loader or
+# relabeling code in their PID 1 payload.
+selinux = []
 
 [profile.release]
 codegen-units = 1
