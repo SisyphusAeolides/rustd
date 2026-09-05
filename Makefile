@@ -237,12 +237,7 @@ check-rust:
 	cargo test --all-targets --all-features --locked -- --test-threads=1
 
 check-formal:
-	@test -n "$(IDRIS2)" || (echo "idris2 compiler not found; set IDRIS2=/path/to/idris2" >&2; exit 1)
-	$(IDRIS2) --build formal/idris/rustd-policy.ipkg
-	agda -i formal/agda formal/agda/RustD/Unit/State.agda
-	agda -i formal/agda formal/agda/RustD/Unit/Transition.agda
-	agda -i formal/agda formal/agda/RustD/Cgroup/Bound.agda
-	agda -i formal/agda formal/agda/RustD/Job/Ordering.agda
+	IDRIS2="$(IDRIS2)" bash scripts/check-formal.sh
 
 check-packaging:
 	bash -n scripts/boot-smoke.sh scripts/install-rustd-names.sh scripts/check-reproducible-release.sh scripts/installed-certification.sh scripts/performance-promotion.sh scripts/exclusive-cutover-gate.sh scripts/ci-pid1-initramfs.sh scripts/check-native-libs.sh tests/pam_logind_integration.sh
