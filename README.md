@@ -170,8 +170,8 @@ On Arch Linux, install the build and formal-check dependencies with:
 sudo pacman -S --needed base-devel rust cargo gcc-fortran agda chez-scheme git
 ```
 
-Idris2 is built from the upstream compiler source rather than installed from a
-distro or AUR package.  The formal checks currently target the 0.8.0 release:
+Idris2 is built directly from the pinned upstream compiler source. The formal
+checks currently target the 0.8.0 release:
 
 ```sh
 mkdir -p "$HOME/src"
