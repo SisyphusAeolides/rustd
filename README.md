@@ -167,8 +167,21 @@ and release contracts.
 On Arch Linux, install the build and formal-check dependencies with:
 
 ```sh
-sudo pacman -S --needed base-devel rust cargo gcc-fortran idris2 agda
+sudo pacman -S --needed base-devel rust cargo gcc-fortran agda chez-scheme git
 ```
+
+Idris2 is built from the upstream compiler source rather than installed from a
+distro or AUR package.  The formal checks currently target the 0.8.0 release:
+
+```sh
+mkdir -p "$HOME/src"
+git clone --branch v0.8.0 https://github.com/idris-lang/Idris2.git "$HOME/src/Idris2"
+make -C "$HOME/src/Idris2" bootstrap SCHEME=chez PREFIX="$HOME/.local"
+make -C "$HOME/src/Idris2" install PREFIX="$HOME/.local"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+If the checkout already exists, update it and rerun the two `make` commands.
 
 The manager's minimum supported Rust version is 1.75. The native boundary also
 requires a C17 compiler, GNU Fortran with Fortran 2018 support, and `ar`.
